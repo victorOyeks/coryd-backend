@@ -1,5 +1,6 @@
 server:
   port: 9103
+  forward-headers-strategy: framework
   servlet:
     context-path: /trip
 

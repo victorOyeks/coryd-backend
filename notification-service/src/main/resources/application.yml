@@ -1,5 +1,6 @@
 server:
   port: 9105
+  forward-headers-strategy: framework
   servlet:
     context-path: /notification
 
