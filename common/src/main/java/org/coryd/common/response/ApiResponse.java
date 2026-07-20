@@ -1,5 +1,6 @@
 package org.coryd.common.response;
 
+
 public record ApiResponse<T>(boolean success, String message, T data) {
 
     public static <T> ApiResponse<T> ok(T data) {
