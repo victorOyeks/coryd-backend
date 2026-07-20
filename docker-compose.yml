@@ -1,0 +1,52 @@
+# Local development only. On the VPS, CoRyd shares marketrun-ng's existing
+# Kafka and Redis (see docs/deployment-dev.md) - all topics are prefixed
+# "coryd-" and consumer group IDs are prefixed "coryd-service-name" so they
+# never collide with marketrun-ng's identically-named services on the same
+# broker, and trip-service uses a dedicated Redis logical DB (index 1).
+#
+# Postgres is intentionally NOT here - install it natively so there's one
+# less container to manage and backups are simpler.
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: coryd-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "127.0.0.1:2181:2181"
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: coryd-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://coryd-kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 48
+    ports:
+      - "127.0.0.1:9092:9092"
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: coryd-redis
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - "127.0.0.1:6379:6379"
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "3"

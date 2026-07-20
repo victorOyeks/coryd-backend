@@ -1,0 +1,15 @@
+[Unit]
+Description=CoRyd trip-service
+After=network.target
+
+[Service]
+User=devoyeks
+EnvironmentFile=/opt/coryd-dev/.env.dev
+ExecStart=/usr/bin/java -jar /opt/coryd-dev/trip-service/app.jar
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

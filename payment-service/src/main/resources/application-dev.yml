@@ -1,0 +1,14 @@
+spring:
+  jpa:
+    show-sql: true
+  liquibase:
+    contexts: dev
+
+management:
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  swagger-ui:
+    enabled: true

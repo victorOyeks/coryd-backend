@@ -1,0 +1,100 @@
+name: Deploy to Dev VPS
+
+on:
+  push:
+    branches: [develop]
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            identity-service:
+              - 'identity-service/**'
+              - 'common/**'
+            profile-service:
+              - 'profile-service/**'
+              - 'common/**'
+            trip-service:
+              - 'trip-service/**'
+              - 'common/**'
+            payment-service:
+              - 'payment-service/**'
+              - 'common/**'
+            notification-service:
+              - 'notification-service/**'
+              - 'common/**'
+
+  build:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.services != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build ${{ matrix.service }}
+        run: mvn -pl ${{ matrix.service }} -am package -DskipTests -q
+      - name: Rename jar to app.jar
+        run: |
+          mkdir -p out/${{ matrix.service }}
+          cp ${{ matrix.service }}/target/*.jar out/${{ matrix.service }}/app.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}
+          path: out/${{ matrix.service }}/app.jar
+          retention-days: 1
+
+  deploy:
+    needs: [detect-changes, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Uploads each service's app.jar to /opt/coryd-dev/<service>/incoming.jar -
+      # kept separate from the live app.jar until every upload succeeds, so a
+      # partial deploy never leaves a service with a half-written jar.
+      - name: Copy jars to Dev VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_VPS_HOST }}
+          username: ${{ secrets.DEV_VPS_USER }}
+          key: ${{ secrets.DEV_VPS_SSH_KEY }}
+          source: "artifacts/*/app.jar"
+          target: "/opt/coryd-dev/incoming"
+          strip_components: 1
+
+      - name: Install and restart changed services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_VPS_HOST }}
+          username: ${{ secrets.DEV_VPS_USER }}
+          key: ${{ secrets.DEV_VPS_SSH_KEY }}
+          # Restart order matches dependency order: identity -> profile -> trip -> payment -> notification.
+          envs: CHANGED_SERVICES
+          script: |
+            set -e
+            for svc in identity-service profile-service trip-service payment-service notification-service; do
+              if echo "$CHANGED_SERVICES" | grep -q "\"${svc}\""; then
+                mkdir -p /opt/coryd-dev/${svc}
+                mv /opt/coryd-dev/incoming/${svc}/app.jar /opt/coryd-dev/${svc}/app.jar
+                sudo systemctl restart coryd-${svc}
+                echo "Deployed and restarted coryd-${svc}"
+              fi
+            done
+        env:
+          CHANGED_SERVICES: ${{ needs.detect-changes.outputs.services }}

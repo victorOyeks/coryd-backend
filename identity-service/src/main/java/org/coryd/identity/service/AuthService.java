@@ -1,0 +1,139 @@
+package org.coryd.identity.service;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.UserRole;
+import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.events.AccountVerifiedEvent;
+import org.coryd.common.kafka.events.OtpIssuedEvent;
+import org.coryd.common.security.JwtUtil;
+import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.RefreshTokenRequest;
+import org.coryd.identity.dto.ResendOtpRequest;
+import org.coryd.identity.dto.SignupRequest;
+import org.coryd.identity.dto.VerifyOtpRequest;
+import org.coryd.identity.entity.OtpCode;
+import org.coryd.identity.entity.RefreshToken;
+import org.coryd.identity.entity.User;
+import org.coryd.identity.repository.OtpCodeRepository;
+import org.coryd.identity.repository.RefreshTokenRepository;
+import org.coryd.identity.repository.UserRepository;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+
+    private static final int OTP_TTL_MINUTES = 5;
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final UserRepository userRepository;
+    private final OtpCodeRepository otpCodeRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final JwtUtil jwtUtil;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Transactional
+    public void signup(SignupRequest request) {
+        User user = userRepository.findByPhone(request.phone())
+                .orElseGet(() -> userRepository.save(User.builder()
+                        .phone(request.phone())
+                        .build()));
+        user.getRoles().add(request.role());
+        userRepository.save(user);
+        issueOtp(request.phone());
+    }
+
+    @Transactional
+    public void resendOtp(ResendOtpRequest request) {
+        issueOtp(request.phone());
+    }
+
+    private void issueOtp(String phone) {
+        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+        otpCodeRepository.save(OtpCode.builder()
+                .phone(phone)
+                .code(code)
+                .expiresAt(Instant.now().plus(OTP_TTL_MINUTES, ChronoUnit.MINUTES))
+                .build());
+        kafkaTemplate.send("coryd-otp-issued", OtpIssuedEvent.builder()
+                .phone(phone)
+                .code(code)
+                .build());
+    }
+
+    @Transactional
+    public AuthResponse verifyOtp(VerifyOtpRequest request) {
+        OtpCode otp = otpCodeRepository.findTopByPhoneAndUsedFalseOrderByCreatedAtDesc(request.phone())
+                .orElseThrow(() -> new BadRequestException("No pending OTP for this phone number"));
+
+        if (otp.getExpiresAt().isBefore(Instant.now())) {
+            throw new BadRequestException("OTP has expired");
+        }
+        if (!otp.getCode().equals(request.code())) {
+            throw new BadRequestException("Incorrect OTP");
+        }
+
+        otp.setUsed(true);
+        otpCodeRepository.save(otp);
+
+        User user = userRepository.findByPhone(request.phone())
+                .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
+
+        for (UserRole role : user.getRoles()) {
+            kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
+                    .userId(user.getId().toString())
+                    .phone(user.getPhone())
+                    .roleAdded(role)
+                    .verifiedAt(LocalDateTime.now())
+                    .build());
+        }
+
+        return issueTokens(user);
+    }
+
+    @Transactional
+    public AuthResponse refresh(RefreshTokenRequest request) {
+        RefreshToken existing = refreshTokenRepository.findByTokenAndRevokedFalse(request.refreshToken())
+                .orElseThrow(() -> new BadRequestException("Invalid or expired refresh token"));
+
+        if (existing.getExpiresAt().isBefore(Instant.now())) {
+            throw new BadRequestException("Refresh token has expired");
+        }
+
+        existing.setRevoked(true);
+        refreshTokenRepository.save(existing);
+
+        User user = userRepository.findById(existing.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("Account no longer exists"));
+
+        return issueTokens(user);
+    }
+
+    private AuthResponse issueTokens(User user) {
+        String accessToken = jwtUtil.generateToken(
+                user.getId().toString(), user.getPhone(), user.getFullName(), user.getRoles());
+
+        String refreshTokenValue = UUID.randomUUID().toString();
+        refreshTokenRepository.save(RefreshToken.builder()
+                .userId(user.getId())
+                .token(refreshTokenValue)
+                .expiresAt(Instant.now().plus(30, ChronoUnit.DAYS))
+                .build());
+
+        Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
+        return new AuthResponse(user.getId().toString(), user.getPhone(), roleNames, accessToken, refreshTokenValue);
+    }
+}

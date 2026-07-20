@@ -1,0 +1,41 @@
+server:
+  port: 9101
+  servlet:
+    context-path: /identity
+
+spring:
+  application:
+    name: identity-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coryd}?currentSchema=identity
+    username: ${DB_USERNAME:coryd}
+    password: ${DB_PASSWORD:coryd}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: identity
+        format_sql: true
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    default-schema: identity
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+    consumer:
+      group-id: coryd-identity-service
+      auto-offset-reset: earliest
+
+jwt:
+  secret: ${JWT_SECRET:change-me-in-every-environment}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

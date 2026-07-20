@@ -1,0 +1,19 @@
+# Build output
+target/
+*.class
+
+# Real secrets - only the .example templates get committed
+.env
+.env.dev
+.env.pilot
+.env.prod
+.env.local
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

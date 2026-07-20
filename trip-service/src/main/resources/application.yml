@@ -1,0 +1,61 @@
+server:
+  port: 9103
+  servlet:
+    context-path: /trip
+
+spring:
+  application:
+    name: trip-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coryd}?currentSchema=trip
+    username: ${DB_USERNAME:coryd}
+    password: ${DB_PASSWORD:coryd}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: trip
+        format_sql: true
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    default-schema: trip
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+    consumer:
+      group-id: coryd-trip-service
+      auto-offset-reset: earliest
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Shared Redis instance (marketrun-ng uses DB 0 by default) - CoRyd gets
+      # its own logical DB so live-location keys never collide with theirs.
+      database: ${REDIS_DATABASE:1}
+
+jwt:
+  secret: ${JWT_SECRET:change-me-in-every-environment}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+services:
+  profile:
+    url: ${PROFILE_SERVICE_URL:http://localhost:9102/profile}
+
+matching:
+  time-tolerance-minutes: 20
+  geo-tolerance-meters: 500
+  min-fare-reports: 5
+
+cancellation:
+  free-cancellation-window-hours: 2
+  late-fee-percentage: 0.50
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
