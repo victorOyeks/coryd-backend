@@ -15,6 +15,8 @@ jobs:
         id: filter
         with:
           filters: |
+            api-gateway:
+              - 'api-gateway/**'
             identity-service:
               - 'identity-service/**'
               - 'common/**'
@@ -84,11 +86,13 @@ jobs:
           host: ${{ secrets.DEV_VPS_HOST }}
           username: ${{ secrets.DEV_VPS_USER }}
           key: ${{ secrets.DEV_VPS_SSH_KEY }}
-          # Restart order matches dependency order: identity -> profile -> trip -> payment -> notification.
+          # Restart order matches dependency order: identity -> profile -> trip -> payment ->
+          # notification -> api-gateway last (so the gateway only ever routes to backends
+          # that are already on the new version).
           envs: CHANGED_SERVICES
           script: |
             set -e
-            for svc in identity-service profile-service trip-service payment-service notification-service; do
+            for svc in identity-service profile-service trip-service payment-service notification-service api-gateway; do
               if echo "$CHANGED_SERVICES" | grep -q "\"${svc}\""; then
                 mkdir -p /opt/coryd-dev/${svc}
                 mv /opt/coryd-dev/incoming/${svc}/app.jar /opt/coryd-dev/${svc}/app.jar

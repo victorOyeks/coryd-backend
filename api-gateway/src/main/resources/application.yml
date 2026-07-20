@@ -1,0 +1,96 @@
+server:
+  port: 9100
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+
+        # ── Identity ──────────────────────────────────────────────────────────
+        - id: identity-service
+          uri: http://${IDENTITY_HOST:localhost}:9101
+          predicates:
+            - Path=/identity/**
+
+        # ── Profile ───────────────────────────────────────────────────────────
+        - id: profile-service
+          uri: http://${PROFILE_HOST:localhost}:9102
+          predicates:
+            - Path=/profile/**
+
+        # ── Trip ──────────────────────────────────────────────────────────────
+        - id: trip-service
+          uri: http://${TRIP_HOST:localhost}:9103
+          predicates:
+            - Path=/trip/**
+
+        # ── Payment ───────────────────────────────────────────────────────────
+        - id: payment-service
+          uri: http://${PAYMENT_HOST:localhost}:9104
+          predicates:
+            - Path=/payment/**
+
+        # ── Notification ──────────────────────────────────────────────────────
+        - id: notification-service
+          uri: http://${NOTIFICATION_HOST:localhost}:9105
+          predicates:
+            - Path=/notification/**
+
+        # ── OpenAPI docs routes (gateway proxies each service's /v3/api-docs) ─
+        - id: identity-docs
+          uri: http://${IDENTITY_HOST:localhost}:9101
+          predicates:
+            - Path=/docs/identity/**
+          filters:
+            - RewritePath=/docs/identity/(?<segment>.*), /identity/${segment}
+
+        - id: profile-docs
+          uri: http://${PROFILE_HOST:localhost}:9102
+          predicates:
+            - Path=/docs/profile/**
+          filters:
+            - RewritePath=/docs/profile/(?<segment>.*), /profile/${segment}
+
+        - id: trip-docs
+          uri: http://${TRIP_HOST:localhost}:9103
+          predicates:
+            - Path=/docs/trip/**
+          filters:
+            - RewritePath=/docs/trip/(?<segment>.*), /trip/${segment}
+
+        - id: payment-docs
+          uri: http://${PAYMENT_HOST:localhost}:9104
+          predicates:
+            - Path=/docs/payment/**
+          filters:
+            - RewritePath=/docs/payment/(?<segment>.*), /payment/${segment}
+
+        - id: notification-docs
+          uri: http://${NOTIFICATION_HOST:localhost}:9105
+          predicates:
+            - Path=/docs/notification/**
+          filters:
+            - RewritePath=/docs/notification/(?<segment>.*), /notification/${segment}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: identity-service
+        url: /docs/identity/v3/api-docs
+      - name: profile-service
+        url: /docs/profile/v3/api-docs
+      - name: trip-service
+        url: /docs/trip/v3/api-docs
+      - name: payment-service
+        url: /docs/payment/v3/api-docs
+      - name: notification-service
+        url: /docs/notification/v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
