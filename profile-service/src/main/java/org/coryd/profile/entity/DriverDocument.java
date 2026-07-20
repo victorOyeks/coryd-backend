@@ -32,7 +32,9 @@ public class DriverDocument extends BaseEntity {
 
     private LocalDate expiresOn;
 
+    @Column(name = "reminder_sent_14d")
     private boolean reminderSent14d;
 
+    @Column(name = "reminder_sent_3d")
     private boolean reminderSent3d;
 }
