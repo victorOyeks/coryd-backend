@@ -1,5 +1,6 @@
 server:
   port: 9100
+  forward-headers-strategy: framework
 
 spring:
   application:
@@ -38,56 +39,27 @@ spring:
           predicates:
             - Path=/notification/**
 
-        # ── OpenAPI docs routes (gateway proxies each service's /v3/api-docs) ─
-        - id: identity-docs
-          uri: http://${IDENTITY_HOST:localhost}:9101
-          predicates:
-            - Path=/docs/identity/**
-          filters:
-            - RewritePath=/docs/identity/(?<segment>.*), /identity/${segment}
-
-        - id: profile-docs
-          uri: http://${PROFILE_HOST:localhost}:9102
-          predicates:
-            - Path=/docs/profile/**
-          filters:
-            - RewritePath=/docs/profile/(?<segment>.*), /profile/${segment}
-
-        - id: trip-docs
-          uri: http://${TRIP_HOST:localhost}:9103
-          predicates:
-            - Path=/docs/trip/**
-          filters:
-            - RewritePath=/docs/trip/(?<segment>.*), /trip/${segment}
-
-        - id: payment-docs
-          uri: http://${PAYMENT_HOST:localhost}:9104
-          predicates:
-            - Path=/docs/payment/**
-          filters:
-            - RewritePath=/docs/payment/(?<segment>.*), /payment/${segment}
-
-        - id: notification-docs
-          uri: http://${NOTIFICATION_HOST:localhost}:9105
-          predicates:
-            - Path=/docs/notification/**
-          filters:
-            - RewritePath=/docs/notification/(?<segment>.*), /notification/${segment}
-
+# No separate /docs/<service>/** rewrite routes: every service's context-path
+# already equals its route prefix (/identity, /profile, ...), so the plain
+# routes above already forward /identity/v3/api-docs straight through
+# unchanged. A rewrite layer here was actively harmful - Spring Cloud
+# Gateway's forwarded-prefix handling for a RewritePath route leaked the
+# route's own prefix ("/docs") into Springdoc's computed "servers" URL
+# instead of the service's real context-path.
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
     urls:
       - name: identity-service
-        url: /docs/identity/v3/api-docs
+        url: /identity/v3/api-docs
       - name: profile-service
-        url: /docs/profile/v3/api-docs
+        url: /profile/v3/api-docs
       - name: trip-service
-        url: /docs/trip/v3/api-docs
+        url: /trip/v3/api-docs
       - name: payment-service
-        url: /docs/payment/v3/api-docs
+        url: /payment/v3/api-docs
       - name: notification-service
-        url: /docs/notification/v3/api-docs
+        url: /notification/v3/api-docs
 
 management:
   endpoints:
