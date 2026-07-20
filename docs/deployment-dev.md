@@ -11,7 +11,7 @@ from naming, not separate infrastructure:
 - Every CoRyd Kafka topic is prefixed `coryd-` (e.g. `coryd-booking-confirmed`), and every consumer group ID is prefixed `coryd-<service-name>` (e.g. `coryd-identity-service`) — both baked into the code already. Without this, CoRyd's `identity-service` consumer group would collide with marketrun-ng's own `identity-service` consumer group on the same broker and the two unrelated apps would fight over each other's partitions.
 - `trip-service` (the only service that touches Redis, for live driver location) uses logical DB index `1`, leaving marketrun-ng's default DB `0` untouched.
 
-Domain: `coryde-api-dev.marketrunn.com` → Nginx → `api-gateway` (:9100) → the 5 services (:9101-9105), mirroring marketrun-ng's own gateway pattern. This also gives a single unified Swagger UI instead of 5 separate ones.
+Domain: `coryd-api-dev.marketrunn.com` → Nginx → `api-gateway` (:9100) → the 5 services (:9101-9105), mirroring marketrun-ng's own gateway pattern. This also gives a single unified Swagger UI instead of 5 separate ones.
 
 **Everything after Phase 6 is CI-driven** — GitHub Actions builds, ships, and starts all 6 (5 services + gateway) on the first push to `develop`, and every push after that. Phases 1-6 are one-time setup that only you can do (DNS/GitHub/VPS access), since I have none of those from here.
 
@@ -21,9 +21,9 @@ Domain: `coryde-api-dev.marketrunn.com` → Nginx → `api-gateway` (:9100) → 
 
 1. Log into the Cloudflare dashboard for the `marketrunn.com` zone.
 2. Go to **DNS → Records → Add record**.
-3. Type: `A`. Name: `coryde-api-dev`. IPv4 address: the VPS's public IP (same one `api-dev.marketrunn.com` already points to — check that record for the value).
+3. Type: `A`. Name: `coryd-api-dev`. IPv4 address: the VPS's public IP (same one `api-dev.marketrunn.com` already points to — check that record for the value).
 4. Proxy status: **DNS only** (grey cloud), not proxied — Certbot needs to validate directly against the origin. You can switch to proxied (orange cloud) after the certificate is issued, if you want Cloudflare's edge in front.
-5. Save. Propagation is usually near-instant on Cloudflare; confirm with `dig coryde-api-dev.marketrunn.com` from your machine before moving on.
+5. Save. Propagation is usually near-instant on Cloudflare; confirm with `dig coryd-api-dev.marketrunn.com` from your machine before moving on.
 
 ---
 
@@ -175,16 +175,16 @@ Nginx proxies everything to the gateway on `127.0.0.1:9100` — a single `locati
 
 ```bash
 # From your local machine
-scp nginx/coryde-api-dev.marketrunn.com devoyeks@<vps-ip>:/tmp/
+scp nginx/coryd-api-dev.marketrunn.com devoyeks@<vps-ip>:/tmp/
 
 # On the VPS
-sudo mv /tmp/coryde-api-dev.marketrunn.com /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/coryde-api-dev.marketrunn.com /etc/nginx/sites-enabled/
+sudo mv /tmp/coryd-api-dev.marketrunn.com /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/coryd-api-dev.marketrunn.com /etc/nginx/sites-enabled/
 sudo nginx -t          # validate config before reloading
 sudo systemctl reload nginx
 
 # Issue the cert - certbot rewrites the site file in place to add the SSL block
-sudo certbot --nginx -d coryde-api-dev.marketrunn.com
+sudo certbot --nginx -d coryd-api-dev.marketrunn.com
 ```
 
 If you land on this phase after already hitting `ERR_SSL_UNRECOGNIZED_NAME_ALERT` in a browser, that error means this phase was never completed (no certificate/server block exists yet for this hostname) — running the steps above resolves it.
@@ -194,18 +194,18 @@ If you land on this phase after already hitting `ERR_SSL_UNRECOGNIZED_NAME_ALERT
 ## Phase 9 — Verification
 
 ```bash
-curl https://coryde-api-dev.marketrunn.com/identity/actuator/health
-curl https://coryde-api-dev.marketrunn.com/profile/actuator/health
-curl https://coryde-api-dev.marketrunn.com/trip/actuator/health
-curl https://coryde-api-dev.marketrunn.com/payment/actuator/health
-curl https://coryde-api-dev.marketrunn.com/notification/actuator/health
+curl https://coryd-api-dev.marketrunn.com/identity/actuator/health
+curl https://coryd-api-dev.marketrunn.com/profile/actuator/health
+curl https://coryd-api-dev.marketrunn.com/trip/actuator/health
+curl https://coryd-api-dev.marketrunn.com/payment/actuator/health
+curl https://coryd-api-dev.marketrunn.com/notification/actuator/health
 ```
 
 Each should return `{"status":"UP"}` — the gateway forwards the same path prefixes through unchanged, so these URLs are identical to what they'd be without a gateway in front.
 
 Unified Swagger UI (the payoff for adding the gateway):
 ```
-https://coryde-api-dev.marketrunn.com/swagger-ui.html
+https://coryd-api-dev.marketrunn.com/swagger-ui.html
 ```
 This should show a dropdown listing all 5 services, each backed by its own `/docs/<service>/v3/api-docs` route.
 
