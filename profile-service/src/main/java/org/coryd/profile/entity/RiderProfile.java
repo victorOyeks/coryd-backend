@@ -26,6 +26,8 @@ public class RiderProfile extends BaseEntity {
     @Column(length = 100)
     private String fullName;
 
+    private String email;
+
     private String photoUrl;
 
     private String emergencyContactName;

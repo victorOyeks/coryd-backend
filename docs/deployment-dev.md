@@ -91,6 +91,8 @@ Fill in at minimum:
 
 `KAFKA_SERVERS=127.0.0.1:9092`, `REDIS_HOST=127.0.0.1`, `REDIS_PORT=6379`, and `REDIS_DATABASE=1` are already correct in the template for the shared-infra setup (confirmed reachable in Phase 3) — only change them if Phase 3's reachability check told you otherwise. `api-gateway` doesn't need this file at all (it has no DB/Kafka/Redis dependency, just routes), but there's no harm in it being present in the same `EnvironmentFile=` for every unit.
 
+**Don't remove `SPRING_PROFILES_ACTIVE=dev`** — without it every service runs under Spring's bare "default" profile, `application-dev.yml` never loads, and identity-service's fixed `000333` OTP (dev/test only) never activates.
+
 **Never commit `.env.dev`.**
 
 ---

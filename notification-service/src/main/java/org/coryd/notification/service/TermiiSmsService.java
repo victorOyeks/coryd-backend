@@ -28,6 +28,14 @@ public class TermiiSmsService {
     }
 
     public boolean send(String toPhone, String message) {
+        return dispatch(toPhone, message, "generic");
+    }
+
+    public boolean sendWhatsapp(String toPhone, String message) {
+        return dispatch(toPhone, message, "whatsapp");
+    }
+
+    private boolean dispatch(String toPhone, String message, String channel) {
         try {
             restClient.post()
                     .uri("/api/sms/send")
@@ -37,13 +45,13 @@ public class TermiiSmsService {
                             "from", senderId,
                             "sms", message,
                             "type", "plain",
-                            "channel", "generic"
+                            "channel", channel
                     ))
                     .retrieve()
                     .toBodilessEntity();
             return true;
         } catch (Exception e) {
-            log.error("Failed to send SMS to {}: {}", toPhone, e.getMessage());
+            log.error("Failed to send {} message to {}: {}", channel, toPhone, e.getMessage());
             return false;
         }
     }

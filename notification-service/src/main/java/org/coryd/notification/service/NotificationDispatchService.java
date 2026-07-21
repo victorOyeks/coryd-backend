@@ -2,6 +2,7 @@ package org.coryd.notification.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.NotificationChannel;
+import org.coryd.common.enums.OtpChannel;
 import org.coryd.notification.entity.DeviceToken;
 import org.coryd.notification.entity.NotificationLog;
 import org.coryd.notification.repository.DeviceTokenRepository;
@@ -27,6 +28,21 @@ public class NotificationDispatchService {
         notificationLogRepository.save(NotificationLog.builder()
                 .recipientPhone(phone)
                 .channel(NotificationChannel.SMS)
+                .eventType(eventType)
+                .delivered(delivered)
+                .build());
+    }
+
+    @Async
+    @Transactional
+    public void sendOtp(String phone, String message, String eventType, OtpChannel channel) {
+        boolean isWhatsapp = channel == OtpChannel.WHATSAPP;
+        boolean delivered = isWhatsapp
+                ? termiiSmsService.sendWhatsapp(phone, message)
+                : termiiSmsService.send(phone, message);
+        notificationLogRepository.save(NotificationLog.builder()
+                .recipientPhone(phone)
+                .channel(isWhatsapp ? NotificationChannel.WHATSAPP : NotificationChannel.SMS)
                 .eventType(eventType)
                 .delivered(delivered)
                 .build());

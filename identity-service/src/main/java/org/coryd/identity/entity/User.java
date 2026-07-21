@@ -18,6 +18,7 @@ import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.UserRole;
 
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -35,6 +36,12 @@ public class User extends BaseEntity {
 
     @Column(length = 100)
     private String fullName;
+
+    /** Null until "Set up your password" completes - a phone-verified account isn't fully onboarded yet. */
+    private String passwordHash;
+
+    /** R-104: explicit consent timestamp, not implied by continuing. Null until accepted. */
+    private Instant termsAcceptedAt;
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "user_roles", schema = "identity", joinColumns = @JoinColumn(name = "user_id"))

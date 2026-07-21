@@ -20,7 +20,8 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = "coryd-otp-issued", groupId = "coryd-notification-service")
     public void onOtpIssued(OtpIssuedEvent event) {
-        dispatchService.sendSms(event.getPhone(), "Your CoRyd verification code is " + event.getCode(), "OTP_ISSUED");
+        dispatchService.sendOtp(event.getPhone(), "Your CoRyd verification code is " + event.getCode(),
+                "OTP_ISSUED", event.getChannel());
     }
 
     @KafkaListener(topics = "coryd-booking-confirmed", groupId = "coryd-notification-service")

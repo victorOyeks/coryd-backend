@@ -2,6 +2,7 @@ package org.coryd.identity.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.OtpChannel;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
@@ -9,8 +10,10 @@ import org.coryd.common.kafka.events.AccountVerifiedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.JwtUtil;
 import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
+import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.entity.OtpCode;
@@ -19,7 +22,9 @@ import org.coryd.identity.entity.User;
 import org.coryd.identity.repository.OtpCodeRepository;
 import org.coryd.identity.repository.RefreshTokenRepository;
 import org.coryd.identity.repository.UserRepository;
+import org.springframework.core.env.Environment;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,12 +42,15 @@ import java.util.stream.Collectors;
 public class AuthService {
 
     private static final int OTP_TTL_MINUTES = 5;
+    private static final String FIXED_DEV_OTP = "000333";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
     private final OtpCodeRepository otpCodeRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
+    private final Environment environment;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Transactional
@@ -53,16 +61,16 @@ public class AuthService {
                         .build()));
         user.getRoles().add(request.role());
         userRepository.save(user);
-        issueOtp(request.phone());
+        issueOtp(request.phone(), OtpChannel.SMS);
     }
 
     @Transactional
     public void resendOtp(ResendOtpRequest request) {
-        issueOtp(request.phone());
+        issueOtp(request.phone(), request.channelOrDefault());
     }
 
-    private void issueOtp(String phone) {
-        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+    private void issueOtp(String phone, OtpChannel channel) {
+        String code = isDevOrTest() ? FIXED_DEV_OTP : String.format("%06d", RANDOM.nextInt(1_000_000));
         otpCodeRepository.save(OtpCode.builder()
                 .phone(phone)
                 .code(code)
@@ -71,7 +79,18 @@ public class AuthService {
         kafkaTemplate.send("coryd-otp-issued", OtpIssuedEvent.builder()
                 .phone(phone)
                 .code(code)
+                .channel(channel)
                 .build());
+    }
+
+    /** dev/test get a fixed OTP so testers never have to check an inbox. Never enabled otherwise. */
+    private boolean isDevOrTest() {
+        for (String profile : environment.getActiveProfiles()) {
+            if ("dev".equalsIgnoreCase(profile) || "test".equalsIgnoreCase(profile)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Transactional
@@ -94,11 +113,48 @@ public class AuthService {
 
         for (UserRole role : user.getRoles()) {
             kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
-                    .userId(user.getId().toString())
+                    .userId(user.getId())
                     .phone(user.getPhone())
                     .roleAdded(role)
                     .verifiedAt(LocalDateTime.now())
                     .build());
+        }
+
+        return issueTokens(user);
+    }
+
+    @Transactional
+    public void setPassword(String userId, SetPasswordRequest request) {
+        if (!request.password().equals(request.confirmPassword())) {
+            throw new BadRequestException("Password and confirmation do not match");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        userRepository.save(user);
+    }
+
+    @Transactional
+    public void acceptTerms(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+
+        user.setTermsAcceptedAt(Instant.now());
+        userRepository.save(user);
+    }
+
+    @Transactional
+    public AuthResponse login(LoginRequest request) {
+        User user = userRepository.findByPhone(request.phone())
+                .orElseThrow(() -> new BadRequestException("Incorrect phone number or password"));
+
+        if (user.getPasswordHash() == null) {
+            throw new BadRequestException("Account setup is incomplete - finish onboarding before signing in");
+        }
+        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            throw new BadRequestException("Incorrect phone number or password");
         }
 
         return issueTokens(user);
@@ -124,7 +180,7 @@ public class AuthService {
 
     private AuthResponse issueTokens(User user) {
         String accessToken = jwtUtil.generateToken(
-                user.getId().toString(), user.getPhone(), user.getFullName(), user.getRoles());
+                user.getId(), user.getPhone(), user.getFullName(), user.getRoles());
 
         String refreshTokenValue = UUID.randomUUID().toString();
         refreshTokenRepository.save(RefreshToken.builder()
@@ -134,6 +190,6 @@ public class AuthService {
                 .build());
 
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
-        return new AuthResponse(user.getId().toString(), user.getPhone(), roleNames, accessToken, refreshTokenValue);
+        return new AuthResponse(user.getId(), user.getPhone(), roleNames, accessToken, refreshTokenValue);
     }
 }
