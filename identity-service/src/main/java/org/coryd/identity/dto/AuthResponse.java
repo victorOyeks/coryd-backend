@@ -5,6 +5,7 @@ import java.util.Set;
 public record AuthResponse(
         String userId,
         String phone,
+        String activeRole,
         Set<String> roles,
         String accessToken,
         String refreshToken

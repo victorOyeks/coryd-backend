@@ -35,10 +35,12 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/auth/signup", "/auth/verify-otp", "/auth/resend-otp",
                                 "/auth/login", "/auth/refresh-token",
+                                "/auth/roles/challenge", "/auth/roles/confirm",
                                 "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**")
                         .permitAll()
-                        // set-password and accept-terms need a real authenticated principal
-                        // (the JWT issued right after verify-otp) - everything else falls through here.
+                        // set-password, accept-terms and roles/add need a real authenticated
+                        // principal (the JWT issued right after verify-otp/login) - everything
+                        // else falls through here.
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

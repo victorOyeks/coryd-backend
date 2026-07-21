@@ -1,12 +1,12 @@
 package org.coryd.identity.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import org.coryd.common.enums.UserRole;
 
 public record SignupRequest(
         @NotBlank @Pattern(regexp = "^\\+?[0-9]{10,15}$") String phone,
-        @NotNull UserRole role
+        // optional - defaults to RIDER in the service layer, same as marketrun defaulting to CUSTOMER
+        UserRole role
 ) {
 }

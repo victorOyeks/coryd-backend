@@ -9,12 +9,16 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.events.AccountVerifiedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.JwtUtil;
+import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
+import org.coryd.identity.dto.RoleChallengeRequest;
+import org.coryd.identity.dto.RoleConfirmRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
+import org.coryd.identity.dto.SignupResponse;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.entity.OtpCode;
 import org.coryd.identity.entity.RefreshToken;
@@ -32,6 +36,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -43,6 +48,7 @@ public class AuthService {
 
     private static final int OTP_TTL_MINUTES = 5;
     private static final String FIXED_DEV_OTP = "000333";
+    private static final String PURPOSE_SIGNUP = "SIGNUP";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
@@ -53,27 +59,46 @@ public class AuthService {
     private final Environment environment;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
+    private static String rolePurpose(UserRole role) {
+        return "ROLE_ADDITION_" + role.name();
+    }
+
     @Transactional
-    public void signup(SignupRequest request) {
-        User user = userRepository.findByPhone(request.phone())
-                .orElseGet(() -> userRepository.save(User.builder()
-                        .phone(request.phone())
-                        .build()));
-        user.getRoles().add(request.role());
-        userRepository.save(user);
-        issueOtp(request.phone(), OtpChannel.SMS);
+    public SignupResponse signup(SignupRequest request) {
+        UserRole role = request.role() != null ? request.role() : UserRole.RIDER;
+        if (role == UserRole.OPS_ADMIN) {
+            throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
+        }
+
+        var existing = userRepository.findByPhone(request.phone());
+        if (existing.isEmpty()) {
+            userRepository.save(User.builder()
+                    .phone(request.phone())
+                    .roles(new HashSet<>(Set.of(role)))
+                    .build());
+            issueOtp(request.phone(), PURPOSE_SIGNUP, OtpChannel.SMS);
+            return new SignupResponse(false);
+        }
+
+        User user = existing.get();
+        if (user.getRoles().contains(role)) {
+            throw new BadRequestException("You already have a " + role + " account. Please log in instead");
+        }
+
+        return new SignupResponse(true);
     }
 
     @Transactional
     public void resendOtp(ResendOtpRequest request) {
-        issueOtp(request.phone(), request.channelOrDefault());
+        issueOtp(request.phone(), PURPOSE_SIGNUP, request.channelOrDefault());
     }
 
-    private void issueOtp(String phone, OtpChannel channel) {
+    private void issueOtp(String phone, String purpose, OtpChannel channel) {
         String code = isDevOrTest() ? FIXED_DEV_OTP : String.format("%06d", RANDOM.nextInt(1_000_000));
         otpCodeRepository.save(OtpCode.builder()
                 .phone(phone)
                 .code(code)
+                .purpose(purpose)
                 .expiresAt(Instant.now().plus(OTP_TTL_MINUTES, ChronoUnit.MINUTES))
                 .build());
         kafkaTemplate.send("coryd-otp-issued", OtpIssuedEvent.builder()
@@ -93,34 +118,42 @@ public class AuthService {
         return false;
     }
 
-    @Transactional
-    public AuthResponse verifyOtp(VerifyOtpRequest request) {
-        OtpCode otp = otpCodeRepository.findTopByPhoneAndUsedFalseOrderByCreatedAtDesc(request.phone())
-                .orElseThrow(() -> new BadRequestException("No pending OTP for this phone number"));
+    private OtpCode consumeOtp(String phone, String purpose, String code) {
+        OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(phone, purpose)
+                .orElseThrow(() -> new BadRequestException("No pending OTP for this request"));
 
         if (otp.getExpiresAt().isBefore(Instant.now())) {
             throw new BadRequestException("OTP has expired");
         }
-        if (!otp.getCode().equals(request.code())) {
+        if (!otp.getCode().equals(code)) {
             throw new BadRequestException("Incorrect OTP");
         }
 
         otp.setUsed(true);
         otpCodeRepository.save(otp);
+        return otp;
+    }
+
+    @Transactional
+    public AuthResponse verifyOtp(VerifyOtpRequest request) {
+        consumeOtp(request.phone(), PURPOSE_SIGNUP, request.code());
 
         User user = userRepository.findByPhone(request.phone())
                 .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
 
-        for (UserRole role : user.getRoles()) {
-            kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
-                    .userId(user.getId())
-                    .phone(user.getPhone())
-                    .roleAdded(role)
-                    .verifiedAt(LocalDateTime.now())
-                    .build());
-        }
+        // A user reaching signup-OTP verification always holds exactly the one
+        // role they just signed up with - role addition to an existing account
+        // goes through roles/challenge + roles/confirm instead, never this path.
+        UserRole role = user.getRoles().iterator().next();
 
-        return issueTokens(user);
+        kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
+                .userId(user.getId())
+                .phone(user.getPhone())
+                .roleAdded(role)
+                .verifiedAt(LocalDateTime.now())
+                .build());
+
+        return issueTokens(user, role);
     }
 
     @Transactional
@@ -147,6 +180,8 @@ public class AuthService {
 
     @Transactional
     public AuthResponse login(LoginRequest request) {
+        UserRole activeRole = request.roleOrDefault();
+
         User user = userRepository.findByPhone(request.phone())
                 .orElseThrow(() -> new BadRequestException("Incorrect phone number or password"));
 
@@ -156,8 +191,80 @@ public class AuthService {
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BadRequestException("Incorrect phone number or password");
         }
+        if (!user.getRoles().contains(activeRole)) {
+            throw new BadRequestException("You don't have a " + activeRole + " account - please sign up first");
+        }
 
-        return issueTokens(user);
+        return issueTokens(user, activeRole);
+    }
+
+    /** Already-authenticated user self-attaching a new, non-privileged role - no OTP needed, the JWT already proves identity. */
+    @Transactional
+    public AuthResponse addRole(String userId, AddRoleRequest request) {
+        UserRole role = request.role();
+        if (role == UserRole.OPS_ADMIN) {
+            throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+        if (user.getRoles().contains(role)) {
+            throw new BadRequestException("You already have a " + role + " account");
+        }
+
+        user.getRoles().add(role);
+        userRepository.save(user);
+        publishRoleAdded(user, role);
+
+        return issueTokens(user, role);
+    }
+
+    /** Step 1 for a logged-out caller: verify phone + password own this account, then send an OTP scoped to this specific role addition. */
+    @Transactional
+    public void initiateRoleAddition(RoleChallengeRequest request) {
+        UserRole role = request.role();
+        if (role == UserRole.OPS_ADMIN) {
+            throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
+        }
+
+        User user = userRepository.findByPhone(request.phone())
+                .orElseThrow(() -> new BadRequestException("No account for this phone number"));
+        if (user.getRoles().contains(role)) {
+            throw new BadRequestException("You already have a " + role + " account");
+        }
+        if (user.getPasswordHash() == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            throw new BadRequestException("Incorrect phone number or password");
+        }
+
+        issueOtp(request.phone(), rolePurpose(role), OtpChannel.SMS);
+    }
+
+    /** Step 2: confirm the role-scoped OTP, then attach the role and issue a token for it. */
+    @Transactional
+    public AuthResponse confirmRoleAddition(RoleConfirmRequest request) {
+        UserRole role = request.role();
+        consumeOtp(request.phone(), rolePurpose(role), request.code());
+
+        User user = userRepository.findByPhone(request.phone())
+                .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
+        if (user.getRoles().contains(role)) {
+            throw new BadRequestException("You already have a " + role + " account");
+        }
+
+        user.getRoles().add(role);
+        userRepository.save(user);
+        publishRoleAdded(user, role);
+
+        return issueTokens(user, role);
+    }
+
+    private void publishRoleAdded(User user, UserRole role) {
+        kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
+                .userId(user.getId())
+                .phone(user.getPhone())
+                .roleAdded(role)
+                .verifiedAt(LocalDateTime.now())
+                .build());
     }
 
     @Transactional
@@ -175,21 +282,21 @@ public class AuthService {
         User user = userRepository.findById(existing.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account no longer exists"));
 
-        return issueTokens(user);
+        return issueTokens(user, existing.getActiveRole());
     }
 
-    private AuthResponse issueTokens(User user) {
-        String accessToken = jwtUtil.generateToken(
-                user.getId(), user.getPhone(), user.getFullName(), user.getRoles());
+    private AuthResponse issueTokens(User user, UserRole activeRole) {
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFullName(), activeRole);
 
         String refreshTokenValue = UUID.randomUUID().toString();
         refreshTokenRepository.save(RefreshToken.builder()
                 .userId(user.getId())
                 .token(refreshTokenValue)
+                .activeRole(activeRole)
                 .expiresAt(Instant.now().plus(30, ChronoUnit.DAYS))
                 .build());
 
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
-        return new AuthResponse(user.getId(), user.getPhone(), roleNames, accessToken, refreshTokenValue);
+        return new AuthResponse(user.getId(), user.getPhone(), activeRole.name(), roleNames, accessToken, refreshTokenValue);
     }
 }

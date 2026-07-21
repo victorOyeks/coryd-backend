@@ -11,10 +11,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Date;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -30,13 +27,12 @@ public class JwtUtil {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateToken(String userId, String phone, String fullName, Set<UserRole> roles) {
-        String rolesClaim = roles.stream().map(Enum::name).collect(Collectors.joining(","));
+    public String generateToken(String userId, String phone, String fullName, UserRole activeRole) {
         return Jwts.builder()
                 .subject(userId)
                 .claim("phone", phone)
                 .claim("fullName", fullName)
-                .claim("roles", rolesClaim)
+                .claim("role", activeRole.name())
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(signingKey())
@@ -63,14 +59,11 @@ public class JwtUtil {
 
     public CoRydUserDetails extractUserDetails(String token) {
         Claims claims = extractAllClaims(token);
-        Set<UserRole> roles = Arrays.stream(claims.get("roles", String.class).split(","))
-                .map(UserRole::valueOf)
-                .collect(Collectors.toSet());
         return new CoRydUserDetails(
                 claims.getSubject(),
                 claims.get("phone", String.class),
                 claims.get("fullName", String.class),
-                roles
+                UserRole.valueOf(claims.get("role", String.class))
         );
     }
 }

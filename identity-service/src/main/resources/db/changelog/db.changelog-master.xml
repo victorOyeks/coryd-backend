@@ -11,5 +11,6 @@
 
     <include file="db/changelog/001-initial-schema.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/002-password-and-terms.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/003-role-addition-flow.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

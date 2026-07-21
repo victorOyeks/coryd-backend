@@ -56,7 +56,7 @@ public class LoggingInterceptor implements HandlerInterceptor {
     private String resolveUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof CoRydUserDetails u) {
-            return u.getPhone() + " " + u.getRoles();
+            return u.getPhone() + " " + u.getActiveRole();
         }
         return "anonymous";
     }
