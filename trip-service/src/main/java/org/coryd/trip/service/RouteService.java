@@ -5,6 +5,7 @@ import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
@@ -81,7 +82,7 @@ public class RouteService {
                 .farePerSeat(request.farePerSeat())
                 .build());
 
-        kafkaTemplate.send("coryd-route-published", RoutePublishedEvent.builder()
+        kafkaTemplate.send(KafkaTopics.ROUTE_PUBLISHED, RoutePublishedEvent.builder()
                 .routePostId(route.getId().toString())
                 .driverId(driverId.toString())
                 .originLabel(route.getOriginLabel())
@@ -112,7 +113,7 @@ public class RouteService {
         for (NotifyMeRequest request : matches) {
             request.setFulfilled(true);
             notifyMeRequestRepository.save(request);
-            kafkaTemplate.send("coryd-notify-me-matched", NotifyMeMatchedEvent.builder()
+            kafkaTemplate.send(KafkaTopics.NOTIFY_ME_MATCHED, NotifyMeMatchedEvent.builder()
                     .notifyMeRequestId(request.getId().toString())
                     .riderId(request.getRiderId().toString())
                     .routePostId(route.getId().toString())
@@ -167,7 +168,7 @@ public class RouteService {
             if (booking.getStatus() == BookingStatus.HELD || booking.getStatus() == BookingStatus.CONFIRMED) {
                 booking.setStatus(BookingStatus.CANCELLED_DRIVER);
                 bookingRepository.save(booking);
-                kafkaTemplate.send("coryd-booking-cancelled", BookingCancelledEvent.builder()
+                kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                         .bookingId(booking.getId().toString())
                         .routePostId(routePostId.toString())
                         .riderId(booking.getRiderId().toString())
@@ -178,7 +179,7 @@ public class RouteService {
             }
         }
 
-        kafkaTemplate.send("coryd-route-cancelled", RouteCancelledEvent.builder()
+        kafkaTemplate.send(KafkaTopics.ROUTE_CANCELLED, RouteCancelledEvent.builder()
                 .routePostId(routePostId.toString())
                 .driverId(route.getDriverId().toString())
                 .affectedBookingIds(affectedIds)

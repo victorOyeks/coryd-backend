@@ -3,6 +3,7 @@ package org.coryd.profile.scheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.VerificationStatus;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DocumentExpiringEvent;
 import org.coryd.profile.entity.DriverDocument;
 import org.coryd.profile.entity.Vehicle;
@@ -38,8 +39,8 @@ public class DocumentExpiryJob {
 
     private void remind(List<DriverDocument> documents, int daysRemaining, boolean is14dPass) {
         for (DriverDocument doc : documents) {
-            kafkaTemplate.send("coryd-document-expiring", DocumentExpiringEvent.builder()
-                    .driverId(doc.getDriverId().toString())
+            kafkaTemplate.send(KafkaTopics.DOCUMENT_EXPIRING, DocumentExpiringEvent.builder()
+                    .driverId(doc.getDriverId())
                     .documentType(doc.getDocumentType())
                     .expiresOn(doc.getExpiresOn())
                     .daysRemaining(daysRemaining)

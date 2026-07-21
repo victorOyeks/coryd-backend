@@ -3,6 +3,7 @@ package org.coryd.payment.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.PaymentSucceededEvent;
 import org.coryd.payment.dto.InitiatePaymentRequest;
@@ -61,7 +62,7 @@ public class PaymentService {
         transaction.setStatus(PayoutStatus.PAID);
         paymentTransactionRepository.save(transaction);
 
-        kafkaTemplate.send("coryd-payment-succeeded", PaymentSucceededEvent.builder()
+        kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
                 .bookingId(transaction.getBookingId().toString())
                 .paymentTransactionId(transaction.getId().toString())
                 .amount(transaction.getAmount())
@@ -77,7 +78,7 @@ public class PaymentService {
         transaction.setStatus(PayoutStatus.FAILED);
         paymentTransactionRepository.save(transaction);
 
-        kafkaTemplate.send("coryd-payment-failed", PaymentFailedEvent.builder()
+        kafkaTemplate.send(KafkaTopics.PAYMENT_FAILED, PaymentFailedEvent.builder()
                 .bookingId(transaction.getBookingId().toString())
                 .reason(reason)
                 .failedAt(LocalDateTime.now())

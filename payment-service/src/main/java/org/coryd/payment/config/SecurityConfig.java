@@ -2,6 +2,7 @@ package org.coryd.payment.config;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.security.JwtFilter;
+import org.coryd.common.security.PublicPaths;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -25,7 +26,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/payments/webhook", "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers("/payments/webhook").permitAll()
+                        .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

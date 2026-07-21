@@ -3,6 +3,7 @@ package org.coryd.payment.scheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.PayoutStatus;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.PayoutProcessedEvent;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.Payout;
@@ -49,7 +50,7 @@ public class DriverPayoutJob {
             account.setAvailableBalance(BigDecimal.ZERO);
             earningsAccountRepository.save(account);
 
-            kafkaTemplate.send("coryd-payout-processed", PayoutProcessedEvent.builder()
+            kafkaTemplate.send(KafkaTopics.PAYOUT_PROCESSED, PayoutProcessedEvent.builder()
                     .payoutId(payout.getId().toString())
                     .driverId(account.getDriverId().toString())
                     .amount(amount)

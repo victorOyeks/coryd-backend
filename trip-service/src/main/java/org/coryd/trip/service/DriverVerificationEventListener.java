@@ -2,8 +2,10 @@ package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
+import org.coryd.trip.config.KafkaConfig;
 import org.coryd.trip.entity.DriverVerificationCache;
 import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -18,13 +20,13 @@ public class DriverVerificationEventListener {
 
     private final DriverVerificationCacheRepository cacheRepository;
 
-    @KafkaListener(topics = "coryd-driver-approved", groupId = "coryd-trip-service")
+    @KafkaListener(topics = KafkaTopics.DRIVER_APPROVED, groupId = KafkaConfig.GROUP_ID)
     @Transactional
     public void onApproved(DriverApprovedEvent event) {
         upsert(event.getDriverId(), true);
     }
 
-    @KafkaListener(topics = "coryd-driver-rejected", groupId = "coryd-trip-service")
+    @KafkaListener(topics = KafkaTopics.DRIVER_REJECTED, groupId = KafkaConfig.GROUP_ID)
     @Transactional
     public void onRejected(DriverRejectedEvent event) {
         upsert(event.getDriverId(), false);

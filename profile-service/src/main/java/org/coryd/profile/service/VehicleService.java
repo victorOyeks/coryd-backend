@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
@@ -62,14 +63,14 @@ public class VehicleService {
         vehicleRepository.save(vehicle);
 
         if (request.status() == VerificationStatus.APPROVED) {
-            kafkaTemplate.send("coryd-driver-approved", DriverApprovedEvent.builder()
+            kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
                     .driverId(vehicle.getDriverId().toString())
                     .vehicleId(vehicle.getId().toString())
                     .reviewedBy(request.reviewedBy())
                     .approvedAt(LocalDateTime.now())
                     .build());
         } else if (request.status() == VerificationStatus.REJECTED) {
-            kafkaTemplate.send("coryd-driver-rejected", DriverRejectedEvent.builder()
+            kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
                     .driverId(vehicle.getDriverId().toString())
                     .vehicleId(vehicle.getId().toString())
                     .rejectionReason(request.rejectionReason())

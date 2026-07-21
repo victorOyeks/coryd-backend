@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.BookingConfirmedEvent;
 import org.coryd.common.kafka.events.IssueReportedEvent;
@@ -92,7 +93,7 @@ public class BookingService {
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Payment succeeded");
 
-        kafkaTemplate.send("coryd-booking-confirmed", BookingConfirmedEvent.builder()
+        kafkaTemplate.send(KafkaTopics.BOOKING_CONFIRMED, BookingConfirmedEvent.builder()
                 .bookingId(booking.getId().toString())
                 .routePostId(booking.getRoutePostId().toString())
                 .riderId(booking.getRiderId().toString())
@@ -124,7 +125,7 @@ public class BookingService {
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window" : "Cancelled free of charge");
 
-        kafkaTemplate.send("coryd-booking-cancelled", BookingCancelledEvent.builder()
+        kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                 .bookingId(booking.getId().toString())
                 .routePostId(booking.getRoutePostId().toString())
                 .riderId(booking.getRiderId().toString())
@@ -160,7 +161,7 @@ public class BookingService {
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.COMPLETED, "Trip completed");
 
-        kafkaTemplate.send("coryd-trip-completed", TripCompletedEvent.builder()
+        kafkaTemplate.send(KafkaTopics.TRIP_COMPLETED, TripCompletedEvent.builder()
                 .bookingId(booking.getId().toString())
                 .routePostId(booking.getRoutePostId().toString())
                 .riderId(booking.getRiderId().toString())
@@ -195,7 +196,7 @@ public class BookingService {
                 .build());
 
         // Fan-out only, never the primary path - the incident is already saved above.
-        kafkaTemplate.send("coryd-sos-triggered", SosTriggeredEvent.builder()
+        kafkaTemplate.send(KafkaTopics.SOS_TRIGGERED, SosTriggeredEvent.builder()
                 .incidentId(incident.getId().toString())
                 .bookingId(bookingId.toString())
                 .triggeredBy(triggeredBy.toString())
@@ -219,7 +220,7 @@ public class BookingService {
                 .status("OPEN")
                 .build());
 
-        kafkaTemplate.send("coryd-issue-reported", IssueReportedEvent.builder()
+        kafkaTemplate.send(KafkaTopics.ISSUE_REPORTED, IssueReportedEvent.builder()
                 .issueId(issue.getId().toString())
                 .bookingId(bookingId.toString())
                 .reportedBy(request.reportedBy().toString())

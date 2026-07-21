@@ -2,6 +2,7 @@ package org.coryd.identity.config;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.security.JwtFilter;
+import org.coryd.common.security.PublicPaths;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -34,9 +35,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/auth/signup", "/auth/verify-otp", "/auth/resend-otp",
-                                "/auth/login", "/auth/refresh-token",
-                                "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**")
+                                "/auth/login", "/auth/refresh-token")
                         .permitAll()
+                        .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
                         // set-password, accept-terms and roles/add need a real authenticated
                         // principal (the JWT issued right after verify-otp/login) - everything
                         // else falls through here.

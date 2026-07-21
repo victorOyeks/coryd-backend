@@ -6,6 +6,7 @@ import org.coryd.common.enums.OtpChannel;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.JwtUtil;
 import org.coryd.identity.dto.AddRoleRequest;
@@ -84,7 +85,7 @@ public class AuthService {
                 .code(code)
                 .expiresAt(Instant.now().plus(OTP_TTL_MINUTES, ChronoUnit.MINUTES))
                 .build());
-        kafkaTemplate.send("coryd-otp-issued", OtpIssuedEvent.builder()
+        kafkaTemplate.send(KafkaTopics.OTP_ISSUED, OtpIssuedEvent.builder()
                 .phone(phone)
                 .code(code)
                 .channel(channel)

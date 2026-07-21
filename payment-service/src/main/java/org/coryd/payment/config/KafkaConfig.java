@@ -24,6 +24,9 @@ import java.util.Map;
 @EnableKafka
 public class KafkaConfig {
 
+    /** Must match spring.kafka.consumer.group-id in application.yml - kept as a Java constant too so @KafkaListener annotations (which need a compile-time value) can reference it instead of repeating the literal. */
+    public static final String GROUP_ID = "coryd-payment-service";
+
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 

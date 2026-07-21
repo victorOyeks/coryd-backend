@@ -2,9 +2,11 @@ package org.coryd.payment.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.payment.config.CommissionProperties;
+import org.coryd.payment.config.KafkaConfig;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
@@ -32,7 +34,7 @@ public class EarningsService {
     private final CommissionProperties commissionProperties;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    @KafkaListener(topics = "coryd-trip-completed", groupId = "coryd-payment-service")
+    @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID)
     @Transactional
     public void onTripCompleted(TripCompletedEvent event) {
         String bookingId = event.getBookingId();
@@ -74,7 +76,7 @@ public class EarningsService {
         fareHoldRepository.save(hold);
 
         paymentTransactionRepository.findByBookingId(bookingId).ifPresent(transaction ->
-                kafkaTemplate.send("coryd-refund-issued", RefundIssuedEvent.builder()
+                kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
                         .bookingId(bookingId.toString())
                         .riderId(transaction.getRiderId().toString())
                         .amount(hold.getAmount())
