@@ -38,9 +38,9 @@ public class RiderProfileController {
     @PutMapping("/me")
     public ApiResponse<RiderProfile> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
                                                  @Valid @RequestBody UpdateRiderProfileRequest request) {
-        // Upsert, not find-or-404: the shell row is created asynchronously by
-        // AccountEventListener reacting to AccountVerifiedEvent, with no guaranteed
-        // ordering against the FE calling this endpoint right after OTP verification.
+        // Upsert: this is the only place a RiderProfile row is ever created - no
+        // event listener creates a shell in the background, so there's no race
+        // to reason about here at all.
         RiderProfile profile = riderProfileRepository.findByUserId(principal.getUserId())
                 .orElseGet(() -> RiderProfile.builder().userId(principal.getUserId()).build());
 

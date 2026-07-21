@@ -6,7 +6,6 @@ import org.coryd.common.enums.OtpChannel;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
-import org.coryd.common.kafka.events.AccountVerifiedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.JwtUtil;
 import org.coryd.identity.dto.AddRoleRequest;
@@ -32,7 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.Set;
@@ -126,13 +124,6 @@ public class AuthService {
         // through /auth/roles/add instead, never this path.
         UserRole role = user.getRoles().iterator().next();
 
-        kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
-                .userId(user.getId())
-                .phone(user.getPhone())
-                .roleAdded(role)
-                .verifiedAt(LocalDateTime.now())
-                .build());
-
         return issueTokens(user, role);
     }
 
@@ -194,13 +185,6 @@ public class AuthService {
 
         user.getRoles().add(role);
         userRepository.save(user);
-
-        kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
-                .userId(user.getId())
-                .phone(user.getPhone())
-                .roleAdded(role)
-                .verifiedAt(LocalDateTime.now())
-                .build());
 
         return issueTokens(user, role);
     }
