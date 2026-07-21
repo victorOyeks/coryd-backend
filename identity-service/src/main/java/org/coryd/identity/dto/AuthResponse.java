@@ -8,6 +8,8 @@ public record AuthResponse(
         String activeRole,
         Set<String> roles,
         String accessToken,
-        String refreshToken
+        long expiresIn,
+        String refreshToken,
+        long refreshExpiresIn
 ) {
 }

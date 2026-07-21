@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -44,6 +45,7 @@ import java.util.stream.Collectors;
 public class AuthService {
 
     private static final int OTP_TTL_MINUTES = 5;
+    private static final int REFRESH_TOKEN_TTL_DAYS = 30;
     private static final String FIXED_DEV_OTP = "000333";
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -229,10 +231,13 @@ public class AuthService {
                 .userId(user.getId())
                 .token(refreshTokenValue)
                 .activeRole(activeRole)
-                .expiresAt(Instant.now().plus(30, ChronoUnit.DAYS))
+                .expiresAt(Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS))
                 .build());
 
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
-        return new AuthResponse(user.getId(), user.getPhone(), activeRole.name(), roleNames, accessToken, refreshTokenValue);
+        long expiresIn = jwtUtil.getExpirationMs() / 1000;
+        long refreshExpiresIn = Duration.ofDays(REFRESH_TOKEN_TTL_DAYS).getSeconds();
+        return new AuthResponse(user.getId(), user.getPhone(), activeRole.name(), roleNames,
+                accessToken, expiresIn, refreshTokenValue, refreshExpiresIn);
     }
 }
