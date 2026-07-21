@@ -6,7 +6,6 @@ import org.coryd.common.enums.UserRole;
 
 public record SignupRequest(
         @NotBlank @Pattern(regexp = "^\\+?[0-9]{10,15}$") String phone,
-        // optional - defaults to RIDER in the service layer, same as marketrun defaulting to CUSTOMER
         UserRole role
 ) {
 }

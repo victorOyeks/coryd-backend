@@ -14,11 +14,8 @@ import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
-import org.coryd.identity.dto.RoleChallengeRequest;
-import org.coryd.identity.dto.RoleConfirmRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
-import org.coryd.identity.dto.SignupResponse;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.entity.OtpCode;
 import org.coryd.identity.entity.RefreshToken;
@@ -48,7 +45,6 @@ public class AuthService {
 
     private static final int OTP_TTL_MINUTES = 5;
     private static final String FIXED_DEV_OTP = "000333";
-    private static final String PURPOSE_SIGNUP = "SIGNUP";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
@@ -59,46 +55,33 @@ public class AuthService {
     private final Environment environment;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    private static String rolePurpose(UserRole role) {
-        return "ROLE_ADDITION_" + role.name();
-    }
-
     @Transactional
-    public SignupResponse signup(SignupRequest request) {
+    public void signup(SignupRequest request) {
         UserRole role = request.role() != null ? request.role() : UserRole.RIDER;
         if (role == UserRole.OPS_ADMIN) {
             throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
         }
-
-        var existing = userRepository.findByPhone(request.phone());
-        if (existing.isEmpty()) {
-            userRepository.save(User.builder()
-                    .phone(request.phone())
-                    .roles(new HashSet<>(Set.of(role)))
-                    .build());
-            issueOtp(request.phone(), PURPOSE_SIGNUP, OtpChannel.SMS);
-            return new SignupResponse(false);
+        if (userRepository.existsByPhone(request.phone())) {
+            throw new BadRequestException("An account with this phone number already exists - please log in");
         }
 
-        User user = existing.get();
-        if (user.getRoles().contains(role)) {
-            throw new BadRequestException("You already have a " + role + " account. Please log in instead");
-        }
-
-        return new SignupResponse(true);
+        userRepository.save(User.builder()
+                .phone(request.phone())
+                .roles(new HashSet<>(Set.of(role)))
+                .build());
+        issueOtp(request.phone(), OtpChannel.SMS);
     }
 
     @Transactional
     public void resendOtp(ResendOtpRequest request) {
-        issueOtp(request.phone(), PURPOSE_SIGNUP, request.channelOrDefault());
+        issueOtp(request.phone(), request.channelOrDefault());
     }
 
-    private void issueOtp(String phone, String purpose, OtpChannel channel) {
+    private void issueOtp(String phone, OtpChannel channel) {
         String code = isDevOrTest() ? FIXED_DEV_OTP : String.format("%06d", RANDOM.nextInt(1_000_000));
         otpCodeRepository.save(OtpCode.builder()
                 .phone(phone)
                 .code(code)
-                .purpose(purpose)
                 .expiresAt(Instant.now().plus(OTP_TTL_MINUTES, ChronoUnit.MINUTES))
                 .build());
         kafkaTemplate.send("coryd-otp-issued", OtpIssuedEvent.builder()
@@ -118,32 +101,27 @@ public class AuthService {
         return false;
     }
 
-    private OtpCode consumeOtp(String phone, String purpose, String code) {
-        OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(phone, purpose)
-                .orElseThrow(() -> new BadRequestException("No pending OTP for this request"));
+    @Transactional
+    public AuthResponse verifyOtp(VerifyOtpRequest request) {
+        OtpCode otp = otpCodeRepository.findTopByPhoneAndUsedFalseOrderByCreatedAtDesc(request.phone())
+                .orElseThrow(() -> new BadRequestException("No pending OTP for this phone number"));
 
         if (otp.getExpiresAt().isBefore(Instant.now())) {
             throw new BadRequestException("OTP has expired");
         }
-        if (!otp.getCode().equals(code)) {
+        if (!otp.getCode().equals(request.code())) {
             throw new BadRequestException("Incorrect OTP");
         }
 
         otp.setUsed(true);
         otpCodeRepository.save(otp);
-        return otp;
-    }
-
-    @Transactional
-    public AuthResponse verifyOtp(VerifyOtpRequest request) {
-        consumeOtp(request.phone(), PURPOSE_SIGNUP, request.code());
 
         User user = userRepository.findByPhone(request.phone())
                 .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
 
         // A user reaching signup-OTP verification always holds exactly the one
-        // role they just signed up with - role addition to an existing account
-        // goes through roles/challenge + roles/confirm instead, never this path.
+        // role they just signed up with - adding a second role later goes
+        // through /auth/roles/add instead, never this path.
         UserRole role = user.getRoles().iterator().next();
 
         kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
@@ -198,7 +176,7 @@ public class AuthService {
         return issueTokens(user, activeRole);
     }
 
-    /** Already-authenticated user self-attaching a new, non-privileged role - no OTP needed, the JWT already proves identity. */
+    /** In-app "switch to Driver mode" (or vice versa) for the first time: attach the role to the already-authenticated account, no OTP needed. */
     @Transactional
     public AuthResponse addRole(String userId, AddRoleRequest request) {
         UserRole role = request.role();
@@ -214,57 +192,15 @@ public class AuthService {
 
         user.getRoles().add(role);
         userRepository.save(user);
-        publishRoleAdded(user, role);
 
-        return issueTokens(user, role);
-    }
-
-    /** Step 1 for a logged-out caller: verify phone + password own this account, then send an OTP scoped to this specific role addition. */
-    @Transactional
-    public void initiateRoleAddition(RoleChallengeRequest request) {
-        UserRole role = request.role();
-        if (role == UserRole.OPS_ADMIN) {
-            throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
-        }
-
-        User user = userRepository.findByPhone(request.phone())
-                .orElseThrow(() -> new BadRequestException("No account for this phone number"));
-        if (user.getRoles().contains(role)) {
-            throw new BadRequestException("You already have a " + role + " account");
-        }
-        if (user.getPasswordHash() == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new BadRequestException("Incorrect phone number or password");
-        }
-
-        issueOtp(request.phone(), rolePurpose(role), OtpChannel.SMS);
-    }
-
-    /** Step 2: confirm the role-scoped OTP, then attach the role and issue a token for it. */
-    @Transactional
-    public AuthResponse confirmRoleAddition(RoleConfirmRequest request) {
-        UserRole role = request.role();
-        consumeOtp(request.phone(), rolePurpose(role), request.code());
-
-        User user = userRepository.findByPhone(request.phone())
-                .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
-        if (user.getRoles().contains(role)) {
-            throw new BadRequestException("You already have a " + role + " account");
-        }
-
-        user.getRoles().add(role);
-        userRepository.save(user);
-        publishRoleAdded(user, role);
-
-        return issueTokens(user, role);
-    }
-
-    private void publishRoleAdded(User user, UserRole role) {
         kafkaTemplate.send("coryd-account-verified", AccountVerifiedEvent.builder()
                 .userId(user.getId())
                 .phone(user.getPhone())
                 .roleAdded(role)
                 .verifiedAt(LocalDateTime.now())
                 .build());
+
+        return issueTokens(user, role);
     }
 
     @Transactional

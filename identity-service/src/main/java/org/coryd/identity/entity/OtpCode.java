@@ -28,10 +28,6 @@ public class OtpCode extends BaseEntity {
     @Column(nullable = false, length = 6)
     private String code;
 
-    /** "SIGNUP" or "ROLE_ADDITION_&lt;ROLE&gt;" - keeps a signup OTP from being replayable against the role-addition flow and vice versa. */
-    @Column(nullable = false, length = 50)
-    private String purpose;
-
     @Column(nullable = false)
     private Instant expiresAt;
 

@@ -35,7 +35,6 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/auth/signup", "/auth/verify-otp", "/auth/resend-otp",
                                 "/auth/login", "/auth/refresh-token",
-                                "/auth/roles/challenge", "/auth/roles/confirm",
                                 "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**")
                         .permitAll()
                         // set-password, accept-terms and roles/add need a real authenticated

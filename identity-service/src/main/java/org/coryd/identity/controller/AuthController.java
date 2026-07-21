@@ -9,11 +9,8 @@ import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
-import org.coryd.identity.dto.RoleChallengeRequest;
-import org.coryd.identity.dto.RoleConfirmRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
-import org.coryd.identity.dto.SignupResponse;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.service.AuthService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -30,8 +27,9 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/signup")
-    public ApiResponse<SignupResponse> signup(@Valid @RequestBody SignupRequest request) {
-        return ApiResponse.ok(authService.signup(request));
+    public ApiResponse<Void> signup(@Valid @RequestBody SignupRequest request) {
+        authService.signup(request);
+        return ApiResponse.ok("OTP sent", null);
     }
 
     @PostMapping("/resend-otp")
@@ -68,22 +66,10 @@ public class AuthController {
         return ApiResponse.ok(authService.refresh(request));
     }
 
-    /** Already logged in - e.g. a Rider opening the Driver app for the first time on the same account. */
+    /** In-app "switch to Driver mode" (or vice versa) for the first time - the caller is already logged in, so no OTP is needed. */
     @PostMapping("/roles/add")
     public ApiResponse<AuthResponse> addRole(@AuthenticationPrincipal CoRydUserDetails principal,
                                               @Valid @RequestBody AddRoleRequest request) {
         return ApiResponse.ok(authService.addRole(principal.getUserId(), request));
-    }
-
-    /** Not logged in - phone already has an account under a different role; prove ownership with the password first. */
-    @PostMapping("/roles/challenge")
-    public ApiResponse<Void> challengeRoleAddition(@Valid @RequestBody RoleChallengeRequest request) {
-        authService.initiateRoleAddition(request);
-        return ApiResponse.ok("OTP sent", null);
-    }
-
-    @PostMapping("/roles/confirm")
-    public ApiResponse<AuthResponse> confirmRoleAddition(@Valid @RequestBody RoleConfirmRequest request) {
-        return ApiResponse.ok(authService.confirmRoleAddition(request));
     }
 }
