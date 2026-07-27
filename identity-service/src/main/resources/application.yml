@@ -30,6 +30,10 @@ jwt:
   secret: ${JWT_SECRET:change-me-in-every-environment}
   expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
+services:
+  profile:
+    url: ${PROFILE_SERVICE_URL:http://localhost:9102/profile}
+
 management:
   endpoints:
     web:

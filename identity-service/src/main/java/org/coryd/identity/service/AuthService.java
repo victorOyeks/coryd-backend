@@ -8,10 +8,13 @@ import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
+import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.security.JwtUtil;
+import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.LoginRequest;
+import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
@@ -55,6 +58,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final Environment environment;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ProfileServiceClient profileServiceClient;
 
     @Transactional
     public void signup(SignupRequest request) {
@@ -119,6 +123,11 @@ public class AuthService {
 
         User user = userRepository.findByPhone(request.phone())
                 .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
+
+        if (user.getPhoneVerifiedAt() == null) {
+            user.setPhoneVerifiedAt(Instant.now());
+            userRepository.save(user);
+        }
 
         // A user reaching signup-OTP verification always holds exactly the one
         // role they just signed up with - adding a second role later goes
@@ -188,6 +197,18 @@ public class AuthService {
         userRepository.save(user);
 
         return issueTokens(user, role);
+    }
+
+    public OnboardingStatusResponse onboardingStatus(CoRydUserDetails principal, String bearerToken) {
+        User user = userRepository.findById(principal.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+
+        boolean phoneVerified = user.getPhoneVerifiedAt() != null;
+        boolean passwordSet = user.getPasswordHash() != null;
+        boolean profileComplete = profileServiceClient.hasProfile(principal.getActiveRole(), bearerToken);
+        boolean termsAccepted = user.getTermsAcceptedAt() != null;
+
+        return new OnboardingStatusResponse(phoneVerified, passwordSet, profileComplete, termsAccepted);
     }
 
     @Transactional

@@ -43,6 +43,7 @@ public class DataSeeder implements ApplicationRunner {
         user.setFullName(fullName);
         user.getRoles().add(role);
         user.setPasswordHash(passwordEncoder.encode(SEED_PASSWORD));
+        user.setPhoneVerifiedAt(Instant.now());
         user.setTermsAcceptedAt(Instant.now());
         userRepository.save(user);
     }

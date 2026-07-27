@@ -37,6 +37,9 @@ public class User extends BaseEntity {
     @Column(length = 100)
     private String fullName;
 
+    /** Set the moment verify-otp succeeds - lets onboarding-status distinguish "never verified" from later incomplete steps. */
+    private Instant phoneVerifiedAt;
+
     /** Null until "Set up your password" completes - a phone-verified account isn't fully onboarded yet. */
     private String passwordHash;
 

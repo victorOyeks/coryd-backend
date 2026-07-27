@@ -1,5 +1,6 @@
 package org.coryd.identity.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
@@ -7,13 +8,16 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.LoginRequest;
+import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.service.AuthService;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -71,5 +75,12 @@ public class AuthController {
     public ApiResponse<AuthResponse> addRole(@AuthenticationPrincipal CoRydUserDetails principal,
                                               @Valid @RequestBody AddRoleRequest request) {
         return ApiResponse.ok(authService.addRole(principal.getUserId(), request));
+    }
+
+    /** Lets the app resume onboarding at the right screen after an interruption, using whatever token it last received. */
+    @GetMapping("/onboarding-status")
+    public ApiResponse<OnboardingStatusResponse> onboardingStatus(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                    HttpServletRequest request) {
+        return ApiResponse.ok(authService.onboardingStatus(principal, request.getHeader(HttpHeaders.AUTHORIZATION)));
     }
 }
