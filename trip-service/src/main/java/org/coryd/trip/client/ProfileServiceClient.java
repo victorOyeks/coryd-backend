@@ -2,9 +2,14 @@ package org.coryd.trip.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.VerificationStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
 
 /**
@@ -51,6 +56,44 @@ public class ProfileServiceClient {
         }
     }
 
+    /** One call for a whole search-result page, not one per driver - keyed by userId for easy zipping. */
+    public Map<String, DriverSummaryItem> fetchDriverSummaries(List<String> driverIds) {
+        if (driverIds == null || driverIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            DriverSummaryBatchResponse response = restClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/drivers/batch").queryParam("userIds", driverIds).build())
+                    .retrieve()
+                    .body(DriverSummaryBatchResponse.class);
+            return toMap(response == null ? List.of() : response.data(), DriverSummaryItem::userId);
+        } catch (Exception e) {
+            log.warn("Could not fetch driver summaries for {}: {}", driverIds, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** One call for a whole search-result page, not one per vehicle - keyed by vehicle id for easy zipping. */
+    public Map<String, VehicleSummaryItem> fetchVehicleSummaries(List<String> vehicleIds) {
+        if (vehicleIds == null || vehicleIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            VehicleSummaryBatchResponse response = restClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/vehicles/batch").queryParam("ids", vehicleIds).build())
+                    .retrieve()
+                    .body(VehicleSummaryBatchResponse.class);
+            return toMap(response == null ? List.of() : response.data(), VehicleSummaryItem::id);
+        } catch (Exception e) {
+            log.warn("Could not fetch vehicle summaries for {}: {}", vehicleIds, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private static <T> Map<String, T> toMap(List<T> items, Function<T, String> keyFn) {
+        return items.stream().collect(java.util.stream.Collectors.toMap(keyFn, item -> item));
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record DriverProfileView(Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
@@ -63,5 +106,22 @@ public class ProfileServiceClient {
         @JsonIgnoreProperties(ignoreUnknown = true)
         private record Data(String plateNumber) {
         }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record DriverSummaryItem(String userId, String legalName, String photoUrl, VerificationStatus verificationStatus) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record DriverSummaryBatchResponse(List<DriverSummaryItem> data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record VehicleSummaryItem(String id, String make, String model, String plateNumber, boolean hasAC,
+                                      VerificationStatus verificationStatus) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record VehicleSummaryBatchResponse(List<VehicleSummaryItem> data) {
     }
 }

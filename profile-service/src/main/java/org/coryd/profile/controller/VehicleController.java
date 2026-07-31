@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
+import org.coryd.profile.dto.VehicleSummary;
 import org.coryd.profile.dto.VerificationDecisionRequest;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.service.VehicleService;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -44,5 +46,10 @@ public class VehicleController {
     @GetMapping("/{vehicleId}")
     public ApiResponse<Vehicle> byId(@PathVariable String vehicleId) {
         return ApiResponse.ok(vehicleService.findById(vehicleId));
+    }
+
+    @GetMapping("/batch")
+    public ApiResponse<List<VehicleSummary>> batch(@RequestParam List<String> ids) {
+        return ApiResponse.ok(vehicleService.findSummariesByIds(ids));
     }
 }

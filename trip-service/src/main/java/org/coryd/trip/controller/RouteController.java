@@ -3,7 +3,9 @@ package org.coryd.trip.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
+import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.NotifyMeRequest;
 import org.coryd.trip.entity.RoutePost;
@@ -34,8 +36,20 @@ public class RouteController {
     }
 
     @PostMapping("/search")
-    public ApiResponse<List<RoutePost>> search(@Valid @RequestBody SearchRequest request) {
+    public ApiResponse<List<RideSearchResult>> search(@Valid @RequestBody SearchRequest request) {
         return ApiResponse.ok(routeService.search(request));
+    }
+
+    /** Called by the client only when /search comes back empty - relaxed radius/time window, capped result count. */
+    @PostMapping("/search/nearby-options")
+    public ApiResponse<List<RideSearchResult>> nearbyOptions(@Valid @RequestBody SearchRequest request) {
+        return ApiResponse.ok(routeService.getNearbyOptions(request));
+    }
+
+    @GetMapping("/nearby")
+    public ApiResponse<NearbyActivityResponse> nearby(@RequestParam double lat, @RequestParam double lng,
+                                                        @RequestParam(defaultValue = "5") double radiusKm) {
+        return ApiResponse.ok(routeService.getNearbyActivity(lat, lng, radiusKm));
     }
 
     @GetMapping("/suggested-fare")

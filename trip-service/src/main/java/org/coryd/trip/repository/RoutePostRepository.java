@@ -14,27 +14,56 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     List<RoutePost> findByDriverId(String driverId);
 
-    @Query("""
-            select r from RoutePost r
+    /**
+     * Real great-circle radius match (Haversine, km) on both origin and destination,
+     * not a lat/lng box - a box's corners sit up to radius*sqrt(2) away, which
+     * overshoots inconsistently by direction once the radius gets past a few hundred
+     * meters. least/greatest clamp the acos() argument to [-1,1] since floating-point
+     * rounding can otherwise push it a hair outside that domain for near-zero distances.
+     */
+    @Query(value = """
+            select * from trip.route_posts r
             where r.status = 'PUBLISHED'
-              and r.seatsAvailable > 0
-              and r.departureTime between :earliest and :latest
-              and r.originLat between :originLatMin and :originLatMax
-              and r.originLng between :originLngMin and :originLngMax
-              and r.destinationLat between :destLatMin and :destLatMax
-              and r.destinationLng between :destLngMin and :destLngMax
-            order by r.departureTime asc
-            """)
+              and r.seats_available > 0
+              and r.departure_time between :earliest and :latest
+              and (6371 * acos(least(1.0, greatest(-1.0,
+                    cos(radians(:originLat)) * cos(radians(r.origin_lat)) * cos(radians(r.origin_lng) - radians(:originLng))
+                    + sin(radians(:originLat)) * sin(radians(r.origin_lat))
+                  )))) <= :radiusKm
+              and (6371 * acos(least(1.0, greatest(-1.0,
+                    cos(radians(:destLat)) * cos(radians(r.destination_lat)) * cos(radians(r.destination_lng) - radians(:destLng))
+                    + sin(radians(:destLat)) * sin(radians(r.destination_lat))
+                  )))) <= :radiusKm
+            order by r.departure_time asc
+            """, nativeQuery = true)
     List<RoutePost> search(@Param("earliest") Instant earliest,
                             @Param("latest") Instant latest,
-                            @Param("originLatMin") double originLatMin,
-                            @Param("originLatMax") double originLatMax,
-                            @Param("originLngMin") double originLngMin,
-                            @Param("originLngMax") double originLngMax,
-                            @Param("destLatMin") double destLatMin,
-                            @Param("destLatMax") double destLatMax,
-                            @Param("destLngMin") double destLngMin,
-                            @Param("destLngMax") double destLngMax);
+                            @Param("originLat") double originLat,
+                            @Param("originLng") double originLng,
+                            @Param("destLat") double destLat,
+                            @Param("destLng") double destLng,
+                            @Param("radiusKm") double radiusKm);
+
+    /**
+     * Powers the "Area Activity" map - active, seat-having, not-yet-departed routes
+     * whose origin sits within radiusKm of the given point. Same Haversine expression
+     * as search() (see its comment), matched on origin only since this is about "where
+     * are rides starting near me," not a bookable search result.
+     */
+    @Query(value = """
+            select * from trip.route_posts r
+            where r.status = 'PUBLISHED'
+              and r.seats_available > 0
+              and r.departure_time > :now
+              and (6371 * acos(least(1.0, greatest(-1.0,
+                    cos(radians(:lat)) * cos(radians(r.origin_lat)) * cos(radians(r.origin_lng) - radians(:lng))
+                    + sin(radians(:lat)) * sin(radians(r.origin_lat))
+                  )))) <= :radiusKm
+            """, nativeQuery = true)
+    List<RoutePost> findNearbyOrigins(@Param("lat") double lat,
+                                       @Param("lng") double lng,
+                                       @Param("radiusKm") double radiusKm,
+                                       @Param("now") Instant now);
 
     /**
      * Atomic seat hold - the conditional WHERE clause is what resolves the

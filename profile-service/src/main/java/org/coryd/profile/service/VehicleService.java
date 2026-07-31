@@ -8,6 +8,7 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
+import org.coryd.profile.dto.VehicleSummary;
 import org.coryd.profile.dto.VerificationDecisionRequest;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.repository.VehicleRepository;
@@ -40,6 +41,7 @@ public class VehicleService {
                 .exteriorPhotoUrl(request.exteriorPhotoUrl())
                 .interiorPhotoUrl(request.interiorPhotoUrl())
                 .acPhotoUrl(request.acPhotoUrl())
+                .hasAC(request.hasAC())
                 .build();
         return vehicleRepository.save(vehicle);
     }
@@ -51,6 +53,13 @@ public class VehicleService {
     public Vehicle findById(String vehicleId) {
         return vehicleRepository.findById(vehicleId)
                 .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found"));
+    }
+
+    /** Batch lookup for search-result enrichment (trip-service) - one call per result page, not one per vehicle. */
+    public List<VehicleSummary> findSummariesByIds(List<String> vehicleIds) {
+        return vehicleRepository.findAllById(vehicleIds).stream()
+                .map(VehicleSummary::from)
+                .toList();
     }
 
     @Transactional

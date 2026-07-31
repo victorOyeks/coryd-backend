@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.repository.DriverProfileRepository;
@@ -14,7 +15,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/drivers")
@@ -27,6 +31,14 @@ public class DriverProfileController {
     public ApiResponse<DriverProfile> get(@PathVariable String userId) {
         return ApiResponse.ok(driverProfileRepository.findByUserId(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found")));
+    }
+
+    /** Batch lookup for search-result enrichment (trip-service) - one call per result page, not one per driver. */
+    @GetMapping("/batch")
+    public ApiResponse<List<DriverSummary>> batch(@RequestParam List<String> userIds) {
+        return ApiResponse.ok(driverProfileRepository.findByUserIdIn(userIds).stream()
+                .map(DriverSummary::from)
+                .toList());
     }
 
     @GetMapping("/me")

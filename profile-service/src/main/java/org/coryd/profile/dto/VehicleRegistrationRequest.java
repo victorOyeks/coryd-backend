@@ -12,6 +12,7 @@ public record VehicleRegistrationRequest(
         @NotNull @Positive Integer seatCapacity,
         @NotBlank String exteriorPhotoUrl,
         @NotBlank String interiorPhotoUrl,
-        @NotBlank String acPhotoUrl
+        @NotBlank String acPhotoUrl,
+        @NotNull Boolean hasAC
 ) {
 }

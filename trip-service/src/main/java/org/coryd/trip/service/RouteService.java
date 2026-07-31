@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
+import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
@@ -10,8 +11,12 @@ import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.RoutePublishedEvent;
+import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
+import org.coryd.trip.dto.GeoPin;
+import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
+import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.DriverVerificationCache;
@@ -23,6 +28,7 @@ import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.coryd.trip.repository.FareReportRepository;
 import org.coryd.trip.repository.NotifyMeRequestRepository;
+import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -33,14 +39,21 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class RouteService {
 
-    /** ~1 degree of latitude is ~111km; used to convert a meter tolerance to a lat/lng box. */
-    private static final double METERS_PER_DEGREE = 111_000.0;
+    /** Assumed average city driving speed for the pickup-ETA estimate - same technique as marketrun-ng's DeliveryPricingService.DELIVERY_SPEED_KM_H, to avoid a Google Directions call per search result. */
+    private static final double ASSUMED_SPEED_KM_H = 25.0;
+    private static final double EARTH_RADIUS_KM = 6371.0;
+    private static final int NEARBY_OPTIONS_LIMIT = 5;
+    private static final double NEARBY_OPTIONS_RADIUS_MULTIPLIER = 3.0;
+    private static final int NEARBY_OPTIONS_TIME_WINDOW_HOURS = 24;
 
     private final RoutePostRepository routePostRepository;
     private final FareReportRepository fareReportRepository;
@@ -48,6 +61,8 @@ public class RouteService {
     private final NotifyMeRequestRepository notifyMeRequestRepository;
     private final BookingRepository bookingRepository;
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
+    private final RatingRepository ratingRepository;
+    private final ProfileServiceClient profileServiceClient;
     private final MatchingProperties matchingProperties;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
@@ -97,17 +112,15 @@ public class RouteService {
     }
 
     private void notifyMatchingWaitlist(RoutePost route) {
-        double latDelta = matchingProperties.getGeoToleranceMeters() / METERS_PER_DEGREE;
-        double lngDelta = matchingProperties.getGeoToleranceMeters() / METERS_PER_DEGREE;
+        double radiusKm = matchingProperties.getGeoToleranceMeters() / 1000.0;
         Instant earliest = route.getDepartureTime().minus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
         Instant latest = route.getDepartureTime().plus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
 
         List<NotifyMeRequest> matches = notifyMeRequestRepository.findMatching(
                 Instant.now(), earliest, latest,
-                route.getOriginLat() - latDelta, route.getOriginLat() + latDelta,
-                route.getOriginLng() - lngDelta, route.getOriginLng() + lngDelta,
-                route.getDestinationLat() - latDelta, route.getDestinationLat() + latDelta,
-                route.getDestinationLng() - lngDelta, route.getDestinationLng() + lngDelta
+                route.getOriginLat(), route.getOriginLng(),
+                route.getDestinationLat(), route.getDestinationLng(),
+                radiusKm
         );
 
         for (NotifyMeRequest request : matches) {
@@ -121,19 +134,98 @@ public class RouteService {
         }
     }
 
-    public List<RoutePost> search(SearchRequest request) {
-        double latDelta = matchingProperties.getGeoToleranceMeters() / METERS_PER_DEGREE;
-        double lngDelta = matchingProperties.getGeoToleranceMeters() / METERS_PER_DEGREE;
+    public List<RideSearchResult> search(SearchRequest request) {
+        double radiusKm = matchingProperties.getGeoToleranceMeters() / 1000.0;
         Instant earliest = request.desiredDepartureTime().minus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
         Instant latest = request.desiredDepartureTime().plus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
 
-        return routePostRepository.search(
+        List<RoutePost> matches = routePostRepository.search(
                 earliest, latest,
-                request.originLat() - latDelta, request.originLat() + latDelta,
-                request.originLng() - lngDelta, request.originLng() + lngDelta,
-                request.destinationLat() - latDelta, request.destinationLat() + latDelta,
-                request.destinationLng() - lngDelta, request.destinationLng() + lngDelta
+                request.originLat(), request.originLng(),
+                request.destinationLat(), request.destinationLng(),
+                radiusKm
         );
+
+        return enrich(matches, request.originLat(), request.originLng());
+    }
+
+    /**
+     * Fallback for the "No rides found" screen - same match shape as search() but with a
+     * relaxed radius and a much wider time window, capped to a handful of results. Not a
+     * separate query strategy, just wider parameters on the same Haversine search.
+     */
+    public List<RideSearchResult> getNearbyOptions(SearchRequest request) {
+        double radiusKm = (matchingProperties.getGeoToleranceMeters() / 1000.0) * NEARBY_OPTIONS_RADIUS_MULTIPLIER;
+        Instant earliest = request.desiredDepartureTime();
+        Instant latest = request.desiredDepartureTime().plus(NEARBY_OPTIONS_TIME_WINDOW_HOURS, ChronoUnit.HOURS);
+
+        List<RoutePost> matches = routePostRepository.search(
+                earliest, latest,
+                request.originLat(), request.originLng(),
+                request.destinationLat(), request.destinationLng(),
+                radiusKm
+        );
+
+        List<RoutePost> capped = matches.stream().limit(NEARBY_OPTIONS_LIMIT).toList();
+        return enrich(capped, request.originLat(), request.originLng());
+    }
+
+    /** Batch-joins driver/vehicle/rating data onto raw route matches - three calls total for the whole page, never one per row. */
+    private List<RideSearchResult> enrich(List<RoutePost> routes, double riderLat, double riderLng) {
+        List<String> driverIds = routes.stream().map(RoutePost::getDriverId).distinct().toList();
+        List<String> vehicleIds = routes.stream().map(RoutePost::getVehicleId).filter(Objects::nonNull).distinct().toList();
+
+        Map<String, ProfileServiceClient.DriverSummaryItem> drivers = profileServiceClient.fetchDriverSummaries(driverIds);
+        Map<String, ProfileServiceClient.VehicleSummaryItem> vehicles = profileServiceClient.fetchVehicleSummaries(vehicleIds);
+        Map<String, RatingRepository.RatingSummary> ratings = ratingRepository.summarize(driverIds).stream()
+                .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, r -> r));
+
+        return routes.stream().map(route -> {
+            ProfileServiceClient.DriverSummaryItem driver = drivers.get(route.getDriverId());
+            ProfileServiceClient.VehicleSummaryItem vehicle = route.getVehicleId() == null ? null : vehicles.get(route.getVehicleId());
+            RatingRepository.RatingSummary rating = ratings.get(route.getDriverId());
+
+            return new RideSearchResult(
+                    route.getId(),
+                    route.getOriginLabel(),
+                    route.getDestinationLabel(),
+                    route.getDepartureTime(),
+                    route.getFarePerSeat(),
+                    route.getSeatsAvailable(),
+                    route.getDriverId(),
+                    driver == null ? null : driver.legalName(),
+                    driver == null ? null : driver.photoUrl(),
+                    driver != null && driver.verificationStatus() == VerificationStatus.APPROVED,
+                    vehicle == null ? null : vehicle.make(),
+                    vehicle == null ? null : vehicle.model(),
+                    vehicle == null ? null : vehicle.plateNumber(),
+                    vehicle != null && vehicle.hasAC(),
+                    rating == null ? null : rating.getAvgStars(),
+                    rating == null ? 0L : rating.getRatingCount(),
+                    estimatePickupMinutes(riderLat, riderLng, route.getOriginLat(), route.getOriginLng())
+            );
+        }).toList();
+    }
+
+    private static int estimatePickupMinutes(double lat1, double lng1, double lat2, double lng2) {
+        double distanceKm = haversineKm(lat1, lng1, lat2, lng2);
+        return (int) Math.ceil(distanceKm / ASSUMED_SPEED_KM_H * 60);
+    }
+
+    private static double haversineKm(double lat1, double lng1, double lat2, double lng2) {
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLng = Math.toRadians(lng2 - lng1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm) {
+        List<RoutePost> nearby = routePostRepository.findNearbyOrigins(lat, lng, radiusKm, Instant.now());
+        List<GeoPin> pins = nearby.stream()
+                .map(r -> new GeoPin(r.getOriginLat(), r.getOriginLng()))
+                .toList();
+        return new NearbyActivityResponse(pins.size(), pins);
     }
 
     public Optional<SuggestedFareRange> suggestedFare(String originLabel, String destinationLabel) {
