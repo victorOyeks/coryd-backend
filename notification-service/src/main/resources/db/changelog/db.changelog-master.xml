@@ -10,5 +10,6 @@
     </changeSet>
 
     <include file="db/changelog/001-initial-schema.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/002-user-notifications.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

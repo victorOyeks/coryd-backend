@@ -36,6 +36,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -53,6 +54,11 @@ public class BookingService {
     private final CancellationPolicy cancellationPolicy;
     private final ProfileServiceClient profileServiceClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    /** Last 5 bookings, newest first - powers the Home screen's "Recent Routes" list. */
+    public List<Booking> getRecentRoutesForRider(String riderId) {
+        return bookingRepository.findTop5ByRiderIdOrderByCreatedAtDesc(riderId);
+    }
 
     @Transactional
     public Booking reserveSeats(String routePostId, BookSeatsRequest request) {

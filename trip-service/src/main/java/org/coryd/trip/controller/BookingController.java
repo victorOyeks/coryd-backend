@@ -11,12 +11,15 @@ import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
 import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 
 @RestController
@@ -25,6 +28,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class BookingController {
 
     private final BookingService bookingService;
+
+    @GetMapping("/riders/{riderId}/recent-routes")
+    public ApiResponse<List<Booking>> recentRoutes(@PathVariable String riderId) {
+        return ApiResponse.ok(bookingService.getRecentRoutesForRider(riderId));
+    }
 
     @PostMapping("/routes/{routePostId}")
     public ApiResponse<Booking> reserve(@PathVariable String routePostId, @Valid @RequestBody BookSeatsRequest request) {

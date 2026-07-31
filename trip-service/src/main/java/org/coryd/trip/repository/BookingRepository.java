@@ -9,6 +9,6 @@ import java.util.List;
 
 public interface BookingRepository extends JpaRepository<Booking, String> {
     List<Booking> findByRoutePostId(String routePostId);
-    List<Booking> findByRiderId(String riderId);
+    List<Booking> findTop5ByRiderIdOrderByCreatedAtDesc(String riderId);
     List<Booking> findByStatusAndHoldExpiresAtBefore(BookingStatus status, Instant before);
 }

@@ -5,8 +5,10 @@ import org.coryd.common.enums.NotificationChannel;
 import org.coryd.common.enums.OtpChannel;
 import org.coryd.notification.entity.DeviceToken;
 import org.coryd.notification.entity.NotificationLog;
+import org.coryd.notification.entity.UserNotification;
 import org.coryd.notification.repository.DeviceTokenRepository;
 import org.coryd.notification.repository.NotificationLogRepository;
+import org.coryd.notification.repository.UserNotificationRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +22,7 @@ public class NotificationDispatchService {
     private final FcmService fcmService;
     private final DeviceTokenRepository deviceTokenRepository;
     private final NotificationLogRepository notificationLogRepository;
+    private final UserNotificationRepository userNotificationRepository;
 
     @Async
     @Transactional
@@ -51,6 +54,15 @@ public class NotificationDispatchService {
     @Async
     @Transactional
     public void sendPush(String userId, String title, String body, String eventType) {
+        // One feed entry per logical notification, not one per device - a rider with two
+        // phones should see this once in their bell, even though it's pushed to both.
+        userNotificationRepository.save(UserNotification.builder()
+                .userId(userId)
+                .title(title)
+                .body(body)
+                .eventType(eventType)
+                .build());
+
         for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
             boolean delivered = fcmService.sendPush(token.getFcmToken(), title, body);
             notificationLogRepository.save(NotificationLog.builder()
