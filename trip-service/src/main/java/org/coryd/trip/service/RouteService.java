@@ -16,7 +16,9 @@ import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.dto.GeoPin;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
+import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
+import org.coryd.trip.dto.RoutePreview;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.DriverVerificationCache;
@@ -63,6 +65,7 @@ public class RouteService {
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
     private final RatingRepository ratingRepository;
     private final ProfileServiceClient profileServiceClient;
+    private final MapsService mapsService;
     private final MatchingProperties matchingProperties;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
@@ -168,6 +171,26 @@ public class RouteService {
 
         List<RoutePost> capped = matches.stream().limit(NEARBY_OPTIONS_LIMIT).toList();
         return enrich(capped, request.originLat(), request.originLng());
+    }
+
+    /** The Ride Details screen - one enriched route plus the full route preview (distance/duration/via-summary), not just the rider-to-pickup figure enrich() already covers. */
+    public RideDetailsResponse getRouteDetails(String routePostId, double riderLat, double riderLng) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        RideSearchResult base = enrich(List.of(route), riderLat, riderLng).getFirst();
+        RoutePreview preview = mapsService.getRoutePreview(
+                route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng());
+        Instant estimatedArrivalTime = route.getDepartureTime().plus(preview.durationMinutes(), ChronoUnit.MINUTES);
+
+        return new RideDetailsResponse(
+                base.routePostId(), base.originLabel(), base.destinationLabel(), base.departureTime(),
+                base.farePerSeat(), base.seatsAvailable(), base.driverId(), base.driverName(), base.driverPhotoUrl(),
+                base.driverVerified(), base.vehicleMake(), base.vehicleModel(), base.vehiclePlate(), base.vehicleHasAC(),
+                base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
+                preview.distanceKm(), preview.durationMinutes(), preview.durationText(), preview.viaSummary(),
+                estimatedArrivalTime, BookingService.SEAT_HOLD_MINUTES
+        );
     }
 
     /** Batch-joins driver/vehicle/rating data onto raw route matches - three calls total for the whole page, never one per row. */

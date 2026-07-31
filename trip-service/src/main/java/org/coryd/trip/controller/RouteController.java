@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
+import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.NotifyMeRequest;
@@ -50,6 +51,12 @@ public class RouteController {
     public ApiResponse<NearbyActivityResponse> nearby(@RequestParam double lat, @RequestParam double lng,
                                                         @RequestParam(defaultValue = "5") double radiusKm) {
         return ApiResponse.ok(routeService.getNearbyActivity(lat, lng, radiusKm));
+    }
+
+    @GetMapping("/{routePostId}")
+    public ApiResponse<RideDetailsResponse> details(@PathVariable String routePostId,
+                                                      @RequestParam double riderLat, @RequestParam double riderLng) {
+        return ApiResponse.ok(routeService.getRouteDetails(routePostId, riderLat, riderLng));
     }
 
     @GetMapping("/suggested-fare")

@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.trip.dto.BookSeatsRequest;
+import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.entity.Booking;
@@ -32,6 +33,11 @@ public class BookingController {
     @GetMapping("/riders/{riderId}/recent-routes")
     public ApiResponse<List<Booking>> recentRoutes(@PathVariable String riderId) {
         return ApiResponse.ok(bookingService.getRecentRoutesForRider(riderId));
+    }
+
+    @GetMapping("/{bookingId}")
+    public ApiResponse<BookingDetailsResponse> details(@PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.getBookingDetails(bookingId));
     }
 
     @PostMapping("/routes/{routePostId}")

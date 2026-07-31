@@ -2,6 +2,7 @@ package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
@@ -10,9 +11,11 @@ import org.coryd.common.kafka.events.BookingConfirmedEvent;
 import org.coryd.common.kafka.events.IssueReportedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
+import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.CancellationPolicy;
 import org.coryd.trip.dto.BookSeatsRequest;
+import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.entity.Booking;
@@ -42,7 +45,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class BookingService {
 
-    private static final int SEAT_HOLD_MINUTES = 5;
+    /** Public so BookingDetailsResponse/RideDetailsResponse can reference the same value the "seat held for X min" copy shown to riders describes. */
+    public static final int SEAT_HOLD_MINUTES = 4;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final BookingRepository bookingRepository;
@@ -53,11 +57,42 @@ public class BookingService {
     private final IssueReportRepository issueReportRepository;
     private final CancellationPolicy cancellationPolicy;
     private final ProfileServiceClient profileServiceClient;
+    private final IdentityServiceClient identityServiceClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     /** Last 5 bookings, newest first - powers the Home screen's "Recent Routes" list. */
     public List<Booking> getRecentRoutesForRider(String riderId) {
         return bookingRepository.findTop5ByRiderIdOrderByCreatedAtDesc(riderId);
+    }
+
+    /** Serves both Pay Now (status=HELD) and Booking Confirmed (status=CONFIRMED) - see BookingDetailsResponse. */
+    public BookingDetailsResponse getBookingDetails(String bookingId) {
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        ProfileServiceClient.DriverSummaryItem driver = profileServiceClient
+                .fetchDriverSummaries(List.of(route.getDriverId()))
+                .get(route.getDriverId());
+        ProfileServiceClient.VehicleSummaryItem vehicle = route.getVehicleId() == null ? null
+                : profileServiceClient.fetchVehicleSummaries(List.of(route.getVehicleId())).get(route.getVehicleId());
+        String driverPhone = identityServiceClient.fetchPhone(route.getDriverId());
+
+        return new BookingDetailsResponse(
+                booking.getId(), booking.getStatus(),
+                route.getOriginLabel(), route.getDestinationLabel(), route.getDepartureTime(),
+                booking.getSeatCount(), booking.getFareTotal(), booking.getFarePerSeatSnapshot(),
+                booking.getHoldExpiresAt(), SEAT_HOLD_MINUTES,
+                route.getDriverId(),
+                driver == null ? booking.getDriverNameSnapshot() : driver.legalName(),
+                driverPhone,
+                driver == null ? null : driver.photoUrl(),
+                driver != null && driver.verificationStatus() == VerificationStatus.APPROVED,
+                vehicle == null ? null : vehicle.make(),
+                vehicle == null ? null : vehicle.model(),
+                vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
+                vehicle != null && vehicle.hasAC()
+        );
     }
 
     @Transactional
