@@ -17,21 +17,70 @@ jobs:
           filters: |
             api-gateway:
               - 'api-gateway/**'
+
             identity-service:
               - 'identity-service/**'
-              - 'common/**'
+              - 'common/src/main/java/org/coryd/common/entity/**'
+              - 'common/src/main/java/org/coryd/common/exception/**'
+              - 'common/src/main/java/org/coryd/common/response/**'
+              - 'common/src/main/java/org/coryd/common/security/**'
+              - 'common/src/main/java/org/coryd/common/instrumentation/**'
+              - 'common/src/main/java/org/coryd/common/config/**'
+              - 'common/src/main/java/org/coryd/common/kafka/**'
+              - 'common/src/main/java/org/coryd/common/enums/UserRole.java'
+              - 'common/src/main/java/org/coryd/common/enums/OtpChannel.java'
+
             profile-service:
               - 'profile-service/**'
-              - 'common/**'
+              - 'common/src/main/java/org/coryd/common/entity/**'
+              - 'common/src/main/java/org/coryd/common/exception/**'
+              - 'common/src/main/java/org/coryd/common/response/**'
+              - 'common/src/main/java/org/coryd/common/security/**'
+              - 'common/src/main/java/org/coryd/common/instrumentation/**'
+              - 'common/src/main/java/org/coryd/common/config/**'
+              - 'common/src/main/java/org/coryd/common/kafka/**'
+              - 'common/src/main/java/org/coryd/common/enums/VerificationStatus.java'
+
             trip-service:
               - 'trip-service/**'
-              - 'common/**'
+              - 'common/src/main/java/org/coryd/common/entity/**'
+              - 'common/src/main/java/org/coryd/common/exception/**'
+              - 'common/src/main/java/org/coryd/common/response/**'
+              - 'common/src/main/java/org/coryd/common/security/**'
+              - 'common/src/main/java/org/coryd/common/instrumentation/**'
+              - 'common/src/main/java/org/coryd/common/config/**'
+              - 'common/src/main/java/org/coryd/common/kafka/**'
+              - 'common/src/main/java/org/coryd/common/enums/BookingStatus.java'
+              - 'common/src/main/java/org/coryd/common/enums/IssueCategory.java'
+              - 'common/src/main/java/org/coryd/common/enums/RatingDirection.java'
+              - 'common/src/main/java/org/coryd/common/enums/RouteStatus.java'
+              - 'common/src/main/java/org/coryd/common/enums/VerificationStatus.java'
+
             payment-service:
               - 'payment-service/**'
-              - 'common/**'
+              - 'common/src/main/java/org/coryd/common/entity/**'
+              - 'common/src/main/java/org/coryd/common/exception/**'
+              - 'common/src/main/java/org/coryd/common/response/**'
+              - 'common/src/main/java/org/coryd/common/security/**'
+              - 'common/src/main/java/org/coryd/common/instrumentation/**'
+              - 'common/src/main/java/org/coryd/common/config/**'
+              - 'common/src/main/java/org/coryd/common/kafka/**'
+              - 'common/src/main/java/org/coryd/common/enums/PaymentMethod.java'
+              - 'common/src/main/java/org/coryd/common/enums/PaymentPurpose.java'
+              - 'common/src/main/java/org/coryd/common/enums/PayoutStatus.java'
+              - 'common/src/main/java/org/coryd/common/enums/WalletEntryType.java'
+
             notification-service:
               - 'notification-service/**'
-              - 'common/**'
+              - 'common/src/main/java/org/coryd/common/entity/**'
+              - 'common/src/main/java/org/coryd/common/exception/**'
+              - 'common/src/main/java/org/coryd/common/response/**'
+              - 'common/src/main/java/org/coryd/common/security/**'
+              - 'common/src/main/java/org/coryd/common/instrumentation/**'
+              - 'common/src/main/java/org/coryd/common/config/**'
+              - 'common/src/main/java/org/coryd/common/kafka/**'
+              - 'common/src/main/java/org/coryd/common/enums/NotificationChannel.java'
+              - 'common/src/main/java/org/coryd/common/enums/OtpChannel.java'
 
   build:
     needs: detect-changes
