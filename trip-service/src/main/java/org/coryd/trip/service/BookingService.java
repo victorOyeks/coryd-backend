@@ -207,9 +207,9 @@ public class BookingService {
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Payment succeeded");
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CONFIRMED, BookingConfirmedEvent.builder()
-                .bookingId(booking.getId().toString())
-                .routePostId(booking.getRoutePostId().toString())
-                .riderId(booking.getRiderId().toString())
+                .bookingId(booking.getId())
+                .routePostId(booking.getRoutePostId())
+                .riderId(booking.getRiderId())
                 .seatCount(booking.getSeatCount())
                 .fareTotal(booking.getFareTotal())
                 .confirmedAt(LocalDateTime.now())
