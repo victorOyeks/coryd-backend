@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
+import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.entity.Booking;
@@ -45,6 +46,12 @@ public class BookingController {
     @GetMapping("/{bookingId}")
     public ApiResponse<BookingDetailsResponse> details(@PathVariable String bookingId) {
         return ApiResponse.ok(bookingService.getBookingDetails(bookingId));
+    }
+
+    /** Track Live Trip's status timeline - each entry is a status the booking has passed through, with when it happened. */
+    @GetMapping("/{bookingId}/history")
+    public ApiResponse<List<BookingStatusHistoryEntry>> history(@PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.getStatusHistory(bookingId));
     }
 
     @PostMapping("/routes/{routePostId}")

@@ -31,6 +31,7 @@ public record BookingDetailsResponse(
         String vehicleMake,
         String vehicleModel,
         String vehiclePlate,
-        boolean vehicleHasAC
+        boolean vehicleHasAC,
+        String routeViaSummary
 ) {
 }

@@ -1,6 +1,7 @@
 package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
@@ -17,6 +18,7 @@ import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.CancellationPolicy;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
+import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.SharedTripResponse;
@@ -44,6 +46,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BookingService {
@@ -63,6 +66,7 @@ public class BookingService {
     private final IdentityServiceClient identityServiceClient;
     private final ShareTokenService shareTokenService;
     private final LocationService locationService;
+    private final MapsService mapsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
@@ -163,8 +167,28 @@ public class BookingService {
                 vehicle == null ? null : vehicle.make(),
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
-                vehicle != null && vehicle.hasAC()
+                vehicle != null && vehicle.hasAC(),
+                routeViaSummary(route)
         );
+    }
+
+    /** Track Live Trip's status timeline - kept off BookingDetailsResponse since Pay Now/Booking Confirmed don't render it. */
+    public List<BookingStatusHistoryEntry> getStatusHistory(String bookingId) {
+        return historyRepository.findByBookingIdOrderByCreatedAtAsc(bookingId).stream()
+                .map(h -> new BookingStatusHistoryEntry(h.getStatus(), h.getCreatedAt()))
+                .toList();
+    }
+
+    /** Best-effort - a Directions API hiccup shouldn't take down the whole booking-details screen over one text line. */
+    private String routeViaSummary(RoutePost route) {
+        try {
+            return mapsService.getRoutePreview(
+                    route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()
+            ).viaSummary();
+        } catch (Exception e) {
+            log.warn("Route preview unavailable for booking details (routePostId={}): {}", route.getId(), e.getMessage());
+            return null;
+        }
     }
 
     @Transactional
