@@ -2,6 +2,7 @@ package org.coryd.payment.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.PaymentMethod;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
@@ -32,6 +33,7 @@ public class EarningsService {
     private final DriverEarningsAccountRepository earningsAccountRepository;
     private final EarningsTransactionRepository earningsTransactionRepository;
     private final CommissionProperties commissionProperties;
+    private final WalletService walletService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID)
@@ -75,13 +77,21 @@ public class EarningsService {
         hold.setRefunded(true);
         fareHoldRepository.save(hold);
 
-        paymentTransactionRepository.findByBookingId(bookingId).ifPresent(transaction ->
-                kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
-                        .bookingId(bookingId.toString())
-                        .riderId(transaction.getRiderId().toString())
-                        .amount(hold.getAmount())
-                        .reason(reason)
-                        .refundedAt(LocalDateTime.now())
-                        .build()));
+        paymentTransactionRepository.findByBookingId(bookingId).ifPresent(transaction -> {
+            // We fully own the wallet ledger, so a wallet-paid booking gets its money back
+            // immediately. A Paystack-paid booking still only emits RefundIssuedEvent below -
+            // there is no actual Paystack refund API call yet (pre-existing gap, unchanged here).
+            if (transaction.getPaymentMethod() == PaymentMethod.WALLET) {
+                walletService.creditRefund(transaction.getRiderId(), bookingId, hold.getAmount(), reason);
+            }
+
+            kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
+                    .bookingId(bookingId.toString())
+                    .riderId(transaction.getRiderId().toString())
+                    .amount(hold.getAmount())
+                    .reason(reason)
+                    .refundedAt(LocalDateTime.now())
+                    .build());
+        });
     }
 }

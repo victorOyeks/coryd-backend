@@ -1,6 +1,8 @@
 package org.coryd.payment.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.PaymentMethod;
+import org.coryd.common.enums.PaymentPurpose;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
@@ -27,10 +29,16 @@ public class PaymentService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final FareHoldRepository fareHoldRepository;
     private final PaymentGatewayClient gatewayClient;
+    private final WalletService walletService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Transactional
     public InitiatePaymentResponse initiate(InitiatePaymentRequest request) {
+        PaymentMethod method = request.paymentMethod() == null ? PaymentMethod.PAYSTACK : request.paymentMethod();
+        return method == PaymentMethod.WALLET ? payFromWallet(request) : payViaPaystack(request);
+    }
+
+    private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
         String reference = "CORYD-" + UUID.randomUUID();
 
         PaymentGatewayClient.GatewayInitResult result =
@@ -42,6 +50,8 @@ public class PaymentService {
                 .amount(request.amount())
                 .gatewayReference(result.gatewayReference())
                 .status(PayoutStatus.PENDING)
+                .paymentMethod(PaymentMethod.PAYSTACK)
+                .purpose(PaymentPurpose.BOOKING_PAYMENT)
                 .build());
 
         fareHoldRepository.save(FareHold.builder()
@@ -51,7 +61,41 @@ public class PaymentService {
                 .amount(request.amount())
                 .build());
 
-        return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference());
+        return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
+    }
+
+    /** No gateway involved at all - the fare is debited from the rider's wallet synchronously, so the booking confirms immediately instead of waiting on a webhook. */
+    private InitiatePaymentResponse payFromWallet(InitiatePaymentRequest request) {
+        String reference = "WALLET-" + UUID.randomUUID();
+        walletService.debitForBooking(request.riderId(), request.bookingId(), request.amount(), reference);
+
+        PaymentTransaction transaction = paymentTransactionRepository.save(PaymentTransaction.builder()
+                .bookingId(request.bookingId())
+                .riderId(request.riderId())
+                .amount(request.amount())
+                .gatewayReference(reference)
+                .status(PayoutStatus.PAID)
+                .paymentMethod(PaymentMethod.WALLET)
+                .purpose(PaymentPurpose.BOOKING_PAYMENT)
+                .build());
+
+        // Same FareHold as the Paystack path - EarningsService's commission/refund logic
+        // doesn't need to know which payment method funded it.
+        fareHoldRepository.save(FareHold.builder()
+                .paymentTransactionId(transaction.getId())
+                .bookingId(request.bookingId())
+                .driverId(request.driverId())
+                .amount(request.amount())
+                .build());
+
+        kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
+                .bookingId(transaction.getBookingId())
+                .paymentTransactionId(transaction.getId())
+                .amount(transaction.getAmount())
+                .paidAt(LocalDateTime.now())
+                .build());
+
+        return new InitiatePaymentResponse(null, reference, PayoutStatus.PAID);
     }
 
     @Transactional
@@ -62,9 +106,14 @@ public class PaymentService {
         transaction.setStatus(PayoutStatus.PAID);
         paymentTransactionRepository.save(transaction);
 
+        if (transaction.getPurpose() == PaymentPurpose.WALLET_TOPUP) {
+            walletService.creditFromTopUp(transaction);
+            return;
+        }
+
         kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
-                .bookingId(transaction.getBookingId().toString())
-                .paymentTransactionId(transaction.getId().toString())
+                .bookingId(transaction.getBookingId())
+                .paymentTransactionId(transaction.getId())
                 .amount(transaction.getAmount())
                 .paidAt(LocalDateTime.now())
                 .build());
@@ -78,8 +127,13 @@ public class PaymentService {
         transaction.setStatus(PayoutStatus.FAILED);
         paymentTransactionRepository.save(transaction);
 
+        if (transaction.getPurpose() == PaymentPurpose.WALLET_TOPUP) {
+            // Nothing was ever held for a top-up - the rider just sees it failed.
+            return;
+        }
+
         kafkaTemplate.send(KafkaTopics.PAYMENT_FAILED, PaymentFailedEvent.builder()
-                .bookingId(transaction.getBookingId().toString())
+                .bookingId(transaction.getBookingId())
                 .reason(reason)
                 .failedAt(LocalDateTime.now())
                 .build());

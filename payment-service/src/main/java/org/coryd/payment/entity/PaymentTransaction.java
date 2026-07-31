@@ -12,6 +12,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
+import org.coryd.common.enums.PaymentMethod;
+import org.coryd.common.enums.PaymentPurpose;
 import org.coryd.common.enums.PayoutStatus;
 
 import java.math.BigDecimal;
@@ -25,7 +27,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class PaymentTransaction extends BaseEntity {
 
-    @Column(nullable = false)
+    /** Null for wallet top-ups, which have no booking to attach to. */
     private String bookingId;
 
     @Column(nullable = false)
@@ -41,4 +43,14 @@ public class PaymentTransaction extends BaseEntity {
     @Builder.Default
     @Column(nullable = false, length = 20)
     private PayoutStatus status = PayoutStatus.PENDING;
+
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    @Column(nullable = false, length = 20)
+    private PaymentMethod paymentMethod = PaymentMethod.PAYSTACK;
+
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    @Column(nullable = false, length = 20)
+    private PaymentPurpose purpose = PaymentPurpose.BOOKING_PAYMENT;
 }
