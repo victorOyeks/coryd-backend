@@ -44,9 +44,8 @@ public class Vehicle extends BaseEntity {
     private String exteriorPhotoUrl;
     private String interiorPhotoUrl;
     private String acPhotoUrl;
-
-    /** Display flag for the "AC" badge on ride cards - separate from acPhotoUrl, which is just verification evidence. */
-    @Column(nullable = false)
+    
+    @Column(name = "has_ac", nullable = false)
     private boolean hasAC;
 
     @Enumerated(EnumType.STRING)
