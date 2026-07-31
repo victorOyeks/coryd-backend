@@ -12,9 +12,7 @@ public record InitiatePaymentRequest(
         @NotNull String driverId,
         @NotNull @Positive BigDecimal amount,
         String riderEmail,
-        /** Null defaults to PAYSTACK - keeps existing callers working unchanged. */
         PaymentMethod paymentMethod,
-        /** Where Paystack redirects the browser/webview after checkout - the FE supplies its own deep link/route so it lands on the right screen. Ignored for WALLET payments. */
         String callbackUrl
 ) {
 }
