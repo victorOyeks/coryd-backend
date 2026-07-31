@@ -73,15 +73,15 @@ public class VehicleService {
 
         if (request.status() == VerificationStatus.APPROVED) {
             kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
-                    .driverId(vehicle.getDriverId().toString())
-                    .vehicleId(vehicle.getId().toString())
+                    .driverId(vehicle.getDriverId())
+                    .vehicleId(vehicle.getId())
                     .reviewedBy(request.reviewedBy())
                     .approvedAt(LocalDateTime.now())
                     .build());
         } else if (request.status() == VerificationStatus.REJECTED) {
             kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
-                    .driverId(vehicle.getDriverId().toString())
-                    .vehicleId(vehicle.getId().toString())
+                    .driverId(vehicle.getDriverId())
+                    .vehicleId(vehicle.getId())
                     .rejectionReason(request.rejectionReason())
                     .reviewedBy(request.reviewedBy())
                     .rejectedAt(LocalDateTime.now())

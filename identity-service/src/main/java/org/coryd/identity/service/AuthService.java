@@ -243,7 +243,7 @@ public class AuthService {
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
         long expiresIn = jwtUtil.getExpirationMs() / 1000;
         long refreshExpiresIn = Duration.ofDays(REFRESH_TOKEN_TTL_DAYS).getSeconds();
-        return new AuthResponse(user.getId(), user.getPhone(), activeRole.name(), roleNames,
+        return new AuthResponse(user.getId(), user.getFullName(), user.getPhone(), activeRole.name(), roleNames,
                 accessToken, expiresIn, refreshTokenValue, refreshExpiresIn);
     }
 }
