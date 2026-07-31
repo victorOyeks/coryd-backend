@@ -44,7 +44,7 @@ public class Vehicle extends BaseEntity {
     private String exteriorPhotoUrl;
     private String interiorPhotoUrl;
     private String acPhotoUrl;
-    
+
     @Column(name = "has_ac", nullable = false)
     private boolean hasAC;
 

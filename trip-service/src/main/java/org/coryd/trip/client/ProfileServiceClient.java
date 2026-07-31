@@ -3,6 +3,7 @@ package org.coryd.trip.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.VerificationStatus;
+import org.coryd.common.security.ForwardedAuthInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -24,7 +25,10 @@ public class ProfileServiceClient {
     private final RestClient restClient;
 
     public ProfileServiceClient(@Value("${services.profile.url}") String profileServiceUrl) {
-        this.restClient = RestClient.create(profileServiceUrl);
+        this.restClient = RestClient.builder()
+                .baseUrl(profileServiceUrl)
+                .requestInterceptor(new ForwardedAuthInterceptor())
+                .build();
     }
 
     public String fetchDriverName(String driverId) {
