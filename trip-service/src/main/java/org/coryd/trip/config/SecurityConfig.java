@@ -27,6 +27,12 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
+                        // Real auth for the socket happens inside the STOMP CONNECT frame
+                        // (WebSocketAuthInterceptor), not at this HTTP-layer handshake - Spring
+                        // Security still gates the initial SockJS handshake request otherwise.
+                        .requestMatchers("/ws/**").permitAll()
+                        // Read-only public trip-share link - the whole point is no login (see ShareController).
+                        .requestMatchers("/shared/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
