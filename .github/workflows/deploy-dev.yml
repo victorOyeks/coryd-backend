@@ -38,6 +38,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.services != '[]' }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
     steps:
@@ -49,56 +50,108 @@ jobs:
           cache: maven
       - name: Build ${{ matrix.service }}
         run: mvn -pl ${{ matrix.service }} -am package -DskipTests -q
-      - name: Rename jar to app.jar
+
+      # Ships the jar straight to the VPS over SSH instead of going through
+      # actions/upload-artifact - GitHub's per-org Artifact storage has a hard
+      # quota that a multi-service matrix build chews through fast, and none
+      # of these jars need to live anywhere but the target host anyway.
+      - name: SCP jar to Dev VPS
         run: |
-          mkdir -p out/${{ matrix.service }}
-          cp ${{ matrix.service }}/target/*.jar out/${{ matrix.service }}/app.jar
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.service }}
-          path: out/${{ matrix.service }}/app.jar
-          retention-days: 1
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEV_VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEV_VPS_HOST }}" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.DEV_VPS_USER }}@${{ secrets.DEV_VPS_HOST }}" \
+            "mkdir -p /opt/coryd-dev/${{ matrix.service }}"
+          jar=$(ls ${{ matrix.service }}/target/*.jar | head -1)
+          scp -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=accept-new \
+            "$jar" \
+            "${{ secrets.DEV_VPS_USER }}@${{ secrets.DEV_VPS_HOST }}:/opt/coryd-dev/${{ matrix.service }}/app-new.jar"
+          rm -f ~/.ssh/deploy_key
 
   deploy:
     needs: [detect-changes, build]
     runs-on: ubuntu-latest
+    if: needs.build.result == 'success'
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      # Uploads each service's app.jar to /opt/coryd-dev/<service>/incoming.jar -
-      # kept separate from the live app.jar until every upload succeeds, so a
-      # partial deploy never leaves a service with a half-written jar.
-      - name: Copy jars to Dev VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEV_VPS_HOST }}
-          username: ${{ secrets.DEV_VPS_USER }}
-          key: ${{ secrets.DEV_VPS_SSH_KEY }}
-          source: "artifacts/*/app.jar"
-          target: "/opt/coryd-dev/incoming"
-          strip_components: 1
-
-      - name: Install and restart changed services
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEV_VPS_HOST }}
-          username: ${{ secrets.DEV_VPS_USER }}
-          key: ${{ secrets.DEV_VPS_SSH_KEY }}
-          # Restart order matches dependency order: identity -> profile -> trip -> payment ->
-          # notification -> api-gateway last (so the gateway only ever routes to backends
-          # that are already on the new version).
-          envs: CHANGED_SERVICES
-          script: |
-            set -e
-            for svc in identity-service profile-service trip-service payment-service notification-service api-gateway; do
-              if echo "$CHANGED_SERVICES" | grep -q "\"${svc}\""; then
-                mkdir -p /opt/coryd-dev/${svc}
-                mv /opt/coryd-dev/incoming/${svc}/app.jar /opt/coryd-dev/${svc}/app.jar
-                sudo systemctl restart coryd-${svc}
-                echo "Deployed and restarted coryd-${svc}"
-              fi
-            done
         env:
           CHANGED_SERVICES: ${{ needs.detect-changes.outputs.services }}
+        with:
+          host: ${{ secrets.DEV_VPS_HOST }}
+          username: ${{ secrets.DEV_VPS_USER }}
+          key: ${{ secrets.DEV_VPS_SSH_KEY }}
+          envs: CHANGED_SERVICES
+          command_timeout: 30m
+          # Restart order matches dependency order: identity -> profile -> trip -> payment ->
+          # notification -> api-gateway last (so the gateway only ever routes to backends
+          # that are already on the new version). Each service gets a health-checked
+          # restart with automatic rollback if it doesn't come back up.
+          script: |
+            set -e
+            changed=$(echo "$CHANGED_SERVICES" | tr -d '[]" ' | tr ',' '\n')
+            echo "Changed services: $(echo $changed | tr '\n' ' ')"
+
+            declare -A health_urls
+            health_urls["identity-service"]="http://localhost:9101/identity/actuator/health"
+            health_urls["profile-service"]="http://localhost:9102/profile/actuator/health"
+            health_urls["trip-service"]="http://localhost:9103/trip/actuator/health"
+            health_urls["payment-service"]="http://localhost:9104/payment/actuator/health"
+            health_urls["notification-service"]="http://localhost:9105/notification/actuator/health"
+            health_urls["api-gateway"]="http://localhost:9100/actuator/health"
+
+            ordered=(
+              identity-service
+              profile-service
+              trip-service
+              payment-service
+              notification-service
+              api-gateway
+            )
+
+            for svc in "${ordered[@]}"; do
+              if ! echo "$changed" | grep -qx "$svc"; then
+                echo "  — $svc unchanged, skipping"
+                continue
+              fi
+
+              if [ ! -f "/opt/coryd-dev/$svc/app-new.jar" ]; then
+                echo "  ✗ No JAR found for $svc"
+                exit 1
+              fi
+
+              echo "→ Deploying $svc"
+
+              [ -f /opt/coryd-dev/$svc/app.jar ] && \
+                cp /opt/coryd-dev/$svc/app.jar /opt/coryd-dev/$svc/app.jar.bak
+
+              mv /opt/coryd-dev/$svc/app-new.jar /opt/coryd-dev/$svc/app.jar
+
+              sudo systemctl restart coryd-$svc
+
+              ok=false
+              for i in $(seq 1 60); do
+                status=$(wget -qO- "${health_urls[$svc]}" 2>/dev/null | grep -o '"status":"UP"' || echo "")
+                if [ -n "$status" ]; then
+                  echo "  ✓ $svc healthy"
+                  ok=true
+                  break
+                fi
+                sleep 5
+              done
+
+              if [ "$ok" = "false" ]; then
+                echo "  ✗ $svc did not become healthy in 300s — rolling back"
+                [ -f /opt/coryd-dev/$svc/app.jar.bak ] && \
+                  cp /opt/coryd-dev/$svc/app.jar.bak /opt/coryd-dev/$svc/app.jar
+                sudo systemctl restart coryd-$svc
+                exit 1
+              fi
+
+              rm -f /opt/coryd-dev/$svc/app.jar.bak
+            done
+
+            echo "✓ Dev deployment complete"
