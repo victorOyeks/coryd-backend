@@ -5,12 +5,24 @@ server:
     context-path: /trip
 
 spring:
+  config:
+    import: optional:file:.env[.properties]
+
   application:
     name: trip-service
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coryd}?currentSchema=trip
     username: ${DB_USERNAME:coryd}
     password: ${DB_PASSWORD:coryd}
+    hikari:
+      # Kept low - this Postgres instance is shared with marketrun-ng and other
+      # projects on a max_connections=100 server; 5 services x a default pool
+      # of 10 each was enough on its own to exhaust it. idle-timeout/max-lifetime
+      # make sure idle connections actually get reaped instead of piling up.
+      maximum-pool-size: 5
+      minimum-idle: 2
+      idle-timeout: 30000
+      max-lifetime: 600000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -41,9 +53,14 @@ services:
   profile:
     url: ${PROFILE_SERVICE_URL:http://localhost:9102/profile}
 
+google:
+  maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:}
+    base-url: https://maps.googleapis.com/maps/api
+
 matching:
-  time-tolerance-minutes: 20
-  geo-tolerance-meters: 500
+  time-tolerance-minutes: 60
+  geo-tolerance-meters: 4000
   min-fare-reports: 5
 
 cancellation:
