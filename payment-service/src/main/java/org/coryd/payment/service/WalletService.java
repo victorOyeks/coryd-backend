@@ -48,7 +48,7 @@ public class WalletService {
 
     @Transactional
     public InitiatePaymentResponse initiateTopUp(String userId, BigDecimal amount, String email, String callbackUrl) {
-        String reference = "CORYD-TOPUP-" + UUID.randomUUID();
+        String reference = UUID.randomUUID().toString();
         PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(reference, amount, email, callbackUrl);
 
         paymentTransactionRepository.save(PaymentTransaction.builder()

@@ -39,7 +39,7 @@ public class PaymentService {
     }
 
     private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
-        String reference = "CORYD-" + UUID.randomUUID();
+        String reference = UUID.randomUUID().toString();
 
         PaymentGatewayClient.GatewayInitResult result =
                 gatewayClient.initiate(reference, request.amount(), request.riderEmail(), request.callbackUrl());
@@ -66,7 +66,7 @@ public class PaymentService {
 
     /** No gateway involved at all - the fare is debited from the rider's wallet synchronously, so the booking confirms immediately instead of waiting on a webhook. */
     private InitiatePaymentResponse payFromWallet(InitiatePaymentRequest request) {
-        String reference = "WALLET-" + UUID.randomUUID();
+        String reference = UUID.randomUUID().toString();
         walletService.debitForBooking(request.riderId(), request.bookingId(), request.amount(), reference);
 
         PaymentTransaction transaction = paymentTransactionRepository.save(PaymentTransaction.builder()
