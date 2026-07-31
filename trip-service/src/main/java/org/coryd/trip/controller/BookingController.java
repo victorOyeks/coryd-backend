@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Optional;
 
 
 @RestController
@@ -33,6 +34,12 @@ public class BookingController {
     @GetMapping("/riders/{riderId}/recent-routes")
     public ApiResponse<List<Booking>> recentRoutes(@PathVariable String riderId) {
         return ApiResponse.ok(bookingService.getRecentRoutesForRider(riderId));
+    }
+
+    /** Powers the Home screen's "Go back to your current trip" banner. */
+    @GetMapping("/riders/{riderId}/active")
+    public ApiResponse<Optional<BookingDetailsResponse>> activeTrip(@PathVariable String riderId) {
+        return ApiResponse.ok(bookingService.getActiveBookingForRider(riderId));
     }
 
     @GetMapping("/{bookingId}")
@@ -49,6 +56,18 @@ public class BookingController {
     public ApiResponse<Void> cancel(@PathVariable String bookingId) {
         bookingService.cancelByRider(bookingId);
         return ApiResponse.ok("Booking cancelled", null);
+    }
+
+    @PostMapping("/{bookingId}/en-route")
+    public ApiResponse<Void> enRoute(@PathVariable String bookingId) {
+        bookingService.markEnRouteToPickup(bookingId);
+        return ApiResponse.ok("Driver marked en route to pickup", null);
+    }
+
+    @PostMapping("/{bookingId}/arrived-at-pickup")
+    public ApiResponse<Void> arrivedAtPickup(@PathVariable String bookingId) {
+        bookingService.markArrivedAtPickup(bookingId);
+        return ApiResponse.ok("Driver marked arrived at pickup", null);
     }
 
     @PostMapping("/{bookingId}/picked-up")
@@ -80,6 +99,11 @@ public class BookingController {
                                          @RequestParam(required = false) Double latitude,
                                          @RequestParam(required = false) Double longitude) {
         return ApiResponse.ok(bookingService.triggerSos(bookingId, triggeredBy, latitude, longitude));
+    }
+
+    @PostMapping("/{bookingId}/share")
+    public ApiResponse<String> share(@PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.shareTrip(bookingId));
     }
 
     @PostMapping("/{bookingId}/report-issue")

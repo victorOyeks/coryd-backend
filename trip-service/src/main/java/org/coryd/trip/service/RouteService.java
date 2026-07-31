@@ -1,6 +1,7 @@
 package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.enums.VerificationStatus;
@@ -33,6 +34,7 @@ import org.coryd.trip.repository.NotifyMeRequestRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
+import org.coryd.trip.util.GeoUtils;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,9 +52,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class RouteService {
 
-    /** Assumed average city driving speed for the pickup-ETA estimate - same technique as marketrun-ng's DeliveryPricingService.DELIVERY_SPEED_KM_H, to avoid a Google Directions call per search result. */
-    private static final double ASSUMED_SPEED_KM_H = 25.0;
-    private static final double EARTH_RADIUS_KM = 6371.0;
     private static final int NEARBY_OPTIONS_LIMIT = 5;
     private static final double NEARBY_OPTIONS_RADIUS_MULTIPLIER = 3.0;
     private static final int NEARBY_OPTIONS_TIME_WINDOW_HOURS = 24;
@@ -101,8 +100,8 @@ public class RouteService {
                 .build());
 
         kafkaTemplate.send(KafkaTopics.ROUTE_PUBLISHED, RoutePublishedEvent.builder()
-                .routePostId(route.getId().toString())
-                .driverId(driverId.toString())
+                .routePostId(route.getId())
+                .driverId(driverId)
                 .originLabel(route.getOriginLabel())
                 .destinationLabel(route.getDestinationLabel())
                 .departureTime(LocalDateTime.ofInstant(route.getDepartureTime(), java.time.ZoneOffset.UTC))
@@ -130,9 +129,9 @@ public class RouteService {
             request.setFulfilled(true);
             notifyMeRequestRepository.save(request);
             kafkaTemplate.send(KafkaTopics.NOTIFY_ME_MATCHED, NotifyMeMatchedEvent.builder()
-                    .notifyMeRequestId(request.getId().toString())
-                    .riderId(request.getRiderId().toString())
-                    .routePostId(route.getId().toString())
+                    .notifyMeRequestId(request.getId())
+                    .riderId(request.getRiderId())
+                    .routePostId(route.getId())
                     .build());
         }
     }
@@ -225,22 +224,9 @@ public class RouteService {
                     vehicle != null && vehicle.hasAC(),
                     rating == null ? null : rating.getAvgStars(),
                     rating == null ? 0L : rating.getRatingCount(),
-                    estimatePickupMinutes(riderLat, riderLng, route.getOriginLat(), route.getOriginLng())
+                    GeoUtils.estimateMinutes(riderLat, riderLng, route.getOriginLat(), route.getOriginLng())
             );
         }).toList();
-    }
-
-    private static int estimatePickupMinutes(double lat1, double lng1, double lat2, double lng2) {
-        double distanceKm = haversineKm(lat1, lng1, lat2, lng2);
-        return (int) Math.ceil(distanceKm / ASSUMED_SPEED_KM_H * 60);
-    }
-
-    private static double haversineKm(double lat1, double lng1, double lat2, double lng2) {
-        double dLat = Math.toRadians(lat2 - lat1);
-        double dLng = Math.toRadians(lng2 - lng1);
-        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-        return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm) {
@@ -268,6 +254,11 @@ public class RouteService {
                 .build());
     }
 
+    /** Anything not already a terminal state - HELD/CONFIRMED plus the trip-in-progress phases, all of which a driver-side route cancellation must still unwind and refund. */
+    private static final List<BookingStatus> CANCELLABLE_BY_ROUTE_CANCELLATION = List.of(
+            BookingStatus.HELD, BookingStatus.CONFIRMED,
+            BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+
     @Transactional
     public void cancel(String routePostId) {
         RoutePost route = routePostRepository.findById(routePostId)
@@ -277,16 +268,16 @@ public class RouteService {
         routePostRepository.save(route);
 
         List<Booking> affected = bookingRepository.findByRoutePostId(routePostId);
-        List<String> affectedIds = affected.stream().map(b -> b.getId().toString()).toList();
+        List<String> affectedIds = affected.stream().map(BaseEntity::getId).toList();
 
         for (Booking booking : affected) {
-            if (booking.getStatus() == BookingStatus.HELD || booking.getStatus() == BookingStatus.CONFIRMED) {
+            if (CANCELLABLE_BY_ROUTE_CANCELLATION.contains(booking.getStatus())) {
                 booking.setStatus(BookingStatus.CANCELLED_DRIVER);
                 bookingRepository.save(booking);
                 kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
-                        .bookingId(booking.getId().toString())
-                        .routePostId(routePostId.toString())
-                        .riderId(booking.getRiderId().toString())
+                        .bookingId(booking.getId())
+                        .routePostId(routePostId)
+                        .riderId(booking.getRiderId())
                         .cancelledBy("DRIVER")
                         .feeApplied(false)
                         .cancelledAt(LocalDateTime.now())
@@ -295,8 +286,8 @@ public class RouteService {
         }
 
         kafkaTemplate.send(KafkaTopics.ROUTE_CANCELLED, RouteCancelledEvent.builder()
-                .routePostId(routePostId.toString())
-                .driverId(route.getDriverId().toString())
+                .routePostId(routePostId)
+                .driverId(route.getDriverId())
                 .affectedBookingIds(affectedIds)
                 .cancelledAt(LocalDateTime.now())
                 .build());

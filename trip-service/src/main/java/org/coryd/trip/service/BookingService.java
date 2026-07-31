@@ -11,6 +11,7 @@ import org.coryd.common.kafka.events.BookingConfirmedEvent;
 import org.coryd.common.kafka.events.IssueReportedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
+import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.CancellationPolicy;
@@ -18,6 +19,7 @@ import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
+import org.coryd.trip.dto.SharedTripResponse;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.BookingStatusHistory;
 import org.coryd.trip.entity.IssueReport;
@@ -40,6 +42,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -58,11 +61,80 @@ public class BookingService {
     private final CancellationPolicy cancellationPolicy;
     private final ProfileServiceClient profileServiceClient;
     private final IdentityServiceClient identityServiceClient;
+    private final ShareTokenService shareTokenService;
+    private final LocationService locationService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    private static final int SHARE_LINK_VALID_HOURS = 4;
 
     /** Last 5 bookings, newest first - powers the Home screen's "Recent Routes" list. */
     public List<Booking> getRecentRoutesForRider(String riderId) {
         return bookingRepository.findTop5ByRiderIdOrderByCreatedAtDesc(riderId);
+    }
+
+    private static final List<BookingStatus> ACTIVE_TRIP_STATUSES =
+            List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+
+    /** Powers the Home screen's "Go back to your current trip" banner - empty if the rider has no trip in flight. */
+    public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId) {
+        return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
+                .map(booking -> getBookingDetails(booking.getId()));
+    }
+
+    /** Rider taps "Share trip details" - generates the signed link and hands off to notification-service (via Kafka) to actually SMS the emergency contact, not a direct HTTP call. */
+    @Transactional
+    public String shareTrip(String bookingId) {
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        ProfileServiceClient.RiderContact contact = profileServiceClient.fetchRiderContact(booking.getRiderId());
+        if (contact == null || contact.emergencyContactPhone() == null || contact.emergencyContactPhone().isBlank()) {
+            throw new BadRequestException("Add an emergency contact to your profile before sharing a trip");
+        }
+
+        Instant expiresAt = route.getDepartureTime().plus(SHARE_LINK_VALID_HOURS, ChronoUnit.HOURS);
+        String link = shareTokenService.generateLink(bookingId, expiresAt);
+
+        kafkaTemplate.send(KafkaTopics.TRIP_SHARE_REQUESTED, TripShareRequestedEvent.builder()
+                .bookingId(bookingId)
+                .riderId(booking.getRiderId())
+                .shareLink(link)
+                .contactName(contact.emergencyContactName())
+                .contactPhone(contact.emergencyContactPhone())
+                .requestedAt(LocalDateTime.now())
+                .build());
+
+        return link;
+    }
+
+    /** What a "share trip" link resolves to - no auth, the whole point is the recipient has no account. */
+    public SharedTripResponse getSharedTripView(String token) {
+        String bookingId = shareTokenService.verifyAndExtractBookingId(token)
+                .orElseThrow(() -> new BadRequestException("This trip link has expired or is invalid"));
+
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        ProfileServiceClient.DriverSummaryItem driver = profileServiceClient
+                .fetchDriverSummaries(List.of(route.getDriverId()))
+                .get(route.getDriverId());
+        ProfileServiceClient.VehicleSummaryItem vehicle = route.getVehicleId() == null ? null
+                : profileServiceClient.fetchVehicleSummaries(List.of(route.getVehicleId())).get(route.getVehicleId());
+
+        return new SharedTripResponse(
+                route.getOriginLabel(), route.getDestinationLabel(), route.getDepartureTime(),
+                booking.getStatus(),
+                driver == null ? booking.getDriverNameSnapshot() : driver.legalName(),
+                driver == null ? null : driver.photoUrl(),
+                driver != null && driver.verificationStatus() == VerificationStatus.APPROVED,
+                vehicle == null ? null : vehicle.make(),
+                vehicle == null ? null : vehicle.model(),
+                vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
+                vehicle != null && vehicle.hasAC(),
+                locationService.getLocation(bookingId)
+        );
     }
 
     /** Serves both Pay Now (status=HELD) and Booking Confirmed (status=CONFIRMED) - see BookingDetailsResponse. */
@@ -176,12 +248,32 @@ public class BookingService {
                 .build());
     }
 
+    /** Driver taps "I'm on my way" - Track Live Trip's "Driver en route to pickup" phase. */
+    @Transactional
+    public void markEnRouteToPickup(String bookingId) {
+        Booking booking = getOrThrow(bookingId);
+        booking.setStatus(BookingStatus.EN_ROUTE_TO_PICKUP);
+        bookingRepository.save(booking);
+        recordHistory(bookingId, BookingStatus.EN_ROUTE_TO_PICKUP, "Driver en route to pickup");
+    }
+
+    /** Driver taps "I've arrived" - Track Live Trip's "Driver at pickup point" phase. */
+    @Transactional
+    public void markArrivedAtPickup(String bookingId) {
+        Booking booking = getOrThrow(bookingId);
+        booking.setStatus(BookingStatus.AT_PICKUP);
+        bookingRepository.save(booking);
+        recordHistory(bookingId, BookingStatus.AT_PICKUP, "Driver arrived at pickup point");
+    }
+
+    /** Rider taps "I've boarded" - advances status to IN_PROGRESS, not just a timestamp, so it drives the Track Live Trip phase timeline too. */
     @Transactional
     public void markPickedUp(String bookingId) {
         Booking booking = getOrThrow(bookingId);
         booking.setPickupConfirmedAt(Instant.now());
+        booking.setStatus(BookingStatus.IN_PROGRESS);
         bookingRepository.save(booking);
-        recordHistory(bookingId, booking.getStatus(), "Rider picked up");
+        recordHistory(bookingId, BookingStatus.IN_PROGRESS, "Rider picked up - trip in progress");
     }
 
     @Transactional
@@ -228,6 +320,8 @@ public class BookingService {
 
     @Transactional
     public SosIncident triggerSos(String bookingId, String triggeredBy, Double latitude, Double longitude) {
+        Booking booking = getOrThrow(bookingId);
+
         SosIncident incident = sosIncidentRepository.save(SosIncident.builder()
                 .bookingId(bookingId)
                 .triggeredBy(triggeredBy)
@@ -235,6 +329,11 @@ public class BookingService {
                 .longitude(longitude)
                 .opsNotifiedAt(Instant.now())
                 .build());
+
+        // The rider's own emergency contact regardless of who triggered SOS - it's a rider-safety
+        // feature. Looked up here (not in notification-service) since this service already has
+        // fetchRiderContact for Share Trip - no new cross-service dependency needed there.
+        ProfileServiceClient.RiderContact contact = profileServiceClient.fetchRiderContact(booking.getRiderId());
 
         // Fan-out only, never the primary path - the incident is already saved above.
         kafkaTemplate.send(KafkaTopics.SOS_TRIGGERED, SosTriggeredEvent.builder()
@@ -244,6 +343,8 @@ public class BookingService {
                 .latitude(latitude)
                 .longitude(longitude)
                 .triggeredAt(LocalDateTime.now())
+                .emergencyContactName(contact == null ? null : contact.emergencyContactName())
+                .emergencyContactPhone(contact == null ? null : contact.emergencyContactPhone())
                 .build());
 
         return incident;
