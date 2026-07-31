@@ -17,6 +17,7 @@ public final class KafkaTopics {
     public static final String TRIP_COMPLETED = "coryd-trip-completed";
     public static final String SOS_TRIGGERED = "coryd-sos-triggered";
     public static final String ISSUE_REPORTED = "coryd-issue-reported";
+    public static final String TRIP_SHARE_REQUESTED = "coryd-trip-share-requested";
 
     public static final String PAYMENT_SUCCEEDED = "coryd-payment-succeeded";
     public static final String PAYMENT_FAILED = "coryd-payment-failed";

@@ -18,4 +18,7 @@ public class SosTriggeredEvent {
     private Double latitude;
     private Double longitude;
     private LocalDateTime triggeredAt;
+    /** Null if the rider never set an emergency contact - notification-service skips the SMS in that case. */
+    private String emergencyContactName;
+    private String emergencyContactPhone;
 }

@@ -69,6 +69,11 @@ cancellation:
   free-cancellation-window-hours: 2
   late-fee-percentage: 0.50
 
+share:
+  link:
+    secret: ${SHARE_LINK_SECRET:change-me-in-every-environment}
+    base-url: ${SHARE_LINK_BASE_URL:https://api.coryd.ng/trip}
+
 management:
   endpoints:
     web:

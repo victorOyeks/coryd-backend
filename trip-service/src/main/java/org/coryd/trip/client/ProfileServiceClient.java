@@ -94,6 +94,20 @@ public class ProfileServiceClient {
         }
     }
 
+    /** Rider's emergency contact (Share Trip, SOS) - profile-service's existing GET /riders/{userId} already returns it, no new profile-service endpoint needed. */
+    public RiderContact fetchRiderContact(String riderId) {
+        try {
+            return restClient.get()
+                    .uri("/riders/{userId}", riderId)
+                    .retrieve()
+                    .body(RiderProfileView.class)
+                    .data();
+        } catch (Exception e) {
+            log.warn("Could not fetch rider contact for {}: {}", riderId, e.getMessage());
+            return null;
+        }
+    }
+
     private static <T> Map<String, T> toMap(List<T> items, Function<T, String> keyFn) {
         return items.stream().collect(java.util.stream.Collectors.toMap(keyFn, item -> item));
     }
@@ -127,5 +141,13 @@ public class ProfileServiceClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record VehicleSummaryBatchResponse(List<VehicleSummaryItem> data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RiderContact(String fullName, String emergencyContactName, String emergencyContactPhone) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record RiderProfileView(RiderContact data) {
     }
 }

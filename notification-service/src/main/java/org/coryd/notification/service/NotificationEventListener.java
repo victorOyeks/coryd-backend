@@ -8,8 +8,12 @@ import org.coryd.common.kafka.events.DocumentExpiringEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
+import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
+import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.notification.config.KafkaConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +21,8 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class NotificationEventListener {
+
+    private static final Logger log = LoggerFactory.getLogger(NotificationEventListener.class);
 
     private final NotificationDispatchService dispatchService;
 
@@ -63,5 +69,32 @@ public class NotificationEventListener {
     public void onDocumentExpiring(DocumentExpiringEvent event) {
         dispatchService.sendPush(event.getDriverId(), "Document expiring soon",
                 "Your " + event.getDocumentType() + " expires in " + event.getDaysRemaining() + " days.", "DOCUMENT_EXPIRING");
+    }
+
+    @KafkaListener(topics = KafkaTopics.TRIP_SHARE_REQUESTED, groupId = KafkaConfig.GROUP_ID)
+    public void onTripShareRequested(TripShareRequestedEvent event) {
+        dispatchService.sendSms(event.getContactPhone(),
+                (event.getContactName() == null ? "Hi" : "Hi " + event.getContactName()) +
+                        ", someone you know shared their CoRyd trip with you - track it here: " + event.getShareLink(),
+                "TRIP_SHARE_REQUESTED");
+    }
+
+    @KafkaListener(topics = KafkaTopics.SOS_TRIGGERED, groupId = KafkaConfig.GROUP_ID)
+    public void onSosTriggered(SosTriggeredEvent event) {
+        if (event.getEmergencyContactPhone() == null || event.getEmergencyContactPhone().isBlank()) {
+            log.warn("SOS triggered for booking {} but rider has no emergency contact set - no SMS sent", event.getBookingId());
+        } else {
+            String locationText = event.getLatitude() == null ? ""
+                    : " Last known location: " + event.getLatitude() + "," + event.getLongitude() + ".";
+            dispatchService.sendSms(event.getEmergencyContactPhone(),
+                    (event.getEmergencyContactName() == null ? "Hi" : "Hi " + event.getEmergencyContactName()) +
+                            ", this is an emergency alert from CoRyd - someone you know triggered SOS during their trip." + locationText,
+                    "SOS_TRIGGERED");
+        }
+
+        // Confirmation push to whoever triggered it - matches the app's own "will be shared
+        // immediately" promise with an acknowledgement, not just silence after tapping the button.
+        dispatchService.sendPush(event.getTriggeredBy(), "Emergency alert sent",
+                "Your emergency contact has been notified.", "SOS_TRIGGERED");
     }
 }
