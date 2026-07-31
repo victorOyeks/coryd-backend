@@ -33,7 +33,7 @@ public class WalletController {
 
     @PostMapping("/{userId}/topup/initiate")
     public ApiResponse<InitiatePaymentResponse> initiateTopUp(@PathVariable String userId, @Valid @RequestBody TopUpRequest request) {
-        return ApiResponse.ok(walletService.initiateTopUp(userId, request.amount(), request.email()));
+        return ApiResponse.ok(walletService.initiateTopUp(userId, request.amount(), request.email(), request.callbackUrl()));
     }
 
     @GetMapping("/{userId}/transactions")

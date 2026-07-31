@@ -42,7 +42,7 @@ public class PaymentService {
         String reference = "CORYD-" + UUID.randomUUID();
 
         PaymentGatewayClient.GatewayInitResult result =
-                gatewayClient.initiate(reference, request.amount(), request.riderEmail());
+                gatewayClient.initiate(reference, request.amount(), request.riderEmail(), request.callbackUrl());
 
         PaymentTransaction transaction = paymentTransactionRepository.save(PaymentTransaction.builder()
                 .bookingId(request.bookingId())

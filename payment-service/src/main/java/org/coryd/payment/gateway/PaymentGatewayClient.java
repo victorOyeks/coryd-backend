@@ -9,7 +9,7 @@ import java.math.BigDecimal;
  */
 public interface PaymentGatewayClient {
 
-    GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail);
+    GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl);
 
     boolean verifyWebhookSignature(String payload, String signatureHeader);
 

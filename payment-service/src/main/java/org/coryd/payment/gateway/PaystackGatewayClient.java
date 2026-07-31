@@ -12,6 +12,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
 
@@ -32,17 +33,21 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     }
 
     @Override
-    public GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail) {
-        // Paystack expects amount in kobo (subunit).
+    public GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl) {
         long amountInKobo = amount.movePointRight(2).longValueExact();
+
+        Map<String, Object> body = new HashMap<>(Map.of(
+                "reference", reference,
+                "amount", amountInKobo,
+                "email", riderEmail == null ? "rider@coryd.ng" : riderEmail
+        ));
+        if (callbackUrl != null && !callbackUrl.isBlank()) {
+            body.put("callback_url", callbackUrl);
+        }
 
         InitResponse response = restClient().post()
                 .uri("/transaction/initialize")
-                .body(Map.of(
-                        "reference", reference,
-                        "amount", amountInKobo,
-                        "email", riderEmail == null ? "rider@coryd.ng" : riderEmail
-                ))
+                .body(body)
                 .retrieve()
                 .body(InitResponse.class);
 
