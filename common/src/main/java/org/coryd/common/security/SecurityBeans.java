@@ -6,11 +6,26 @@ import org.coryd.common.response.ApiResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
 
 @Configuration
 public class SecurityBeans {
+
+    /**
+     * Every service authenticates via JwtFilter, never via Spring Security's own
+     * AuthenticationManager - but its mere absence makes Spring Boot's
+     * UserDetailsServiceAutoConfiguration generate an in-memory user + log a random
+     * password on every startup. Declaring this bean satisfies that auto-config's
+     * missing-bean condition and silences it; it is never actually invoked.
+     */
+    @Bean
+    public AuthenticationManager authenticationManager() {
+        return authentication -> {
+            throw new UnsupportedOperationException("Stateless JWT auth - AuthenticationManager is not used");
+        };
+    }
 
     @Bean
     public AuthenticationEntryPoint authenticationEntryPoint(ObjectMapper objectMapper) {

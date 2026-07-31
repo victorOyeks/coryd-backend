@@ -4,8 +4,9 @@
 # never collide with marketrun-ng's identically-named services on the same
 # broker, and trip-service uses a dedicated Redis logical DB (index 1).
 #
-# Postgres is intentionally NOT here - install it natively so there's one
-# less container to manage and backups are simpler.
+# Postgres is intentionally NOT here - connect to your local/native Postgres
+# install instead (DB_HOST=localhost) so there's one less container to manage
+# and backups are simpler.
 
 services:
   zookeeper:
