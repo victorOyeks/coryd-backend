@@ -74,6 +74,10 @@ share:
     secret: ${SHARE_LINK_SECRET:change-me-in-every-environment}
     base-url: ${SHARE_LINK_BASE_URL:https://api.coryd.ng/trip}
 
+app:
+  testing:
+    bypass-time-gates: ${BYPASS_TIME_GATES:false}
+
 management:
   endpoints:
     web:

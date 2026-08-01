@@ -12,3 +12,7 @@ management:
 springdoc:
   swagger-ui:
     enabled: true
+
+app:
+  testing:
+    bypass-time-gates: true

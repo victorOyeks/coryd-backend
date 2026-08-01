@@ -11,6 +11,7 @@ import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.util.GeoUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,10 @@ public class LocationService {
     private final RoutePostRepository routePostRepository;
     private final StringRedisTemplate redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
+
+    /** Dev/staging-only escape hatch for the 30-min-before-departure gate below - never true outside application-dev.yml. */
+    @Value("${app.testing.bypass-time-gates:false}")
+    private boolean bypassTimeGates;
 
     /** Driver write path - outside the eligible window is a caller error (the driver app shouldn't be posting yet); posting for a trip that isn't yours is an authorization error. */
     public LocationResponse recordLocation(String bookingId, String callerId, double lat, double lng) {
@@ -82,7 +87,7 @@ public class LocationService {
             return LocationResponse.unavailable("Live tracking isn't available for this trip right now.");
         }
         Instant opensAt = route.getDepartureTime().minus(AVAILABLE_BEFORE_DEPARTURE_MINUTES, ChronoUnit.MINUTES);
-        if (Instant.now().isBefore(opensAt)) {
+        if (!bypassTimeGates && Instant.now().isBefore(opensAt)) {
             return LocationResponse.unavailable("Live tracking opens 30 minutes before departure.");
         }
 
@@ -111,7 +116,7 @@ public class LocationService {
             throw new BadRequestException("Live location isn't available for this trip's current status");
         }
         Instant opensAt = route.getDepartureTime().minus(AVAILABLE_BEFORE_DEPARTURE_MINUTES, ChronoUnit.MINUTES);
-        if (Instant.now().isBefore(opensAt)) {
+        if (!bypassTimeGates && Instant.now().isBefore(opensAt)) {
             throw new BadRequestException("Live tracking opens 30 minutes before departure");
         }
         return route;
