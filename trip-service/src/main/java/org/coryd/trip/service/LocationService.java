@@ -81,10 +81,10 @@ public class LocationService {
         if (!LOCATION_ELIGIBLE_STATUSES.contains(booking.getStatus())) {
             return LocationResponse.unavailable("Live tracking isn't available for this trip right now.");
         }
-//        Instant opensAt = route.getDepartureTime().minus(AVAILABLE_BEFORE_DEPARTURE_MINUTES, ChronoUnit.MINUTES);
-//        if (Instant.now().isBefore(opensAt)) {
-//            return LocationResponse.unavailable("Live tracking opens 30 minutes before departure.");
-//        }
+        Instant opensAt = route.getDepartureTime().minus(AVAILABLE_BEFORE_DEPARTURE_MINUTES, ChronoUnit.MINUTES);
+        if (Instant.now().isBefore(opensAt)) {
+            return LocationResponse.unavailable("Live tracking opens 30 minutes before departure.");
+        }
 
         String raw = redisTemplate.opsForValue().get(LOCATION_KEY_PREFIX + bookingId);
         if (raw == null) {
