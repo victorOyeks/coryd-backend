@@ -61,6 +61,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic tripShareRequestedTopic() {
+        return TopicBuilder.name(KafkaTopics.TRIP_SHARE_REQUESTED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic paymentSucceededTopic() {
         return TopicBuilder.name(KafkaTopics.PAYMENT_SUCCEEDED).partitions(3).replicas(1).build();
     }

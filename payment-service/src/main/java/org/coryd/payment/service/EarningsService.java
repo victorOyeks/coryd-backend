@@ -86,8 +86,8 @@ public class EarningsService {
             }
 
             kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
-                    .bookingId(bookingId.toString())
-                    .riderId(transaction.getRiderId().toString())
+                    .bookingId(bookingId)
+                    .riderId(transaction.getRiderId())
                     .amount(hold.getAmount())
                     .reason(reason)
                     .refundedAt(LocalDateTime.now())

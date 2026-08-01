@@ -263,9 +263,9 @@ public class BookingService {
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window" : "Cancelled free of charge");
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
-                .bookingId(booking.getId().toString())
-                .routePostId(booking.getRoutePostId().toString())
-                .riderId(booking.getRiderId().toString())
+                .bookingId(booking.getId())
+                .routePostId(booking.getRoutePostId())
+                .riderId(booking.getRiderId())
                 .cancelledBy("RIDER")
                 .feeApplied(feeApplies)
                 .cancelledAt(LocalDateTime.now())
