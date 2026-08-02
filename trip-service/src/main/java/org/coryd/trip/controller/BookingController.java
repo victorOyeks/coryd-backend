@@ -136,8 +136,9 @@ public class BookingController {
         return ApiResponse.ok(bookingService.shareTrip(bookingId));
     }
 
-    @PostMapping("/{bookingId}/report-issue")
-    public ApiResponse<IssueReport> reportIssue(@PathVariable String bookingId, @Valid @RequestBody IssueReportRequest request) {
-        return ApiResponse.ok(bookingService.reportIssue(bookingId, request));
+    /** Account > Report an issue - bookingId lives in the body (nullable) since a trip isn't always selected. */
+    @PostMapping("/report-issue")
+    public ApiResponse<IssueReport> reportIssue(@Valid @RequestBody IssueReportRequest request) {
+        return ApiResponse.ok(bookingService.reportIssue(request));
     }
 }

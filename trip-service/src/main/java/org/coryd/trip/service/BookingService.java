@@ -10,6 +10,9 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.BookingConfirmedEvent;
+import org.coryd.common.kafka.events.DriverArrivedEvent;
+import org.coryd.common.kafka.events.DriverEnRouteEvent;
+import org.coryd.common.kafka.events.EmergencyContactPayload;
 import org.coryd.common.kafka.events.IssueReportedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
@@ -152,8 +155,8 @@ public class BookingService {
         RoutePost route = routePostRepository.findById(booking.getRoutePostId())
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
-        ProfileServiceClient.RiderContact contact = profileServiceClient.fetchRiderContact(booking.getRiderId());
-        if (contact == null || contact.emergencyContactPhone() == null || contact.emergencyContactPhone().isBlank()) {
+        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchRiderContacts(booking.getRiderId());
+        if (contacts.isEmpty()) {
             throw new BadRequestException("Add an emergency contact to your profile before sharing a trip");
         }
 
@@ -164,8 +167,7 @@ public class BookingService {
                 .bookingId(bookingId)
                 .riderId(booking.getRiderId())
                 .shareLink(link)
-                .contactName(contact.emergencyContactName())
-                .contactPhone(contact.emergencyContactPhone())
+                .contacts(toEventPayload(contacts))
                 .requestedAt(LocalDateTime.now())
                 .build());
 
@@ -355,6 +357,13 @@ public class BookingService {
         booking.setStatus(BookingStatus.EN_ROUTE_TO_PICKUP);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.EN_ROUTE_TO_PICKUP, "Driver en route to pickup");
+
+        kafkaTemplate.send(KafkaTopics.DRIVER_EN_ROUTE, DriverEnRouteEvent.builder()
+                .bookingId(bookingId)
+                .riderId(booking.getRiderId())
+                .driverName(booking.getDriverNameSnapshot())
+                .occurredAt(LocalDateTime.now())
+                .build());
     }
 
     /** Driver taps "I've arrived" - Track Live Trip's "Driver at pickup point" phase. */
@@ -364,6 +373,13 @@ public class BookingService {
         booking.setStatus(BookingStatus.AT_PICKUP);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.AT_PICKUP, "Driver arrived at pickup point");
+
+        kafkaTemplate.send(KafkaTopics.DRIVER_ARRIVED, DriverArrivedEvent.builder()
+                .bookingId(bookingId)
+                .riderId(booking.getRiderId())
+                .driverName(booking.getDriverNameSnapshot())
+                .occurredAt(LocalDateTime.now())
+                .build());
     }
 
     /** Rider taps "I've boarded" - advances status to IN_PROGRESS, not just a timestamp, so it drives the Track Live Trip phase timeline too. */
@@ -430,31 +446,37 @@ public class BookingService {
                 .opsNotifiedAt(Instant.now())
                 .build());
 
-        // The rider's own emergency contact regardless of who triggered SOS - it's a rider-safety
-        // feature. Looked up here (not in notification-service) since this service already has
-        // fetchRiderContact for Share Trip - no new cross-service dependency needed there.
-        ProfileServiceClient.RiderContact contact = profileServiceClient.fetchRiderContact(booking.getRiderId());
+        // Every emergency contact the rider has saved, regardless of who triggered SOS - it's a
+        // rider-safety feature. Looked up here (not in notification-service) since this service
+        // already has the profile-service client for Share Trip - no new cross-service
+        // dependency needed there.
+        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchRiderContacts(booking.getRiderId());
 
         // Fan-out only, never the primary path - the incident is already saved above.
         kafkaTemplate.send(KafkaTopics.SOS_TRIGGERED, SosTriggeredEvent.builder()
-                .incidentId(incident.getId().toString())
-                .bookingId(bookingId.toString())
-                .triggeredBy(triggeredBy.toString())
+                .incidentId(incident.getId())
+                .bookingId(bookingId)
+                .triggeredBy(triggeredBy)
                 .latitude(latitude)
                 .longitude(longitude)
                 .triggeredAt(LocalDateTime.now())
-                .emergencyContactName(contact == null ? null : contact.emergencyContactName())
-                .emergencyContactPhone(contact == null ? null : contact.emergencyContactPhone())
+                .contacts(toEventPayload(contacts))
                 .build());
 
         return incident;
     }
 
+    private static List<EmergencyContactPayload> toEventPayload(List<ProfileServiceClient.RiderContact> contacts) {
+        return contacts.stream()
+                .map(c -> EmergencyContactPayload.builder().name(c.name()).phone(c.phone()).build())
+                .toList();
+    }
+
     @Transactional
-    public IssueReport reportIssue(String bookingId, IssueReportRequest request) {
+    public IssueReport reportIssue(IssueReportRequest request) {
         String referenceNumber = "ISS-" + String.format("%08d", RANDOM.nextInt(100_000_000));
         IssueReport issue = issueReportRepository.save(IssueReport.builder()
-                .bookingId(bookingId)
+                .bookingId(request.bookingId())
                 .reportedBy(request.reportedBy())
                 .category(request.category())
                 .description(request.description())
@@ -463,9 +485,9 @@ public class BookingService {
                 .build());
 
         kafkaTemplate.send(KafkaTopics.ISSUE_REPORTED, IssueReportedEvent.builder()
-                .issueId(issue.getId().toString())
-                .bookingId(bookingId.toString())
-                .reportedBy(request.reportedBy().toString())
+                .issueId(issue.getId())
+                .bookingId(request.bookingId())
+                .reportedBy(request.reportedBy())
                 .category(request.category())
                 .referenceNumber(referenceNumber)
                 .reportedAt(LocalDateTime.now())

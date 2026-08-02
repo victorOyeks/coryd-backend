@@ -94,17 +94,17 @@ public class ProfileServiceClient {
         }
     }
 
-    /** Rider's emergency contact (Share Trip, SOS) - profile-service's existing GET /riders/{userId} already returns it, no new profile-service endpoint needed. */
-    public RiderContact fetchRiderContact(String riderId) {
+    /** Every emergency contact the rider has saved (Share Trip, SOS alert all of them, not just the primary). */
+    public List<RiderContact> fetchRiderContacts(String riderId) {
         try {
-            return restClient.get()
-                    .uri("/riders/{userId}", riderId)
+            RiderContactBatchResponse response = restClient.get()
+                    .uri("/riders/{userId}/emergency-contacts", riderId)
                     .retrieve()
-                    .body(RiderProfileView.class)
-                    .data();
+                    .body(RiderContactBatchResponse.class);
+            return response == null || response.data() == null ? List.of() : response.data();
         } catch (Exception e) {
-            log.warn("Could not fetch rider contact for {}: {}", riderId, e.getMessage());
-            return null;
+            log.warn("Could not fetch emergency contacts for {}: {}", riderId, e.getMessage());
+            return List.of();
         }
     }
 
@@ -144,10 +144,10 @@ public class ProfileServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record RiderContact(String fullName, String emergencyContactName, String emergencyContactPhone) {
+    public record RiderContact(String name, String phone) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record RiderProfileView(RiderContact data) {
+    private record RiderContactBatchResponse(List<RiderContact> data) {
     }
 }

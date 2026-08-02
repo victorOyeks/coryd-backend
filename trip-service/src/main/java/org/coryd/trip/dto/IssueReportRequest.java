@@ -6,6 +6,8 @@ import org.coryd.common.enums.IssueCategory;
 
 
 public record IssueReportRequest(
+        /** Null when reported from Account > Report an issue with no trip selected. */
+        String bookingId,
         @NotNull String reportedBy,
         @NotNull IssueCategory category,
         @NotBlank String description

@@ -23,7 +23,7 @@ import org.coryd.common.enums.IssueCategory;
 @AllArgsConstructor
 public class IssueReport extends BaseEntity {
 
-    @Column(nullable = false)
+    /** Nullable - the account-level "Report an issue" flow lets a rider report something with no trip selected. */
     private String bookingId;
 
     @Column(nullable = false)
