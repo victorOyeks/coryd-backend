@@ -58,6 +58,8 @@ jobs:
               - 'common/src/main/java/org/coryd/common/enums/RatingDirection.java'
               - 'common/src/main/java/org/coryd/common/enums/RouteStatus.java'
               - 'common/src/main/java/org/coryd/common/enums/VerificationStatus.java'
+              - 'common/src/main/java/org/coryd/common/enums/TripHistoryStatus.java'
+              - 'common/src/main/java/org/coryd/common/enums/SavedPlaceType.java'
 
             payment-service:
               - 'payment-service/**'
