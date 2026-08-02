@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
@@ -13,6 +14,7 @@ import org.coryd.common.kafka.events.IssueReportedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.common.kafka.events.TripShareRequestedEvent;
+import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.CancellationPolicy;
@@ -99,13 +101,12 @@ public class BookingService {
                 .map(booking -> getBookingDetails(booking.getId()));
     }
 
-    /** Trip History screen - "status" is one of ONGOING/COMPLETED/CANCELLED, or null/unrecognized for "All". */
-    public Page<TripHistoryItem> getHistory(String riderId, String statusBucket, String search, Pageable pageable) {
-        List<BookingStatus> statuses = switch (statusBucket == null ? "" : statusBucket.toUpperCase()) {
-            case "ONGOING" -> ACTIVE_TRIP_STATUSES;
-            case "COMPLETED" -> List.of(BookingStatus.COMPLETED);
-            case "CANCELLED" -> CANCELLED_TRIP_STATUSES;
-            default -> ALL_HISTORY_STATUSES;
+    /** Trip History screen - null statusBucket means "All". */
+    public PagedResponse<TripHistoryItem> getHistory(String riderId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
+        List<BookingStatus> statuses = statusBucket == null ? ALL_HISTORY_STATUSES : switch (statusBucket) {
+            case ONGOING -> ACTIVE_TRIP_STATUSES;
+            case COMPLETED -> List.of(BookingStatus.COMPLETED);
+            case CANCELLED -> CANCELLED_TRIP_STATUSES;
         };
         String searchTerm = (search == null || search.isBlank()) ? null : search;
         Page<Booking> page = bookingRepository.findHistory(riderId, statuses, searchTerm, pageable);
@@ -132,7 +133,7 @@ public class BookingService {
             );
         }).toList();
 
-        return new PageImpl<>(items, pageable, page.getTotalElements());
+        return PagedResponse.from(new PageImpl<>(items, pageable, page.getTotalElements()));
     }
 
     /** Rider taps "Share trip details" - generates the signed link and hands off to notification-service (via Kafka) to actually SMS the emergency contact, not a direct HTTP call. */

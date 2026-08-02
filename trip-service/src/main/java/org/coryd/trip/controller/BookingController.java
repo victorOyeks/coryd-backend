@@ -2,7 +2,9 @@ package org.coryd.trip.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
@@ -14,7 +16,6 @@ import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
 import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,13 +48,13 @@ public class BookingController {
         return ApiResponse.ok(bookingService.getActiveBookingForRider(riderId));
     }
 
-    /** Trip History screen - status is ONGOING/COMPLETED/CANCELLED, omitted for "All". */
+    /** Trip History screen - status is omitted entirely for the "All" tab. */
     @GetMapping("/riders/{riderId}/history")
-    public ApiResponse<Page<TripHistoryItem>> history(@PathVariable String riderId,
-                                                        @RequestParam(required = false) String status,
-                                                        @RequestParam(required = false) String search,
-                                                        @RequestParam(defaultValue = "0") int page,
-                                                        @RequestParam(defaultValue = "20") int size) {
+    public ApiResponse<PagedResponse<TripHistoryItem>> history(@PathVariable String riderId,
+                                                                 @RequestParam(required = false) TripHistoryStatus status,
+                                                                 @RequestParam(required = false) String search,
+                                                                 @RequestParam(defaultValue = "0") int page,
+                                                                 @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
         return ApiResponse.ok(bookingService.getHistory(riderId, status, search, pageable));
     }
