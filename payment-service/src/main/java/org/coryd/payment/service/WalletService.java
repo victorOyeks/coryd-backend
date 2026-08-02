@@ -6,6 +6,7 @@ import org.coryd.common.enums.PaymentPurpose;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.enums.WalletEntryType;
 import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.response.PagedResponse;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.entity.Wallet;
@@ -14,11 +15,11 @@ import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.repository.PaymentTransactionRepository;
 import org.coryd.payment.repository.WalletRepository;
 import org.coryd.payment.repository.WalletTransactionRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.UUID;
 
 /** The rider's internal balance - debited synchronously for "pay from wallet" bookings, topped up via the same Paystack redirect used for direct fare payment. */
@@ -41,9 +42,9 @@ public class WalletService {
         return getOrCreateWallet(userId).getAvailableBalance();
     }
 
-    public List<WalletTransaction> getTransactions(String userId) {
+    public PagedResponse<WalletTransaction> getTransactions(String userId, Pageable pageable) {
         Wallet wallet = getOrCreateWallet(userId);
-        return walletTransactionRepository.findByWalletIdOrderByCreatedAtDesc(wallet.getId());
+        return PagedResponse.from(walletTransactionRepository.findByWalletIdOrderByCreatedAtDesc(wallet.getId(), pageable));
     }
 
     @Transactional
