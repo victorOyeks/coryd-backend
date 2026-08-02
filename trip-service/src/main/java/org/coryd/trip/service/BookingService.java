@@ -22,6 +22,7 @@ import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.SharedTripResponse;
+import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.BookingStatusHistory;
 import org.coryd.trip.entity.IssueReport;
@@ -34,17 +35,24 @@ import org.coryd.trip.repository.IssueReportRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SosIncidentRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -78,11 +86,53 @@ public class BookingService {
 
     private static final List<BookingStatus> ACTIVE_TRIP_STATUSES =
             List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+    private static final List<BookingStatus> CANCELLED_TRIP_STATUSES =
+            List.of(BookingStatus.CANCELLED_RIDER, BookingStatus.CANCELLED_DRIVER, BookingStatus.NO_SHOW);
+    /** Every status that belongs in Trip History at all - HELD bookings never got confirmed, so they're excluded. */
+    private static final List<BookingStatus> ALL_HISTORY_STATUSES = Stream.of(
+                    ACTIVE_TRIP_STATUSES.stream(), Stream.of(BookingStatus.COMPLETED), CANCELLED_TRIP_STATUSES.stream())
+            .flatMap(s -> s).toList();
 
     /** Powers the Home screen's "Go back to your current trip" banner - empty if the rider has no trip in flight. */
     public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId) {
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
                 .map(booking -> getBookingDetails(booking.getId()));
+    }
+
+    /** Trip History screen - "status" is one of ONGOING/COMPLETED/CANCELLED, or null/unrecognized for "All". */
+    public Page<TripHistoryItem> getHistory(String riderId, String statusBucket, String search, Pageable pageable) {
+        List<BookingStatus> statuses = switch (statusBucket == null ? "" : statusBucket.toUpperCase()) {
+            case "ONGOING" -> ACTIVE_TRIP_STATUSES;
+            case "COMPLETED" -> List.of(BookingStatus.COMPLETED);
+            case "CANCELLED" -> CANCELLED_TRIP_STATUSES;
+            default -> ALL_HISTORY_STATUSES;
+        };
+        String searchTerm = (search == null || search.isBlank()) ? null : search;
+        Page<Booking> page = bookingRepository.findHistory(riderId, statuses, searchTerm, pageable);
+
+        List<String> routePostIds = page.getContent().stream().map(Booking::getRoutePostId).distinct().toList();
+        Map<String, RoutePost> routes = routePostRepository.findAllById(routePostIds).stream()
+                .collect(Collectors.toMap(RoutePost::getId, r -> r));
+        List<String> driverIds = routes.values().stream().map(RoutePost::getDriverId).distinct().toList();
+        Map<String, RatingRepository.RatingSummary> ratings = ratingRepository.summarize(driverIds).stream()
+                .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, r -> r));
+
+        List<TripHistoryItem> items = page.getContent().stream().map(booking -> {
+            RoutePost route = routes.get(booking.getRoutePostId());
+            RatingRepository.RatingSummary rating = route == null ? null : ratings.get(route.getDriverId());
+            return new TripHistoryItem(
+                    booking.getId(), booking.getStatus(),
+                    route == null ? null : route.getOriginLabel(),
+                    route == null ? null : route.getDestinationLabel(),
+                    route == null ? null : route.getDepartureTime(),
+                    booking.getFareTotal(),
+                    booking.getDriverNameSnapshot(),
+                    rating == null ? null : rating.getAvgStars(),
+                    rating == null ? null : rating.getRatingCount()
+            );
+        }).toList();
+
+        return new PageImpl<>(items, pageable, page.getTotalElements());
     }
 
     /** Rider taps "Share trip details" - generates the signed link and hands off to notification-service (via Kafka) to actually SMS the emergency contact, not a direct HTTP call. */
@@ -168,7 +218,8 @@ public class BookingService {
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
-                routeViaSummary(route)
+                routeViaSummary(route),
+                booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(bookingId) : null
         );
     }
 
@@ -189,6 +240,21 @@ public class BookingService {
             log.warn("Route preview unavailable for booking details (routePostId={}): {}", route.getId(), e.getMessage());
             return null;
         }
+    }
+
+    /** Receipt screen's trip duration - the gap between "trip in progress" and "trip completed" in the status history, not stored anywhere directly. */
+    private Integer computeDurationMinutes(String bookingId) {
+        List<BookingStatusHistory> history = historyRepository.findByBookingIdOrderByCreatedAtAsc(bookingId);
+        Instant startedAt = history.stream()
+                .filter(h -> h.getStatus() == BookingStatus.IN_PROGRESS)
+                .map(BookingStatusHistory::getCreatedAt).findFirst().orElse(null);
+        Instant completedAt = history.stream()
+                .filter(h -> h.getStatus() == BookingStatus.COMPLETED)
+                .map(BookingStatusHistory::getCreatedAt).findFirst().orElse(null);
+        if (startedAt == null || completedAt == null) {
+            return null;
+        }
+        return (int) Duration.between(startedAt, completedAt).toMinutes();
     }
 
     @Transactional

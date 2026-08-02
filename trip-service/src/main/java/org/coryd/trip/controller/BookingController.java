@@ -8,11 +8,15 @@ import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
+import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
 import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -41,6 +45,17 @@ public class BookingController {
     @GetMapping("/riders/{riderId}/active")
     public ApiResponse<Optional<BookingDetailsResponse>> activeTrip(@PathVariable String riderId) {
         return ApiResponse.ok(bookingService.getActiveBookingForRider(riderId));
+    }
+
+    /** Trip History screen - status is ONGOING/COMPLETED/CANCELLED, omitted for "All". */
+    @GetMapping("/riders/{riderId}/history")
+    public ApiResponse<Page<TripHistoryItem>> history(@PathVariable String riderId,
+                                                        @RequestParam(required = false) String status,
+                                                        @RequestParam(required = false) String search,
+                                                        @RequestParam(defaultValue = "0") int page,
+                                                        @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, Math.min(size, 50));
+        return ApiResponse.ok(bookingService.getHistory(riderId, status, search, pageable));
     }
 
     @GetMapping("/{bookingId}")

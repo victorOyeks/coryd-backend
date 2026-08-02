@@ -32,6 +32,7 @@ public record BookingDetailsResponse(
         String vehicleModel,
         String vehiclePlate,
         boolean vehicleHasAC,
-        String routeViaSummary
+        String routeViaSummary,
+        Integer durationMinutes
 ) {
 }
