@@ -53,7 +53,7 @@ public class NotificationDispatchService {
 
     @Async
     @Transactional
-    public void sendPush(String userId, String title, String body, String eventType) {
+    public void sendPush(String userId, String title, String body, String eventType, String bookingId) {
         // One feed entry per logical notification, not one per device - a rider with two
         // phones should see this once in their bell, even though it's pushed to both.
         userNotificationRepository.save(UserNotification.builder()
@@ -61,6 +61,7 @@ public class NotificationDispatchService {
                 .title(title)
                 .body(body)
                 .eventType(eventType)
+                .bookingId(bookingId)
                 .build());
 
         for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {

@@ -40,6 +40,9 @@ public class UserNotification extends BaseEntity {
     @Column(nullable = false, length = 100)
     private String eventType;
 
+    /** Nullable - what "View details" deep-links to. Null for notification types with no single related booking (e.g. document expiring). */
+    private String bookingId;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean read = false;
