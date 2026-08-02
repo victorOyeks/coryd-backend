@@ -1,6 +1,6 @@
 # Track Live Trip — FE Implementation Guide
 
-Base path `/trip` · port `9103` · WS endpoint `/trip/ws`
+Base path `/trip` · port `9103` · WS endpoints `/trip/ws-native` (mobile, plain WS) · `/trip/ws` (browser, SockJS)
 
 This walks through the Track Live Trip screen in the order things actually happen, in plain language, with the exact API call to make at each step. Read it top to bottom like a story, not like a reference table.
 
@@ -133,8 +133,17 @@ Now, and only now, open that "stays open" connection from the intro. Two things 
 
 **4a. Connect, and prove who you are.**
 
+There are actually two endpoints, same broker behind both — pick based on the client:
+
+| Endpoint | For | Transport |
+|---|---|---|
+| `{TRIP_BASE_URL}/ws-native` | **Mobile (React Native)** — use this one | Plain WebSocket upgrade, no extra framing |
+| `{TRIP_BASE_URL}/ws` | Browser clients only | SockJS (handshake + long-poll/XHR fallback for browsers that lack real WebSocket support) |
+
+React Native already has a native `WebSocket` implementation, so the SockJS layer (and its `sockjs-client` dependency, which itself leans on browser globals like `document`) doesn't buy anything on mobile — just connect straight to `/ws-native` with a plain WebSocket.
+
 ```
-Connect to: {TRIP_BASE_URL}/ws
+Connect to: {TRIP_BASE_URL}/ws-native
 Header on that connect message: Authorization: Bearer {accessToken}
 ```
 
@@ -152,14 +161,13 @@ Once connected, subscribe to one specific address:
 
 The server checks you're actually the rider (or driver) on that booking before letting you subscribe. If you're not, the connection gets rejected the same silent way as a bad token.
 
-**In code**, using the standard libraries for this (`@stomp/stompjs` + `sockjs-client`):
+**In code**, using `@stomp/stompjs` alone — no `sockjs-client` needed for the mobile path:
 
 ```js
 import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
 
 const client = new Client({
-  webSocketFactory: () => new SockJS(`${TRIP_BASE_URL}/ws`),
+  webSocketFactory: () => new WebSocket(`${TRIP_BASE_URL_WSS}/ws-native`), // wss:// scheme, not https://
   connectHeaders: {
     Authorization: `Bearer ${accessToken}`,
   },

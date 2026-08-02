@@ -9,10 +9,15 @@ import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
 /**
- * STOMP over SockJS for live trip location - /trip/ws (context-path is applied automatically),
- * broadcasting to /topic/bookings/{bookingId}/location. An in-memory broker is enough at this
- * scale (one process, modest concurrent trip count) - no external broker like RabbitMQ needed.
- * Auth happens in WebSocketAuthInterceptor, wired below on the inbound channel.
+ * STOMP for live trip location, broadcasting to /topic/bookings/{bookingId}/location. Two
+ * endpoints, same broker: /ws (SockJS) for browser clients that may lack real WebSocket support,
+ * and /ws-native (plain WebSocket upgrade, no SockJS handshake/framing) for the mobile app -
+ * React Native already has a native WebSocket implementation, so SockJS's browser-fallback
+ * transports (and its dependency on browser globals like `document`) only add overhead there.
+ * An in-memory broker is enough at this scale (one process, modest concurrent trip count) - no
+ * external broker like RabbitMQ needed. Auth happens in WebSocketAuthInterceptor, wired below on
+ * the inbound channel - it operates at the STOMP frame level, so it applies identically to both
+ * endpoints regardless of transport.
  */
 @Configuration
 @EnableWebSocketMessageBroker
@@ -24,6 +29,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws").setAllowedOriginPatterns("*").withSockJS();
+        registry.addEndpoint("/ws-native").setAllowedOriginPatterns("*");
     }
 
     @Override
