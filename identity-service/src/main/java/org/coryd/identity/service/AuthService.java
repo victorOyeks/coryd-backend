@@ -13,6 +13,7 @@ import org.coryd.common.security.JwtUtil;
 import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.ChangePasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
@@ -147,6 +148,27 @@ public class AuthService {
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
 
         user.setPasswordHash(passwordEncoder.encode(request.password()));
+        userRepository.save(user);
+    }
+
+    /** Account > Update your password - unlike setPassword (onboarding, no existing password to check against), this verifies the current one first. */
+    @Transactional
+    public void changePassword(String userId, ChangePasswordRequest request) {
+        if (!request.newPassword().equals(request.confirmPassword())) {
+            throw new BadRequestException("Password and confirmation do not match");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+        
+        if (user.getPasswordHash() == null) {
+            throw new BadRequestException("No password set yet - use set-password instead");
+        }
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+            throw new BadRequestException("Current password is incorrect");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         userRepository.save(user);
     }
 

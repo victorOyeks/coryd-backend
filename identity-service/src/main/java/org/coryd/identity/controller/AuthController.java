@@ -7,6 +7,7 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.ChangePasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
@@ -52,6 +53,14 @@ public class AuthController {
                                          @Valid @RequestBody SetPasswordRequest request) {
         authService.setPassword(principal.getUserId(), request);
         return ApiResponse.ok("Password set", null);
+    }
+
+    /** Account > Update your password - for an already-onboarded user changing their password, unlike set-password's onboarding flow. */
+    @PostMapping("/change-password")
+    public ApiResponse<Void> changePassword(@AuthenticationPrincipal CoRydUserDetails principal,
+                                             @Valid @RequestBody ChangePasswordRequest request) {
+        authService.changePassword(principal.getUserId(), request);
+        return ApiResponse.ok("Password changed", null);
     }
 
     @PostMapping("/accept-terms")
