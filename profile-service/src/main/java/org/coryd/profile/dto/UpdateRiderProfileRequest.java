@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 public record UpdateRiderProfileRequest(
         @NotBlank String fullName,
         String email,
-        String photoUrl
+        String photoUrl,
+        String emergencyContactName,
+        String emergencyContactPhone
 ) {
 }

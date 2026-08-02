@@ -44,6 +44,8 @@ public class RiderProfileController {
         profile.setFullName(request.fullName());
         profile.setEmail(request.email());
         profile.setPhotoUrl(request.photoUrl());
+        profile.setEmergencyContactName(request.emergencyContactName());
+        profile.setEmergencyContactPhone(request.emergencyContactPhone());
 
         return ApiResponse.ok(riderProfileRepository.save(profile));
     }
