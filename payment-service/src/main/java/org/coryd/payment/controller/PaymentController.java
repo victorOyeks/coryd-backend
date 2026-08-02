@@ -9,8 +9,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
+import org.coryd.payment.dto.PaymentSummaryResponse;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.service.PaymentService;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -34,6 +37,11 @@ public class PaymentController {
     @PostMapping("/initiate")
     public ApiResponse<InitiatePaymentResponse> initiate(@Valid @RequestBody InitiatePaymentRequest request) {
         return ApiResponse.ok(paymentService.initiate(request));
+    }
+
+    @GetMapping("/bookings/{bookingId}")
+    public ApiResponse<PaymentSummaryResponse> byBooking(@PathVariable String bookingId) {
+        return ApiResponse.ok(paymentService.getByBooking(bookingId));
     }
 
     @PostMapping("/webhook")

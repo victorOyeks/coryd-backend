@@ -10,6 +10,7 @@ import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.PaymentSucceededEvent;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
+import org.coryd.payment.dto.PaymentSummaryResponse;
 import org.coryd.payment.entity.FareHold;
 import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.gateway.PaymentGatewayClient;
@@ -36,6 +37,13 @@ public class PaymentService {
     public InitiatePaymentResponse initiate(InitiatePaymentRequest request) {
         PaymentMethod method = request.paymentMethod() == null ? PaymentMethod.PAYSTACK : request.paymentMethod();
         return method == PaymentMethod.WALLET ? payFromWallet(request) : payViaPaystack(request);
+    }
+
+    /** Receipt screen's payment method/status - every confirmed booking has exactly one of these. */
+    public PaymentSummaryResponse getByBooking(String bookingId) {
+        PaymentTransaction transaction = paymentTransactionRepository.findByBookingId(bookingId)
+                .orElseThrow(() -> new ResourceNotFoundException("No payment found for this booking"));
+        return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus());
     }
 
     private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
