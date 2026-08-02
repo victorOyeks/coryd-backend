@@ -46,6 +46,16 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic driverEnRouteTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_EN_ROUTE).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic driverArrivedTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_ARRIVED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic tripCompletedTopic() {
         return TopicBuilder.name(KafkaTopics.TRIP_COMPLETED).partitions(3).replicas(1).build();
     }

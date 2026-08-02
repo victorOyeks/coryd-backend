@@ -6,5 +6,6 @@ public enum IssueCategory {
     DRIVER_CONDUCT,
     RIDER_CONDUCT,
     VEHICLE_CONDITION,
+    ROUTE_ISSUE,
     OTHER
 }

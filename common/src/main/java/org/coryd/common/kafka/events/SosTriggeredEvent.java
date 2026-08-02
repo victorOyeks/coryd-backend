@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -18,7 +19,6 @@ public class SosTriggeredEvent {
     private Double latitude;
     private Double longitude;
     private LocalDateTime triggeredAt;
-    /** Null if the rider never set an emergency contact - notification-service skips the SMS in that case. */
-    private String emergencyContactName;
-    private String emergencyContactPhone;
+    /** Empty if the rider never set an emergency contact - notification-service skips the SMS in that case. Every contact gets one, not just the primary. */
+    private List<EmergencyContactPayload> contacts;
 }

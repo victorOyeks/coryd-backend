@@ -14,6 +14,8 @@ public final class KafkaTopics {
 
     public static final String BOOKING_CONFIRMED = "coryd-booking-confirmed";
     public static final String BOOKING_CANCELLED = "coryd-booking-cancelled";
+    public static final String DRIVER_EN_ROUTE = "coryd-driver-en-route";
+    public static final String DRIVER_ARRIVED = "coryd-driver-arrived";
     public static final String TRIP_COMPLETED = "coryd-trip-completed";
     public static final String SOS_TRIGGERED = "coryd-sos-triggered";
     public static final String ISSUE_REPORTED = "coryd-issue-reported";
