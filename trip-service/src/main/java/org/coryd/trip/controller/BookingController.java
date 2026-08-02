@@ -10,6 +10,7 @@ import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
+import org.coryd.trip.dto.RatingSummaryResponse;
 import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.IssueReport;
@@ -57,6 +58,12 @@ public class BookingController {
                                                                  @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
         return ApiResponse.ok(bookingService.getHistory(riderId, status, search, pageable));
+    }
+
+    /** Account screen's star rating - works the same for a rider's or a driver's own id. */
+    @GetMapping("/users/{userId}/rating-summary")
+    public ApiResponse<RatingSummaryResponse> ratingSummary(@PathVariable String userId) {
+        return ApiResponse.ok(bookingService.getRatingSummary(userId));
     }
 
     @GetMapping("/{bookingId}")

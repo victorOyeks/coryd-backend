@@ -23,6 +23,7 @@ import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
+import org.coryd.trip.dto.RatingSummaryResponse;
 import org.coryd.trip.dto.SharedTripResponse;
 import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.entity.Booking;
@@ -99,6 +100,14 @@ public class BookingService {
     public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId) {
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
                 .map(booking -> getBookingDetails(booking.getId()));
+    }
+
+    /** Account screen's star rating - same aggregate query used for driver ratings elsewhere, just keyed on the caller's own id. */
+    public RatingSummaryResponse getRatingSummary(String userId) {
+        return ratingRepository.summarize(List.of(userId)).stream()
+                .findFirst()
+                .map(r -> new RatingSummaryResponse(r.getAvgStars(), r.getRatingCount()))
+                .orElse(RatingSummaryResponse.NONE);
     }
 
     /** Trip History screen - null statusBucket means "All". */
