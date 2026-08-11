@@ -14,5 +14,6 @@
     <include file="db/changelog/003-role-addition-flow.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/004-drop-otp-purpose.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/005-phone-verified.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/006-forgot-password.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

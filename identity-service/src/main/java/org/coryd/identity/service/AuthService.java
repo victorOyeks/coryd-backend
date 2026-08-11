@@ -3,6 +3,7 @@ package org.coryd.identity.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.OtpChannel;
+import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
@@ -14,10 +15,12 @@ import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.ChangePasswordRequest;
+import org.coryd.identity.dto.ForgotPasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
+import org.coryd.identity.dto.ResetPasswordRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
 import org.coryd.identity.dto.VerifyOtpRequest;
@@ -75,25 +78,27 @@ public class AuthService {
                 .phone(request.phone())
                 .roles(new HashSet<>(Set.of(role)))
                 .build());
-        issueOtp(request.phone(), OtpChannel.SMS);
+        issueOtp(request.phone(), OtpChannel.SMS, OtpPurpose.SIGNUP);
     }
 
     @Transactional
     public void resendOtp(ResendOtpRequest request) {
-        issueOtp(request.phone(), request.channelOrDefault());
+        issueOtp(request.phone(), request.channelOrDefault(), OtpPurpose.SIGNUP);
     }
 
-    private void issueOtp(String phone, OtpChannel channel) {
+    private void issueOtp(String phone, OtpChannel channel, OtpPurpose purpose) {
         String code = isDevOrTest() ? FIXED_DEV_OTP : String.format("%06d", RANDOM.nextInt(1_000_000));
         otpCodeRepository.save(OtpCode.builder()
                 .phone(phone)
                 .code(code)
+                .purpose(purpose)
                 .expiresAt(Instant.now().plus(OTP_TTL_MINUTES, ChronoUnit.MINUTES))
                 .build());
         kafkaTemplate.send(KafkaTopics.OTP_ISSUED, OtpIssuedEvent.builder()
                 .phone(phone)
                 .code(code)
                 .channel(channel)
+                .purpose(purpose)
                 .build());
     }
 
@@ -109,7 +114,7 @@ public class AuthService {
 
     @Transactional
     public AuthResponse verifyOtp(VerifyOtpRequest request) {
-        OtpCode otp = otpCodeRepository.findTopByPhoneAndUsedFalseOrderByCreatedAtDesc(request.phone())
+        OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(request.phone(), OtpPurpose.SIGNUP)
                 .orElseThrow(() -> new BadRequestException("No pending OTP for this phone number"));
 
         if (otp.getExpiresAt().isBefore(Instant.now())) {
@@ -170,6 +175,44 @@ public class AuthService {
 
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         userRepository.save(user);
+    }
+
+    /** Logged-out counterpart to changePassword - no current password to check, an OTP proves phone ownership instead. Silent no-op for an unregistered phone so the response never reveals whether an account exists. */
+    @Transactional
+    public void forgotPassword(ForgotPasswordRequest request) {
+        if (userRepository.existsByPhone(request.phone())) {
+            issueOtp(request.phone(), OtpChannel.SMS, OtpPurpose.PASSWORD_RESET);
+        }
+    }
+
+    @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        if (!request.newPassword().equals(request.confirmPassword())) {
+            throw new BadRequestException("Password and confirmation do not match");
+        }
+
+        OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(
+                        request.phone(), OtpPurpose.PASSWORD_RESET)
+                .orElseThrow(() -> new BadRequestException("No pending password reset for this phone number"));
+
+        if (otp.getExpiresAt().isBefore(Instant.now())) {
+            throw new BadRequestException("OTP has expired");
+        }
+        if (!otp.getCode().equals(request.code())) {
+            throw new BadRequestException("Incorrect OTP");
+        }
+        otp.setUsed(true);
+        otpCodeRepository.save(otp);
+
+        User user = userRepository.findByPhone(request.phone())
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
+
+        // Whoever forgot the password may have done so because the account was
+        // compromised - close every session that predates the reset.
+        refreshTokenRepository.revokeAllForUser(user.getId());
     }
 
     @Transactional

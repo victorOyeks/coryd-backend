@@ -8,10 +8,12 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
 import org.coryd.identity.dto.ChangePasswordRequest;
+import org.coryd.identity.dto.ForgotPasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
+import org.coryd.identity.dto.ResetPasswordRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
 import org.coryd.identity.dto.VerifyOtpRequest;
@@ -61,6 +63,19 @@ public class AuthController {
                                              @Valid @RequestBody ChangePasswordRequest request) {
         authService.changePassword(principal.getUserId(), request);
         return ApiResponse.ok("Password changed", null);
+    }
+
+    /** Logged-out - the user can't authenticate to prove who they are, so an OTP does that instead. Always returns the same message, whether or not the phone is registered. */
+    @PostMapping("/forgot-password")
+    public ApiResponse<Void> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request);
+        return ApiResponse.ok("If this number is registered, an OTP has been sent", null);
+    }
+
+    @PostMapping("/reset-password")
+    public ApiResponse<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request);
+        return ApiResponse.ok("Password reset", null);
     }
 
     @PostMapping("/accept-terms")
