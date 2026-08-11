@@ -32,6 +32,7 @@ jobs:
               - 'common/src/main/java/org/coryd/common/kafka/**'
               - 'common/src/main/java/org/coryd/common/enums/UserRole.java'
               - 'common/src/main/java/org/coryd/common/enums/OtpChannel.java'
+              - 'common/src/main/java/org/coryd/common/enums/OtpPurpose.java'
 
             profile-service:
               - 'profile-service/**'
@@ -86,6 +87,7 @@ jobs:
               - 'common/src/main/java/org/coryd/common/kafka/**'
               - 'common/src/main/java/org/coryd/common/enums/NotificationChannel.java'
               - 'common/src/main/java/org/coryd/common/enums/OtpChannel.java'
+              - 'common/src/main/java/org/coryd/common/enums/OtpPurpose.java'
 
   build:
     needs: detect-changes
