@@ -1,6 +1,7 @@
 package org.coryd.notification.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.BookingConfirmedEvent;
@@ -31,8 +32,10 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.OTP_ISSUED, groupId = KafkaConfig.GROUP_ID)
     public void onOtpIssued(OtpIssuedEvent event) {
-        dispatchService.sendOtp(event.getPhone(), "Your CoRyd verification code is " + event.getCode(),
-                "OTP_ISSUED", event.getChannel());
+        String message = event.getPurpose() == OtpPurpose.PASSWORD_RESET
+                ? "Your CoRyd password reset code is " + event.getCode() + ". If you didn't request this, ignore this message."
+                : "Your CoRyd verification code is " + event.getCode();
+        dispatchService.sendOtp(event.getPhone(), message, "OTP_ISSUED", event.getChannel());
     }
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CONFIRMED, groupId = KafkaConfig.GROUP_ID)
