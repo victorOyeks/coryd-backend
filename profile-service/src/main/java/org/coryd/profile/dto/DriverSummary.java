@@ -7,6 +7,17 @@ import org.coryd.profile.entity.DriverProfile;
 public record DriverSummary(String userId, String legalName, String photoUrl, VerificationStatus verificationStatus) {
 
     public static DriverSummary from(DriverProfile profile) {
-        return new DriverSummary(profile.getUserId(), profile.getLegalName(), profile.getPhotoUrl(), profile.getVerificationStatus());
+        return new DriverSummary(profile.getUserId(), profile.getLegalName(), profile.getPhotoUrl(), identityStatus(profile));
+    }
+
+    /** Identity-only signal (government ID + selfie) for the rider-facing "verified driver" badge - not the full six-item verification gate that RouteService.post() checks. */
+    private static VerificationStatus identityStatus(DriverProfile profile) {
+        if (profile.getGovernmentIdStatus() == VerificationStatus.REJECTED || profile.getSelfieStatus() == VerificationStatus.REJECTED) {
+            return VerificationStatus.REJECTED;
+        }
+        if (profile.getGovernmentIdStatus() == VerificationStatus.APPROVED && profile.getSelfieStatus() == VerificationStatus.APPROVED) {
+            return VerificationStatus.APPROVED;
+        }
+        return VerificationStatus.PENDING;
     }
 }

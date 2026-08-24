@@ -14,5 +14,7 @@
     <include file="db/changelog/003-vehicle-has-ac.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/004-emergency-contacts.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/005-vehicle-photo-public-ids.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/006-driver-verification-items.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/007-driver-profile-email.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

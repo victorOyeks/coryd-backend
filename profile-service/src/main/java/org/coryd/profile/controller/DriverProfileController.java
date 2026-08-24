@@ -2,15 +2,18 @@ package org.coryd.profile.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.profile.dto.DriverItemVerificationRequest;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
+import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.entity.DriverProfile;
-import org.coryd.profile.repository.DriverProfileRepository;
+import org.coryd.profile.service.DriverProfileService;
+import org.coryd.profile.service.VerificationAggregationService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,41 +28,39 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DriverProfileController {
 
-    private final DriverProfileRepository driverProfileRepository;
+    private final DriverProfileService driverProfileService;
+    private final VerificationAggregationService verificationAggregationService;
 
     @GetMapping("/{userId}")
     public ApiResponse<DriverProfile> get(@PathVariable String userId) {
-        return ApiResponse.ok(driverProfileRepository.findByUserId(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found")));
+        return ApiResponse.ok(driverProfileService.get(userId));
     }
 
-    /** Batch lookup for search-result enrichment (trip-service) - one call per result page, not one per driver. */
     @GetMapping("/batch")
     public ApiResponse<List<DriverSummary>> batch(@RequestParam List<String> userIds) {
-        return ApiResponse.ok(driverProfileRepository.findByUserIdIn(userIds).stream()
-                .map(DriverSummary::from)
-                .toList());
+        return ApiResponse.ok(driverProfileService.getBatch(userIds));
     }
 
     @GetMapping("/me")
     public ApiResponse<DriverProfile> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
-        return ApiResponse.ok(driverProfileRepository.findByUserId(principal.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found")));
+        return ApiResponse.ok(driverProfileService.get(principal.getUserId()));
     }
 
     @PutMapping("/me")
     public ApiResponse<DriverProfile> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
                                                   @Valid @RequestBody UpdateDriverProfileRequest request) {
-        // Upsert: this is now the only place a DriverProfile row is ever created -
-        // no event listener creates a shell in the background, so there's no race
-        // to reason about here at all.
-        DriverProfile profile = driverProfileRepository.findByUserId(principal.getUserId())
-                .orElseGet(() -> DriverProfile.builder().userId(principal.getUserId()).build());
+        return ApiResponse.ok(driverProfileService.updateMine(principal.getUserId(), request));
+    }
 
-        profile.setLegalName(request.legalName());
-        profile.setPhotoUrl(request.photoUrl());
-        profile.setGovernmentIdUrl(request.governmentIdUrl());
+    @PatchMapping("/{driverId}/verification")
+    public ApiResponse<DriverProfile> decideVerification(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                           @PathVariable String driverId,
+                                                           @Valid @RequestBody DriverItemVerificationRequest request) {
+        return ApiResponse.ok(driverProfileService.decideItem(driverId, principal.getActiveRole(), request));
+    }
 
-        return ApiResponse.ok(driverProfileRepository.save(profile));
+    @GetMapping("/{driverId}/verification-status")
+    public ApiResponse<VerificationStatusResponse> verificationStatus(@PathVariable String driverId) {
+        return ApiResponse.ok(verificationAggregationService.getStatus(driverId));
     }
 }

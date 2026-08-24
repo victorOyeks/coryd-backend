@@ -14,6 +14,8 @@ import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.VerificationStatus;
 
+import java.time.LocalDate;
+
 
 @Entity
 @Table(name = "driver_profiles", schema = "profile")
@@ -32,10 +34,29 @@ public class DriverProfile extends BaseEntity {
 
     private String photoUrl;
 
+    private String email;
+
+    private LocalDate dateOfBirth;
+
     private String governmentIdUrl;
+
+    private String idNumber;
 
     @Enumerated(EnumType.STRING)
     @Builder.Default
     @Column(nullable = false, length = 20)
-    private VerificationStatus verificationStatus = VerificationStatus.PENDING;
+    private VerificationStatus governmentIdStatus = VerificationStatus.PENDING;
+
+    private String governmentIdRejectionReason;
+
+    private String selfieUrl;
+
+    private String selfiePublicId;
+
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    @Column(nullable = false, length = 20)
+    private VerificationStatus selfieStatus = VerificationStatus.PENDING;
+
+    private String selfieRejectionReason;
 }

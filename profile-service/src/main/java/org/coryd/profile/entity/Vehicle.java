@@ -35,6 +35,9 @@ public class Vehicle extends BaseEntity {
 
     private Integer year;
 
+    @Column(length = 30)
+    private String color;
+
     @Column(nullable = false, unique = true, length = 20)
     private String plateNumber;
 
@@ -60,4 +63,6 @@ public class Vehicle extends BaseEntity {
     private VerificationStatus verificationStatus = VerificationStatus.PENDING;
 
     private String rejectionReason;
+
+    private boolean acConfirmedWorking;
 }

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -33,6 +34,13 @@ public class VehicleController {
                                           @PathVariable String driverId,
                                           @Valid @RequestBody VehicleRegistrationRequest request) {
         return ApiResponse.ok(vehicleService.register(driverId, principal.getUserId(), request));
+    }
+
+    @PutMapping("/{vehicleId}")
+    public ApiResponse<Vehicle> update(@AuthenticationPrincipal CoRydUserDetails principal,
+                                        @PathVariable String vehicleId,
+                                        @Valid @RequestBody VehicleRegistrationRequest request) {
+        return ApiResponse.ok(vehicleService.update(vehicleId, principal.getUserId(), request));
     }
 
     @PatchMapping("/{vehicleId}/verification")

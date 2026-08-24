@@ -41,7 +41,7 @@ public class DocumentExpiryJob {
         for (DriverDocument doc : documents) {
             kafkaTemplate.send(KafkaTopics.DOCUMENT_EXPIRING, DocumentExpiringEvent.builder()
                     .driverId(doc.getDriverId())
-                    .documentType(doc.getDocumentType())
+                    .documentType(doc.getDocumentType().name())
                     .expiresOn(doc.getExpiresOn())
                     .daysRemaining(daysRemaining)
                     .build());

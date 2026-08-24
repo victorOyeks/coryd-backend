@@ -7,19 +7,14 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
-import org.coryd.common.kafka.KafkaTopics;
-import org.coryd.common.kafka.events.DriverApprovedEvent;
-import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
 import org.coryd.profile.dto.VehicleSummary;
 import org.coryd.profile.dto.VerificationDecisionRequest;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.repository.VehicleRepository;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -28,8 +23,8 @@ import java.util.List;
 public class VehicleService {
 
     private final VehicleRepository vehicleRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final CloudinaryService cloudinaryService;
+    private final VerificationAggregationService verificationAggregationService;
 
     @Transactional
     public Vehicle register(String driverId, String callerId, VehicleRegistrationRequest request) {
@@ -44,6 +39,7 @@ public class VehicleService {
                 .make(request.make())
                 .model(request.model())
                 .year(request.year())
+                .color(request.color())
                 .plateNumber(request.plateNumber())
                 .seatCapacity(request.seatCapacity())
                 .exteriorPhotoUrl(request.exteriorPhotoUrl())
@@ -53,7 +49,36 @@ public class VehicleService {
                 .acPhotoUrl(request.acPhotoUrl())
                 .acPhotoPublicId(request.acPhotoPublicId())
                 .hasAC(request.hasAC())
+                .acConfirmedWorking(request.acConfirmedWorking())
                 .build();
+        return vehicleRepository.save(vehicle);
+    }
+
+    /** Resubmission after a rejection (or any pre-approval edit) - resets verificationStatus to PENDING since the underlying facts may have changed. */
+    @Transactional
+    public Vehicle update(String vehicleId, String callerId, VehicleRegistrationRequest request) {
+        Vehicle vehicle = findById(vehicleId);
+        if (!callerId.equals(vehicle.getDriverId())) {
+            throw new UnauthorizedException("Only this vehicle's driver can update it");
+        }
+
+        vehicle.setMake(request.make());
+        vehicle.setModel(request.model());
+        vehicle.setYear(request.year());
+        vehicle.setColor(request.color());
+        vehicle.setPlateNumber(request.plateNumber());
+        vehicle.setSeatCapacity(request.seatCapacity());
+        vehicle.setExteriorPhotoUrl(request.exteriorPhotoUrl());
+        vehicle.setExteriorPhotoPublicId(request.exteriorPhotoPublicId());
+        vehicle.setInteriorPhotoUrl(request.interiorPhotoUrl());
+        vehicle.setInteriorPhotoPublicId(request.interiorPhotoPublicId());
+        vehicle.setAcPhotoUrl(request.acPhotoUrl());
+        vehicle.setAcPhotoPublicId(request.acPhotoPublicId());
+        vehicle.setHasAC(request.hasAC());
+        vehicle.setAcConfirmedWorking(request.acConfirmedWorking());
+        vehicle.setVerificationStatus(VerificationStatus.PENDING);
+        vehicle.setRejectionReason(null);
+
         return vehicleRepository.save(vehicle);
     }
 
@@ -78,8 +103,7 @@ public class VehicleService {
         if (callerRole != UserRole.OPS_ADMIN) {
             throw new UnauthorizedException("Only an ops admin can decide vehicle verification");
         }
-        Vehicle vehicle = vehicleRepository.findById(vehicleId)
-                .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found"));
+        Vehicle vehicle = findById(vehicleId);
 
         vehicle.setVerificationStatus(request.status());
         vehicle.setRejectionReason(request.status() == VerificationStatus.REJECTED ? request.rejectionReason() : null);
@@ -100,24 +124,7 @@ public class VehicleService {
         }
 
         vehicleRepository.save(vehicle);
-
-        if (request.status() == VerificationStatus.APPROVED) {
-            kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
-                    .driverId(vehicle.getDriverId())
-                    .vehicleId(vehicle.getId())
-                    .reviewedBy(request.reviewedBy())
-                    .approvedAt(LocalDateTime.now())
-                    .build());
-        } else if (request.status() == VerificationStatus.REJECTED) {
-            kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
-                    .driverId(vehicle.getDriverId())
-                    .vehicleId(vehicle.getId())
-                    .rejectionReason(request.rejectionReason())
-                    .reviewedBy(request.reviewedBy())
-                    .rejectedAt(LocalDateTime.now())
-                    .build());
-        }
-
+        verificationAggregationService.reevaluateAndPublish(vehicle.getDriverId(), request.reviewedBy());
         return vehicle;
     }
 
