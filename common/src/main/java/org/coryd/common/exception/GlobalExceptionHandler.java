@@ -1,6 +1,7 @@
 package org.coryd.common.exception;
 
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.response.RoleNotHeldError;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -31,6 +32,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<ApiResponse<Void>> handleUnauthorized(UnauthorizedException e) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.error(e.getMessage()));
+    }
+
+    @ExceptionHandler(RoleNotHeldException.class)
+    public ResponseEntity<ApiResponse<RoleNotHeldError>> handleRoleNotHeld(RoleNotHeldException e) {
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error(e.getMessage(), new RoleNotHeldError(RoleNotHeldException.CODE, e.getHeldRoles())));
     }
 
     @ExceptionHandler(PaymentException.class)

@@ -101,6 +101,13 @@ public class AuthController {
         return ApiResponse.ok(authService.addRole(principal.getUserId(), request));
     }
 
+    /** In-app mode toggle for a role the caller already holds - unlike roles/add, this never grants a new capability, just re-scopes the session. */
+    @PostMapping("/roles/switch")
+    public ApiResponse<AuthResponse> switchRole(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                 @Valid @RequestBody AddRoleRequest request) {
+        return ApiResponse.ok(authService.switchRole(principal.getUserId(), request));
+    }
+
     /** Lets the app resume onboarding at the right screen after an interruption, using whatever token it last received. */
     @GetMapping("/onboarding-status")
     public ApiResponse<OnboardingStatusResponse> onboardingStatus(@AuthenticationPrincipal CoRydUserDetails principal,

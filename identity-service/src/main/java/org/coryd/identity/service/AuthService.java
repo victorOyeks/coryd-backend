@@ -7,6 +7,7 @@ import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.exception.RoleNotHeldException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.CoRydUserDetails;
@@ -135,9 +136,6 @@ public class AuthService {
             userRepository.save(user);
         }
 
-        // A user reaching signup-OTP verification always holds exactly the one
-        // role they just signed up with - adding a second role later goes
-        // through /auth/roles/add instead, never this path.
         UserRole role = user.getRoles().iterator().next();
 
         return issueTokens(user, role);
@@ -238,7 +236,7 @@ public class AuthService {
             throw new BadRequestException("Incorrect phone number or password");
         }
         if (!user.getRoles().contains(activeRole)) {
-            throw new BadRequestException("You don't have a " + activeRole + " account - please sign up first");
+            throw new RoleNotHeldException("You don't have a " + activeRole + " account - please sign up first", user.getRoles());
         }
 
         return issueTokens(user, activeRole);
@@ -260,6 +258,20 @@ public class AuthService {
 
         user.getRoles().add(role);
         userRepository.save(user);
+
+        return issueTokens(user, role);
+    }
+
+    /** In-app mode toggle for a role already held - re-scopes the session without granting anything new, so no OPS_ADMIN guard is needed here. */
+    @Transactional
+    public AuthResponse switchRole(String userId, AddRoleRequest request) {
+        UserRole role = request.role();
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+        if (!user.getRoles().contains(role)) {
+            throw new BadRequestException("You don't have a " + role + " account - add it first");
+        }
 
         return issueTokens(user, role);
     }

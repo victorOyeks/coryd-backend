@@ -16,4 +16,8 @@ public record ApiResponse<T>(String responseId, Instant timestamp, boolean succe
     public static <T> ApiResponse<T> error(String message) {
         return new ApiResponse<>(UUID.randomUUID().toString(), Instant.now(), false, message, null);
     }
+
+    public static <T> ApiResponse<T> error(String message, T data) {
+        return new ApiResponse<>(UUID.randomUUID().toString(), Instant.now(), false, message, data);
+    }
 }
