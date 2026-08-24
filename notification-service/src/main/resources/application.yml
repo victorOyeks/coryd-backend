@@ -68,6 +68,12 @@ management:
     web:
       exposure:
         include: health
+  health:
+    mail:
+      # Email is best-effort, same as SMS/push (EmailService already logs and
+      # returns false on failure rather than throwing) - an unreachable/
+      # unconfigured SMTP server must not flip the whole service to DOWN.
+      enabled: false
 
 springdoc:
   swagger-ui:
