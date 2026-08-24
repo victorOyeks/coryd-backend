@@ -46,13 +46,11 @@ public class Vehicle extends BaseEntity {
 
     private String exteriorPhotoUrl;
     private String interiorPhotoUrl;
-    private String acPhotoUrl;
 
     // Cloudinary public_id per photo - needed to delete the asset directly by id
     // once verification is decided, rather than parsing it back out of the URL.
     private String exteriorPhotoPublicId;
     private String interiorPhotoPublicId;
-    private String acPhotoPublicId;
 
     @Column(name = "has_ac", nullable = false)
     private boolean hasAC;

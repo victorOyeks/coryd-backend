@@ -15,8 +15,6 @@ public record VehicleRegistrationRequest(
         @NotBlank String exteriorPhotoPublicId,
         @NotBlank String interiorPhotoUrl,
         @NotBlank String interiorPhotoPublicId,
-        @NotBlank String acPhotoUrl,
-        @NotBlank String acPhotoPublicId,
         @NotNull Boolean hasAC,
         @NotNull Boolean acConfirmedWorking
 ) {

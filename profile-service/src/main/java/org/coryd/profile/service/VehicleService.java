@@ -46,8 +46,6 @@ public class VehicleService {
                 .exteriorPhotoPublicId(request.exteriorPhotoPublicId())
                 .interiorPhotoUrl(request.interiorPhotoUrl())
                 .interiorPhotoPublicId(request.interiorPhotoPublicId())
-                .acPhotoUrl(request.acPhotoUrl())
-                .acPhotoPublicId(request.acPhotoPublicId())
                 .hasAC(request.hasAC())
                 .acConfirmedWorking(request.acConfirmedWorking())
                 .build();
@@ -72,8 +70,6 @@ public class VehicleService {
         vehicle.setExteriorPhotoPublicId(request.exteriorPhotoPublicId());
         vehicle.setInteriorPhotoUrl(request.interiorPhotoUrl());
         vehicle.setInteriorPhotoPublicId(request.interiorPhotoPublicId());
-        vehicle.setAcPhotoUrl(request.acPhotoUrl());
-        vehicle.setAcPhotoPublicId(request.acPhotoPublicId());
         vehicle.setHasAC(request.hasAC());
         vehicle.setAcConfirmedWorking(request.acConfirmedWorking());
         vehicle.setVerificationStatus(VerificationStatus.PENDING);
@@ -114,13 +110,10 @@ public class VehicleService {
             // Best-effort: a flaky Cloudinary call must never block the approval itself.
             deleteVerificationPhoto(vehicle.getExteriorPhotoPublicId());
             deleteVerificationPhoto(vehicle.getInteriorPhotoPublicId());
-            deleteVerificationPhoto(vehicle.getAcPhotoPublicId());
             vehicle.setExteriorPhotoUrl(null);
             vehicle.setExteriorPhotoPublicId(null);
             vehicle.setInteriorPhotoUrl(null);
             vehicle.setInteriorPhotoPublicId(null);
-            vehicle.setAcPhotoUrl(null);
-            vehicle.setAcPhotoPublicId(null);
         }
 
         vehicleRepository.save(vehicle);

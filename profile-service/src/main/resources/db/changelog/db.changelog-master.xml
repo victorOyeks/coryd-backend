@@ -16,5 +16,6 @@
     <include file="db/changelog/005-vehicle-photo-public-ids.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/006-driver-verification-items.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/007-driver-profile-email.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/008-drop-vehicle-ac-photo.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
