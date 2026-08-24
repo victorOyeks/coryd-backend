@@ -3,11 +3,13 @@ package org.coryd.profile.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
 import org.coryd.profile.dto.VehicleSummary;
 import org.coryd.profile.dto.VerificationDecisionRequest;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.service.VehicleService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,15 +29,17 @@ public class VehicleController {
     private final VehicleService vehicleService;
 
     @PostMapping("/drivers/{driverId}")
-    public ApiResponse<Vehicle> register(@PathVariable String driverId,
+    public ApiResponse<Vehicle> register(@AuthenticationPrincipal CoRydUserDetails principal,
+                                          @PathVariable String driverId,
                                           @Valid @RequestBody VehicleRegistrationRequest request) {
-        return ApiResponse.ok(vehicleService.register(driverId, request));
+        return ApiResponse.ok(vehicleService.register(driverId, principal.getUserId(), request));
     }
 
     @PatchMapping("/{vehicleId}/verification")
-    public ApiResponse<Vehicle> decide(@PathVariable String vehicleId,
+    public ApiResponse<Vehicle> decide(@AuthenticationPrincipal CoRydUserDetails principal,
+                                        @PathVariable String vehicleId,
                                         @Valid @RequestBody VerificationDecisionRequest request) {
-        return ApiResponse.ok(vehicleService.decide(vehicleId, request));
+        return ApiResponse.ok(vehicleService.decide(vehicleId, principal.getActiveRole(), request));
     }
 
     @GetMapping("/drivers/{driverId}")

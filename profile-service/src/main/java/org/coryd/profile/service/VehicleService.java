@@ -1,9 +1,11 @@
 package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
@@ -27,7 +29,10 @@ public class VehicleService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Transactional
-    public Vehicle register(String driverId, VehicleRegistrationRequest request) {
+    public Vehicle register(String driverId, String callerId, VehicleRegistrationRequest request) {
+        if (!callerId.equals(driverId)) {
+            throw new UnauthorizedException("Only this driver can register their own vehicle");
+        }
         if (vehicleRepository.existsByPlateNumber(request.plateNumber())) {
             throw new BadRequestException("A vehicle with this plate number is already registered");
         }
@@ -63,7 +68,10 @@ public class VehicleService {
     }
 
     @Transactional
-    public Vehicle decide(String vehicleId, VerificationDecisionRequest request) {
+    public Vehicle decide(String vehicleId, UserRole callerRole, VerificationDecisionRequest request) {
+        if (callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("Only an ops admin can decide vehicle verification");
+        }
         Vehicle vehicle = vehicleRepository.findById(vehicleId)
                 .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found"));
 

@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
+import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
@@ -19,6 +20,7 @@ import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -83,38 +85,38 @@ public class BookingController {
     }
 
     @PostMapping("/{bookingId}/cancel")
-    public ApiResponse<Void> cancel(@PathVariable String bookingId) {
-        bookingService.cancelByRider(bookingId);
+    public ApiResponse<Void> cancel(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.cancelByRider(bookingId, principal.getUserId());
         return ApiResponse.ok("Booking cancelled", null);
     }
 
     @PostMapping("/{bookingId}/en-route")
-    public ApiResponse<Void> enRoute(@PathVariable String bookingId) {
-        bookingService.markEnRouteToPickup(bookingId);
+    public ApiResponse<Void> enRoute(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.markEnRouteToPickup(bookingId, principal.getUserId());
         return ApiResponse.ok("Driver marked en route to pickup", null);
     }
 
     @PostMapping("/{bookingId}/arrived-at-pickup")
-    public ApiResponse<Void> arrivedAtPickup(@PathVariable String bookingId) {
-        bookingService.markArrivedAtPickup(bookingId);
+    public ApiResponse<Void> arrivedAtPickup(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.markArrivedAtPickup(bookingId, principal.getUserId());
         return ApiResponse.ok("Driver marked arrived at pickup", null);
     }
 
     @PostMapping("/{bookingId}/picked-up")
-    public ApiResponse<Void> pickedUp(@PathVariable String bookingId) {
-        bookingService.markPickedUp(bookingId);
+    public ApiResponse<Void> pickedUp(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.markPickedUp(bookingId, principal.getUserId());
         return ApiResponse.ok("Rider marked as picked up", null);
     }
 
     @PostMapping("/{bookingId}/no-show")
-    public ApiResponse<Void> noShow(@PathVariable String bookingId) {
-        bookingService.markNoShow(bookingId);
+    public ApiResponse<Void> noShow(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.markNoShow(bookingId, principal.getUserId());
         return ApiResponse.ok("Rider marked as no-show", null);
     }
 
     @PostMapping("/{bookingId}/complete")
-    public ApiResponse<Void> complete(@PathVariable String bookingId) {
-        bookingService.completeTrip(bookingId);
+    public ApiResponse<Void> complete(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.completeTrip(bookingId, principal.getUserId());
         return ApiResponse.ok("Trip completed", null);
     }
 

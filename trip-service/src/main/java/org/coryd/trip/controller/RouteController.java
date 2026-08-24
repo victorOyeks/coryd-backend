@@ -3,6 +3,7 @@ package org.coryd.trip.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
@@ -12,6 +13,7 @@ import org.coryd.trip.entity.NotifyMeRequest;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
 import org.coryd.trip.service.RouteService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,8 +34,9 @@ public class RouteController {
     private final RouteService routeService;
 
     @PostMapping("/drivers/{driverId}")
-    public ApiResponse<RoutePost> post(@PathVariable String driverId, @Valid @RequestBody PostRouteRequest request) {
-        return ApiResponse.ok(routeService.post(driverId, request));
+    public ApiResponse<RoutePost> post(@AuthenticationPrincipal CoRydUserDetails principal,
+                                        @PathVariable String driverId, @Valid @RequestBody PostRouteRequest request) {
+        return ApiResponse.ok(routeService.post(driverId, principal.getUserId(), request));
     }
 
     @PostMapping("/search")
@@ -71,8 +74,8 @@ public class RouteController {
     }
 
     @DeleteMapping("/{routePostId}")
-    public ApiResponse<Void> cancel(@PathVariable String routePostId) {
-        routeService.cancel(routePostId);
+    public ApiResponse<Void> cancel(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
+        routeService.cancel(routePostId, principal.getUserId());
         return ApiResponse.ok("Route cancelled", null);
     }
 }

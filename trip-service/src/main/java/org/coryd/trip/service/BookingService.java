@@ -7,6 +7,7 @@ import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.BookingConfirmedEvent;
@@ -328,8 +329,11 @@ public class BookingService {
     }
 
     @Transactional
-    public void cancelByRider(String bookingId) {
+    public void cancelByRider(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this booking's rider can cancel it");
+        }
         RoutePost route = routePostRepository.findById(booking.getRoutePostId())
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
@@ -352,8 +356,13 @@ public class BookingService {
 
     /** Driver taps "I'm on my way" - Track Live Trip's "Driver en route to pickup" phase. */
     @Transactional
-    public void markEnRouteToPickup(String bookingId) {
+    public void markEnRouteToPickup(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this trip's driver can mark it en route");
+        }
         booking.setStatus(BookingStatus.EN_ROUTE_TO_PICKUP);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.EN_ROUTE_TO_PICKUP, "Driver en route to pickup");
@@ -368,8 +377,13 @@ public class BookingService {
 
     /** Driver taps "I've arrived" - Track Live Trip's "Driver at pickup point" phase. */
     @Transactional
-    public void markArrivedAtPickup(String bookingId) {
+    public void markArrivedAtPickup(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this trip's driver can mark it arrived at pickup");
+        }
         booking.setStatus(BookingStatus.AT_PICKUP);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.AT_PICKUP, "Driver arrived at pickup point");
@@ -384,8 +398,11 @@ public class BookingService {
 
     /** Rider taps "I've boarded" - advances status to IN_PROGRESS, not just a timestamp, so it drives the Track Live Trip phase timeline too. */
     @Transactional
-    public void markPickedUp(String bookingId) {
+    public void markPickedUp(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this booking's rider can mark it picked up");
+        }
         booking.setPickupConfirmedAt(Instant.now());
         booking.setStatus(BookingStatus.IN_PROGRESS);
         bookingRepository.save(booking);
@@ -393,18 +410,26 @@ public class BookingService {
     }
 
     @Transactional
-    public void markNoShow(String bookingId) {
+    public void markNoShow(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this trip's driver can mark it as a no-show");
+        }
         booking.setStatus(BookingStatus.NO_SHOW);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.NO_SHOW, "Rider did not show up within the grace period");
     }
 
     @Transactional
-    public void completeTrip(String bookingId) {
+    public void completeTrip(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
         RoutePost route = routePostRepository.findById(booking.getRoutePostId())
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this trip's driver can complete it");
+        }
 
         booking.setStatus(BookingStatus.COMPLETED);
         bookingRepository.save(booking);

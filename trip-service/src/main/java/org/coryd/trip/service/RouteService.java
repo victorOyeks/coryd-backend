@@ -7,6 +7,7 @@ import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
@@ -69,7 +70,10 @@ public class RouteService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Transactional
-    public RoutePost post(String driverId, PostRouteRequest request) {
+    public RoutePost post(String driverId, String callerId, PostRouteRequest request) {
+        if (!callerId.equals(driverId)) {
+            throw new UnauthorizedException("Only this driver can post their own route");
+        }
         boolean approved = driverVerificationCacheRepository.findById(driverId)
                 .map(DriverVerificationCache::isApproved)
                 .orElse(false);
@@ -260,9 +264,12 @@ public class RouteService {
             BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
     @Transactional
-    public void cancel(String routePostId) {
+    public void cancel(String routePostId, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can cancel it");
+        }
 
         route.setStatus(RouteStatus.CANCELLED);
         routePostRepository.save(route);
