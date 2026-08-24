@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public class DriverApprovedEvent {
     private String driverId;
     private String vehicleId;
+    private String email;
     private String reviewedBy;
     private LocalDateTime approvedAt;
 }

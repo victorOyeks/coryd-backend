@@ -20,6 +20,7 @@ public class NotificationDispatchService {
 
     private final TermiiSmsService termiiSmsService;
     private final FcmService fcmService;
+    private final EmailService emailService;
     private final DeviceTokenRepository deviceTokenRepository;
     private final NotificationLogRepository notificationLogRepository;
     private final UserNotificationRepository userNotificationRepository;
@@ -72,5 +73,18 @@ public class NotificationDispatchService {
                     .delivered(delivered)
                     .build());
         }
+    }
+
+    /** Caller decides whether an email is worth sending (e.g. only if the recipient has one on file) - this method always attempts it. */
+    @Async
+    @Transactional
+    public void sendEmail(String toEmail, String subject, String body, String eventType) {
+        boolean delivered = emailService.send(toEmail, subject, body);
+        notificationLogRepository.save(NotificationLog.builder()
+                .recipientEmail(toEmail)
+                .channel(NotificationChannel.EMAIL)
+                .eventType(eventType)
+                .delivered(delivered)
+                .build());
     }
 }

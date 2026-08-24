@@ -6,8 +6,10 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.BookingConfirmedEvent;
 import org.coryd.common.kafka.events.DocumentExpiringEvent;
+import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverArrivedEvent;
 import org.coryd.common.kafka.events.DriverEnRouteEvent;
+import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.common.kafka.events.EmergencyContactPayload;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
@@ -90,6 +92,28 @@ public class NotificationEventListener {
     public void onDocumentExpiring(DocumentExpiringEvent event) {
         dispatchService.sendPush(event.getDriverId(), "Document expiring soon",
                 "Your " + event.getDocumentType() + " expires in " + event.getDaysRemaining() + " days.", "DOCUMENT_EXPIRING", null);
+    }
+
+    @KafkaListener(topics = KafkaTopics.DRIVER_APPROVED, groupId = KafkaConfig.GROUP_ID)
+    public void onDriverApproved(DriverApprovedEvent event) {
+        dispatchService.sendPush(event.getDriverId(), "You're verified!",
+                "Your CoRyd driver verification is complete. You can start posting routes now.", "DRIVER_APPROVED", null);
+        if (event.getEmail() != null) {
+            dispatchService.sendEmail(event.getEmail(), "You're verified on CoRyd",
+                    "Good news - your CoRyd driver verification is complete. You can start posting routes now.",
+                    "DRIVER_APPROVED");
+        }
+    }
+
+    @KafkaListener(topics = KafkaTopics.DRIVER_REJECTED, groupId = KafkaConfig.GROUP_ID)
+    public void onDriverRejected(DriverRejectedEvent event) {
+        String reason = event.getRejectionReason() == null ? "Please review and resubmit." : event.getRejectionReason();
+        dispatchService.sendPush(event.getDriverId(), "Action needed on your verification",
+                reason, "DRIVER_REJECTED", null);
+        if (event.getEmail() != null) {
+            dispatchService.sendEmail(event.getEmail(), "Action needed on your CoRyd verification",
+                    "One of your verification items needs attention: " + reason, "DRIVER_REJECTED");
+        }
     }
 
     @KafkaListener(topics = KafkaTopics.TRIP_SHARE_REQUESTED, groupId = KafkaConfig.GROUP_ID)

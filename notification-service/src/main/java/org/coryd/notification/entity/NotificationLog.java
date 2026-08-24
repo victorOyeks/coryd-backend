@@ -26,6 +26,9 @@ public class NotificationLog extends BaseEntity {
     @Column(length = 20)
     private String recipientPhone;
 
+    @Column(length = 255)
+    private String recipientEmail;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private NotificationChannel channel;

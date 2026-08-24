@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public class DriverRejectedEvent {
     private String driverId;
     private String vehicleId;
+    private String email;
     private String rejectionReason;
     private String reviewedBy;
     private LocalDateTime rejectedAt;
