@@ -1,6 +1,7 @@
 package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
@@ -21,12 +22,14 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class VehicleService {
 
     private final VehicleRepository vehicleRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final CloudinaryService cloudinaryService;
 
     @Transactional
     public Vehicle register(String driverId, String callerId, VehicleRegistrationRequest request) {
@@ -44,8 +47,11 @@ public class VehicleService {
                 .plateNumber(request.plateNumber())
                 .seatCapacity(request.seatCapacity())
                 .exteriorPhotoUrl(request.exteriorPhotoUrl())
+                .exteriorPhotoPublicId(request.exteriorPhotoPublicId())
                 .interiorPhotoUrl(request.interiorPhotoUrl())
+                .interiorPhotoPublicId(request.interiorPhotoPublicId())
                 .acPhotoUrl(request.acPhotoUrl())
+                .acPhotoPublicId(request.acPhotoPublicId())
                 .hasAC(request.hasAC())
                 .build();
         return vehicleRepository.save(vehicle);
@@ -77,6 +83,22 @@ public class VehicleService {
 
         vehicle.setVerificationStatus(request.status());
         vehicle.setRejectionReason(request.status() == VerificationStatus.REJECTED ? request.rejectionReason() : null);
+
+        if (request.status() == VerificationStatus.APPROVED) {
+            // Verification photos are only ever needed for this review - nothing
+            // rider-facing surfaces them - so free the storage once a decision is made.
+            // Best-effort: a flaky Cloudinary call must never block the approval itself.
+            deleteVerificationPhoto(vehicle.getExteriorPhotoPublicId());
+            deleteVerificationPhoto(vehicle.getInteriorPhotoPublicId());
+            deleteVerificationPhoto(vehicle.getAcPhotoPublicId());
+            vehicle.setExteriorPhotoUrl(null);
+            vehicle.setExteriorPhotoPublicId(null);
+            vehicle.setInteriorPhotoUrl(null);
+            vehicle.setInteriorPhotoPublicId(null);
+            vehicle.setAcPhotoUrl(null);
+            vehicle.setAcPhotoPublicId(null);
+        }
+
         vehicleRepository.save(vehicle);
 
         if (request.status() == VerificationStatus.APPROVED) {
@@ -97,5 +119,16 @@ public class VehicleService {
         }
 
         return vehicle;
+    }
+
+    private void deleteVerificationPhoto(String publicId) {
+        if (publicId == null) {
+            return;
+        }
+        try {
+            cloudinaryService.delete(publicId, "image");
+        } catch (Exception e) {
+            log.warn("Could not delete verification photo from Cloudinary, leaving it orphaned: {}", e.getMessage());
+        }
     }
 }

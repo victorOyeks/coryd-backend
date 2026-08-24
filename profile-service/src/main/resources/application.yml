@@ -9,6 +9,10 @@ spring:
     import: optional:file:.env[.properties]
   application:
     name: profile-service
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coryd}?currentSchema=profile
     username: ${DB_USERNAME:coryd}
@@ -40,6 +44,11 @@ spring:
 jwt:
   secret: ${JWT_SECRET:change-me-in-every-environment}
   expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:placeholder}
+  api-key: ${CLOUDINARY_API_KEY:placeholder}
+  api-secret: ${CLOUDINARY_API_SECRET:placeholder}
 
 management:
   endpoints:
