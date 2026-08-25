@@ -47,7 +47,7 @@ paystack:
   base-url: https://api.paystack.co
 
 commission:
-  percentage: ${COMMISSION_PERCENTAGE:0.15}
+  percentage: ${COMMISSION_PERCENTAGE:0.10}
 
 payout:
   cron: ${PAYOUT_CRON:0 0 4 * * *}

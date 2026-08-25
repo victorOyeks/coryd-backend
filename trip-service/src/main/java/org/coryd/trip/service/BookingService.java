@@ -26,6 +26,7 @@ import org.coryd.trip.config.CancellationPolicy;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
+import org.coryd.trip.dto.BookingSummary;
 import org.coryd.trip.dto.DriverActiveTripResponse;
 import org.coryd.trip.dto.DriverTripHistoryItem;
 import org.coryd.trip.dto.DriverTripStatsResponse;
@@ -126,9 +127,8 @@ public class BookingService {
                 .filter(b -> ACTIVE_TRIP_STATUSES.contains(b.getStatus()))
                 .toList();
 
-        List<DriverActiveTripResponse.ActiveBookingSummary> bookingSummaries = activeBookings.stream()
-                .map(b -> new DriverActiveTripResponse.ActiveBookingSummary(
-                        b.getId(), b.getRiderId(), b.getSeatCount(), b.getFareTotal(), b.getStatus(), b.getPickupConfirmedAt()))
+        List<BookingSummary> bookingSummaries = activeBookings.stream()
+                .map(BookingService::toSummary)
                 .toList();
         int seatsBooked = activeBookings.stream().mapToInt(Booking::getSeatCount).sum();
 
@@ -139,6 +139,24 @@ public class BookingService {
                 route.getDepartureTime(), route.getFarePerSeat(),
                 route.getSeatCapacity(), route.getSeatsAvailable(), seatsBooked, route.getStatus(),
                 bookingSummaries));
+    }
+
+    /** "View Passenger Manifest" after publishing (or any time after) - who's booked on this specific route, only visible to the route's own driver. Excludes only HELD (payment-pending, not a real booking yet) - cancellations and no-shows stay visible so the driver sees the full picture. */
+    public List<BookingSummary> getManifestForRoute(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can view its passenger manifest");
+        }
+        return bookingRepository.findByRoutePostId(routePostId).stream()
+                .filter(b -> b.getStatus() != BookingStatus.HELD)
+                .map(BookingService::toSummary)
+                .toList();
+    }
+
+    private static BookingSummary toSummary(Booking booking) {
+        return new BookingSummary(booking.getId(), booking.getRiderId(), booking.getSeatCount(),
+                booking.getFareTotal(), booking.getStatus(), booking.getPickupConfirmedAt());
     }
 
     /** Dashboard's "Trips this week" tile - completed bookings on routes that departed Monday through now. */

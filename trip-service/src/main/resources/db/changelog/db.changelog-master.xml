@@ -13,5 +13,6 @@
     <include file="db/changelog/002-history-indexes.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/003-issue-report-optional-booking.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/004-saved-places.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/005-route-note.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

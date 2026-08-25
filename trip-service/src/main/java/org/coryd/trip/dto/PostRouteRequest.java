@@ -17,6 +17,7 @@ public record PostRouteRequest(
         @NotNull Double destinationLng,
         @NotNull Instant departureTime,
         @NotNull @Positive Integer seatCapacity,
-        @NotNull @Positive BigDecimal farePerSeat
+        @NotNull @Positive BigDecimal farePerSeat,
+        String routeNote
 ) {
 }

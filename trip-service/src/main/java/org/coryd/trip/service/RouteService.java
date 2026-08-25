@@ -91,6 +91,15 @@ public class RouteService {
             throw new BadRequestException("You already have an active route - it must depart and complete, or be cancelled, before you can post another");
         }
 
+        if (request.vehicleId() != null) {
+            ProfileServiceClient.VehicleSummaryItem vehicle = profileServiceClient
+                    .fetchVehicleSummaries(List.of(request.vehicleId()))
+                    .get(request.vehicleId());
+            if (vehicle != null && request.seatCapacity() > vehicle.seatCapacity()) {
+                throw new BadRequestException("Seats offered can't exceed this vehicle's registered capacity (" + vehicle.seatCapacity() + ")");
+            }
+        }
+
         RoutePost route = RoutePost.builder()
                 .driverId(driverId)
                 .vehicleId(request.vehicleId())
@@ -105,6 +114,7 @@ public class RouteService {
                 .seatsAvailable(request.seatCapacity())
                 .farePerSeat(request.farePerSeat())
                 .status(RouteStatus.PUBLISHED)
+                .routeNote(request.routeNote())
                 .build();
         routePostRepository.save(route);
 
@@ -202,7 +212,7 @@ public class RouteService {
                 base.driverVerified(), base.vehicleMake(), base.vehicleModel(), base.vehiclePlate(), base.vehicleHasAC(),
                 base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
                 preview.distanceKm(), preview.durationMinutes(), preview.durationText(), preview.viaSummary(),
-                estimatedArrivalTime, BookingService.SEAT_HOLD_MINUTES
+                estimatedArrivalTime, BookingService.SEAT_HOLD_MINUTES, base.routeNote()
         );
     }
 
@@ -238,7 +248,8 @@ public class RouteService {
                     vehicle != null && vehicle.hasAC(),
                     rating == null ? null : rating.getAvgStars(),
                     rating == null ? 0L : rating.getRatingCount(),
-                    GeoUtils.estimateMinutes(riderLat, riderLng, route.getOriginLat(), route.getOriginLng())
+                    GeoUtils.estimateMinutes(riderLat, riderLng, route.getOriginLat(), route.getOriginLng()),
+                    route.getRouteNote()
             );
         }).toList();
     }

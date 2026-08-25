@@ -26,6 +26,7 @@ public record RideSearchResult(
         boolean vehicleHasAC,
         Double ratingAvg,
         long ratingCount,
-        int pickupEtaMinutes
+        int pickupEtaMinutes,
+        String routeNote
 ) {
 }

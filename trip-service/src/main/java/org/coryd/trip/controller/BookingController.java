@@ -9,6 +9,7 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
+import org.coryd.trip.dto.BookingSummary;
 import org.coryd.trip.dto.DriverActiveTripResponse;
 import org.coryd.trip.dto.DriverTripHistoryItem;
 import org.coryd.trip.dto.DriverTripStatsResponse;
@@ -84,6 +85,13 @@ public class BookingController {
                                                                                 @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
         return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, pageable));
+    }
+
+    /** "View Passenger Manifest" - only the route's own driver can see who's booked on it. */
+    @GetMapping("/routes/{routePostId}")
+    public ApiResponse<List<BookingSummary>> manifestForRoute(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                @PathVariable String routePostId) {
+        return ApiResponse.ok(bookingService.getManifestForRoute(routePostId, principal.getUserId()));
     }
 
     /** Account screen's star rating - works the same for a rider's or a driver's own id. */

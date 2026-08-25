@@ -63,4 +63,8 @@ public class RoutePost extends BaseEntity {
     private RouteStatus status = RouteStatus.PUBLISHED;
 
     private Instant firstBookingLockedAt;
+
+    /** Rider-facing hint about the path, e.g. "via Ketu bypass" - not shown to the driver only, riders see it in search results too. */
+    @Column(length = 255)
+    private String routeNote;
 }

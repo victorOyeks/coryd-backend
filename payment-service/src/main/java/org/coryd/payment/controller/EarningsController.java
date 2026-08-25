@@ -3,7 +3,9 @@ package org.coryd.payment.controller;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.dto.BookingEarningsItem;
+import org.coryd.payment.dto.CommissionRate;
 import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
@@ -26,6 +28,13 @@ public class EarningsController {
     private final DriverEarningsAccountRepository earningsAccountRepository;
     private final EarningsTransactionRepository earningsTransactionRepository;
     private final EarningsService earningsService;
+    private final CommissionProperties commissionProperties;
+
+    /** So the client computes gross/commission/net from the real configured rate instead of hardcoding it. */
+    @GetMapping("/commission-rate")
+    public ApiResponse<CommissionRate> commissionRate() {
+        return ApiResponse.ok(new CommissionRate(commissionProperties.getPercentage()));
+    }
 
     @GetMapping("/drivers/{driverId}")
     public ApiResponse<DriverEarningsAccount> account(@PathVariable String driverId) {

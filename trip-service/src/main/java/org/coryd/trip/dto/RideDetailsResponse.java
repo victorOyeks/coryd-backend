@@ -32,6 +32,7 @@ public record RideDetailsResponse(
         String routeDurationText,
         String routeViaSummary,
         Instant estimatedArrivalTime,
-        int seatHoldMinutes
+        int seatHoldMinutes,
+        String routeNote
 ) {
 }
