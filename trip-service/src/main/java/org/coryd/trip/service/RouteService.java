@@ -41,7 +41,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -79,6 +81,14 @@ public class RouteService {
                 .orElse(false);
         if (!approved) {
             throw new BadRequestException("Driver/vehicle is not yet verified - cannot post a route (D-104)");
+        }
+        // Keeps getActiveTripForDriver() honestly single-valued rather than needing to
+        // pick a winner among several - a driver runs one route at a time, and this
+        // self-heals daily since it's the same startOfToday() boundary as that read.
+        boolean hasActiveTrip = !routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
+                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL), startOfToday()).isEmpty();
+        if (hasActiveTrip) {
+            throw new BadRequestException("You already have an active route - it must depart and complete, or be cancelled, before you can post another");
         }
 
         RoutePost route = RoutePost.builder()
@@ -307,5 +317,9 @@ public class RouteService {
 
     private String corridorKey(String originLabel, String destinationLabel) {
         return (originLabel + "->" + destinationLabel).toLowerCase();
+    }
+
+    private static Instant startOfToday() {
+        return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 }
