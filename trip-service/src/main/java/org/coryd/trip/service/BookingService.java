@@ -114,7 +114,7 @@ public class BookingService {
                 .map(booking -> getBookingDetails(booking.getId()));
     }
 
-    /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route with live passenger count, empty if they have none posted. */
+    /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route, empty if they have none posted. Returns everything trip-service has on it (route + full booking list), not just the card's headline count, so the client can also build a tap-through detail view from this one call. */
     public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId) {
         List<RoutePost> candidates = routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
                 driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL), startOfToday());
@@ -122,12 +122,23 @@ public class BookingService {
             return Optional.empty();
         }
         RoutePost route = candidates.get(0);
-        int seatsBooked = bookingRepository.findByRoutePostId(route.getId()).stream()
+        List<Booking> activeBookings = bookingRepository.findByRoutePostId(route.getId()).stream()
                 .filter(b -> ACTIVE_TRIP_STATUSES.contains(b.getStatus()))
-                .mapToInt(Booking::getSeatCount)
-                .sum();
-        return Optional.of(new DriverActiveTripResponse(route.getId(), route.getOriginLabel(), route.getDestinationLabel(),
-                route.getDepartureTime(), seatsBooked, route.getSeatCapacity()));
+                .toList();
+
+        List<DriverActiveTripResponse.ActiveBookingSummary> bookingSummaries = activeBookings.stream()
+                .map(b -> new DriverActiveTripResponse.ActiveBookingSummary(
+                        b.getId(), b.getRiderId(), b.getSeatCount(), b.getFareTotal(), b.getStatus(), b.getPickupConfirmedAt()))
+                .toList();
+        int seatsBooked = activeBookings.stream().mapToInt(Booking::getSeatCount).sum();
+
+        return Optional.of(new DriverActiveTripResponse(
+                route.getId(), route.getVehicleId(),
+                route.getOriginLabel(), route.getOriginLat(), route.getOriginLng(),
+                route.getDestinationLabel(), route.getDestinationLat(), route.getDestinationLng(),
+                route.getDepartureTime(), route.getFarePerSeat(),
+                route.getSeatCapacity(), route.getSeatsAvailable(), seatsBooked, route.getStatus(),
+                bookingSummaries));
     }
 
     /** Dashboard's "Trips this week" tile - completed bookings on routes that departed Monday through now. */
