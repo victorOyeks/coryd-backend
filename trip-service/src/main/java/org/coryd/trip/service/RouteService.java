@@ -13,6 +13,7 @@ import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.RoutePublishedEvent;
+import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.dto.GeoPin;
@@ -36,6 +37,7 @@ import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
 import org.coryd.trip.util.GeoUtils;
+import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -82,9 +84,7 @@ public class RouteService {
         if (!approved) {
             throw new BadRequestException("Driver/vehicle is not yet verified - cannot post a route (D-104)");
         }
-        // Keeps getActiveTripForDriver() honestly single-valued rather than needing to
-        // pick a winner among several - a driver runs one route at a time, and this
-        // self-heals daily since it's the same startOfToday() boundary as that read.
+
         boolean hasActiveTrip = !routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
                 driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL), startOfToday()).isEmpty();
         if (hasActiveTrip) {
@@ -244,8 +244,8 @@ public class RouteService {
     }
 
     /** "My Routes" / dashboard repost card - newest first, no ownership check since this is a read (mutations are what's gated). */
-    public List<RoutePost> findByDriver(String driverId) {
-        return routePostRepository.findByDriverIdOrderByCreatedAtDesc(driverId);
+    public PagedResponse<RoutePost> findByDriver(String driverId, Pageable pageable) {
+        return PagedResponse.from(routePostRepository.findByDriverIdOrderByCreatedAtDesc(driverId, pageable));
     }
 
     public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm) {

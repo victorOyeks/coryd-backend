@@ -3,6 +3,7 @@ package org.coryd.trip.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
@@ -13,6 +14,8 @@ import org.coryd.trip.entity.NotifyMeRequest;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
 import org.coryd.trip.service.RouteService;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -51,8 +54,11 @@ public class RouteController {
     }
 
     @GetMapping("/drivers/{driverId}")
-    public ApiResponse<List<RoutePost>> byDriver(@PathVariable String driverId) {
-        return ApiResponse.ok(routeService.findByDriver(driverId));
+    public ApiResponse<PagedResponse<RoutePost>> byDriver(@PathVariable String driverId,
+                                                            @RequestParam(defaultValue = "0") int page,
+                                                            @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, Math.min(size, 50));
+        return ApiResponse.ok(routeService.findByDriver(driverId, pageable));
     }
 
     @GetMapping("/nearby")

@@ -14,7 +14,7 @@ import java.util.List;
 
 public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
-    List<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId);
+    Page<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId, Pageable pageable);
 
     /** Dashboard "Active Trip" card - candidates for the driver's current/next trip, soonest first. */
     List<RoutePost> findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
