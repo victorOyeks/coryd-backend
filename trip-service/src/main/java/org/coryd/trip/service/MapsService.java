@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.trip.client.GoogleMapsClient;
+import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeocodeResult;
 import org.coryd.trip.dto.PlaceSuggestion;
 import org.coryd.trip.dto.RoutePreview;
@@ -134,6 +135,26 @@ public class MapsService {
             recordMapsFailure();
             log.error("Directions API call failed: {}", e.getMessage());
             throw new BadRequestException("Unable to load route preview. Please try again.");
+        }
+    }
+
+    /** The search-results list's pickup-ETA column - one batched call across every result row instead of one Directions call per row. Not cached: a batch is keyed by wherever this particular rider is standing right now against N route origins, which essentially never repeats, so caching would just waste Redis writes. */
+    public List<DistanceMatrixResult> getDistanceMatrixBatch(double originLat, double originLng, List<double[]> destinations) {
+        if (isMapsCircuitOpen()) {
+            log.warn("Maps circuit open - rejecting distance-matrix batch request");
+            throw new BadRequestException("Maps service is temporarily unavailable. Please try again in a moment.");
+        }
+
+        try {
+            List<DistanceMatrixResult> results = googleMapsClient.getDistanceMatrix(originLat, originLng, destinations);
+            resetMapsCircuit();
+            return results;
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (Exception e) {
+            recordMapsFailure();
+            log.error("Distance Matrix batch call failed: {}", e.getMessage());
+            throw new BadRequestException("Unable to load pickup times. Please try again.");
         }
     }
 

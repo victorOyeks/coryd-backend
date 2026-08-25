@@ -5,14 +5,19 @@ import java.time.Instant;
 
 /**
  * The Ride Details screen: everything RideSearchResult carries (driver/vehicle/rating/
- * pickup-eta) plus the full route preview (distance/duration/via-summary, from
- * MapsService.getRoutePreview) and an estimated arrival time - unlike pickupEtaMinutes,
- * which is rider-to-pickup, these describe the whole origin-to-destination leg.
+ * pickup-eta) plus origin/destination coordinates - the route's own distance/duration/via-
+ * summary/ETA is no longer computed here, mobile derives it on-device (it already renders the
+ * map, so it calls Google Directions itself for this single origin/destination pair rather than
+ * this service doing it server-side and shipping the text down).
  */
 public record RideDetailsResponse(
         String routePostId,
         String originLabel,
         String destinationLabel,
+        Double originLat,
+        Double originLng,
+        Double destinationLat,
+        Double destinationLng,
         Instant departureTime,
         BigDecimal farePerSeat,
         Integer seatsAvailable,
@@ -26,12 +31,7 @@ public record RideDetailsResponse(
         boolean vehicleHasAC,
         Double ratingAvg,
         long ratingCount,
-        int pickupEtaMinutes,
-        double routeDistanceKm,
-        int routeDurationMinutes,
-        String routeDurationText,
-        String routeViaSummary,
-        Instant estimatedArrivalTime,
+        Integer pickupEtaMinutes,
         int seatHoldMinutes,
         String routeNote
 ) {

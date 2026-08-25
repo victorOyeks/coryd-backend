@@ -1,6 +1,7 @@
 package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
@@ -16,12 +17,12 @@ import org.coryd.common.kafka.events.RoutePublishedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
+import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeoPin;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
-import org.coryd.trip.dto.RoutePreview;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.DriverVerificationCache;
@@ -36,7 +37,6 @@ import org.coryd.trip.repository.NotifyMeRequestRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
-import org.coryd.trip.util.GeoUtils;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -52,7 +52,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class RouteService {
@@ -196,27 +198,25 @@ public class RouteService {
         return enrich(capped, request.originLat(), request.originLng());
     }
 
-    /** The Ride Details screen - one enriched route plus the full route preview (distance/duration/via-summary), not just the rider-to-pickup figure enrich() already covers. */
+    /** The Ride Details screen - one enriched route plus its coordinates; the route's own distance/duration/via-summary is now computed by mobile on-device (it already has an on-screen map and the coordinates below to call Google Directions itself with). */
     public RideDetailsResponse getRouteDetails(String routePostId, double riderLat, double riderLng) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
         RideSearchResult base = enrich(List.of(route), riderLat, riderLng).getFirst();
-        RoutePreview preview = mapsService.getRoutePreview(
-                route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng());
-        Instant estimatedArrivalTime = route.getDepartureTime().plus(preview.durationMinutes(), ChronoUnit.MINUTES);
 
         return new RideDetailsResponse(
-                base.routePostId(), base.originLabel(), base.destinationLabel(), base.departureTime(),
+                base.routePostId(), base.originLabel(), base.destinationLabel(),
+                route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(),
+                base.departureTime(),
                 base.farePerSeat(), base.seatsAvailable(), base.driverId(), base.driverName(), base.driverPhotoUrl(),
                 base.driverVerified(), base.vehicleMake(), base.vehicleModel(), base.vehiclePlate(), base.vehicleHasAC(),
                 base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
-                preview.distanceKm(), preview.durationMinutes(), preview.durationText(), preview.viaSummary(),
-                estimatedArrivalTime, BookingService.SEAT_HOLD_MINUTES, base.routeNote()
+                BookingService.SEAT_HOLD_MINUTES, base.routeNote()
         );
     }
 
-    /** Batch-joins driver/vehicle/rating data onto raw route matches - three calls total for the whole page, never one per row. */
+    /** Batch-joins driver/vehicle/rating data onto raw route matches, plus one batched Google Distance Matrix call for pickup-ETA - four calls total for the whole page, never one per row. */
     private List<RideSearchResult> enrich(List<RoutePost> routes, double riderLat, double riderLng) {
         List<String> driverIds = routes.stream().map(RoutePost::getDriverId).distinct().toList();
         List<String> vehicleIds = routes.stream().map(RoutePost::getVehicleId).filter(Objects::nonNull).distinct().toList();
@@ -225,8 +225,10 @@ public class RouteService {
         Map<String, ProfileServiceClient.VehicleSummaryItem> vehicles = profileServiceClient.fetchVehicleSummaries(vehicleIds);
         Map<String, RatingRepository.RatingSummary> ratings = ratingRepository.summarize(driverIds).stream()
                 .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, r -> r));
+        List<Integer> pickupEtaMinutes = pickupEtaMinutesBatch(routes, riderLat, riderLng);
 
-        return routes.stream().map(route -> {
+        return IntStream.range(0, routes.size()).mapToObj(i -> {
+            RoutePost route = routes.get(i);
             ProfileServiceClient.DriverSummaryItem driver = drivers.get(route.getDriverId());
             ProfileServiceClient.VehicleSummaryItem vehicle = route.getVehicleId() == null ? null : vehicles.get(route.getVehicleId());
             RatingRepository.RatingSummary rating = ratings.get(route.getDriverId());
@@ -248,10 +250,28 @@ public class RouteService {
                     vehicle != null && vehicle.hasAC(),
                     rating == null ? null : rating.getAvgStars(),
                     rating == null ? 0L : rating.getRatingCount(),
-                    GeoUtils.estimateMinutes(riderLat, riderLng, route.getOriginLat(), route.getOriginLng()),
+                    pickupEtaMinutes.get(i),
                     route.getRouteNote()
             );
         }).toList();
+    }
+
+    /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern as BookingService.routeViaSummary() - on failure every row in the batch gets null instead of the whole search failing. */
+    private List<Integer> pickupEtaMinutesBatch(List<RoutePost> routes, double riderLat, double riderLng) {
+        if (routes.isEmpty()) {
+            return List.of();
+        }
+        try {
+            List<double[]> origins = routes.stream()
+                    .map(r -> new double[]{r.getOriginLat(), r.getOriginLng()})
+                    .toList();
+            return mapsService.getDistanceMatrixBatch(riderLat, riderLng, origins).stream()
+                    .map(DistanceMatrixResult::durationMinutes)
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Pickup-ETA batch unavailable for {} results: {}", routes.size(), e.getMessage());
+            return routes.stream().map(r -> (Integer) null).toList();
+        }
     }
 
     /** "My Routes" / dashboard repost card - newest first, no ownership check since this is a read (mutations are what's gated). */

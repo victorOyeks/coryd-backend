@@ -11,7 +11,6 @@ import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
-import org.coryd.trip.util.GeoUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -60,8 +59,7 @@ public class LocationService {
         String value = lat + "," + lng + "," + now.toEpochMilli();
         redisTemplate.opsForValue().set(LOCATION_KEY_PREFIX + bookingId, value, LOCATION_TTL);
 
-        LocationResponse response = new LocationResponse(true, lat, lng, now,
-                GeoUtils.estimateMinutes(lat, lng, route.getOriginLat(), route.getOriginLng()), null);
+        LocationResponse response = new LocationResponse(true, lat, lng, now, null);
 
         messagingTemplate.convertAndSend("/topic/bookings/" + bookingId + "/location", response);
         return response;
@@ -105,8 +103,7 @@ public class LocationService {
         double lng = Double.parseDouble(parts[1]);
         Instant recordedAt = Instant.ofEpochMilli(Long.parseLong(parts[2]));
 
-        return new LocationResponse(true, lat, lng, recordedAt,
-                GeoUtils.estimateMinutes(lat, lng, route.getOriginLat(), route.getOriginLng()), null);
+        return new LocationResponse(true, lat, lng, recordedAt, null);
     }
 
     /** Write-path gate - status must be an active trip phase, and it must be within 30 min of departure, matching the screen's own "Available 30 min before departure" copy. */
@@ -141,8 +138,7 @@ public class LocationService {
         String value = lat + "," + lng + "," + now.toEpochMilli();
         redisTemplate.opsForValue().set(ROUTE_LOCATION_KEY_PREFIX + routePostId, value, LOCATION_TTL);
 
-        LocationResponse response = new LocationResponse(true, lat, lng, now,
-                GeoUtils.estimateMinutes(lat, lng, route.getOriginLat(), route.getOriginLng()), null);
+        LocationResponse response = new LocationResponse(true, lat, lng, now, null);
 
         messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/location", response);
         return response;
@@ -174,7 +170,6 @@ public class LocationService {
         double lng = Double.parseDouble(parts[1]);
         Instant recordedAt = Instant.ofEpochMilli(Long.parseLong(parts[2]));
 
-        return new LocationResponse(true, lat, lng, recordedAt,
-                GeoUtils.estimateMinutes(lat, lng, route.getOriginLat(), route.getOriginLng()), null);
+        return new LocationResponse(true, lat, lng, recordedAt, null);
     }
 }

@@ -70,7 +70,9 @@ GET /bookings/{bookingId}
 Authorization: Bearer {accessToken}
 ```
 
-This gives you everything the card in Step 1 gave you, plus one extra field: `routeViaSummary` — that's the "via Ketu bypass" text under the map.
+This gives you everything the card in Step 1 gave you, plus four coordinate fields: `originLat`, `originLng`, `destinationLat`, `destinationLng`. The backend no longer computes the "via Ketu bypass" route-preview text itself — you already have a Google Maps SDK on-screen for this map, so call Google Directions directly with those four coordinates and read `route.summary` off the response for that text, instead of waiting on a field from us. See **Maps & ETA — what moved to your side** at the bottom of this doc for the full picture.
+
+(Full driver-side trip flow and the complete Maps/ETA writeup are in the separate `driver-trip-flow-fe-guide.md` doc, shared alongside this one.)
 
 Then, separately, ask for the status timeline (the checklist with timestamps: Booking confirmed 06:30 AM, Driver en route 06:38 AM, etc.):
 
@@ -113,11 +115,12 @@ You'll get one of two shapes back. Either a real position:
     "lat": 6.6018,
     "lng": 3.3515,
     "recordedAt": "2026-08-01T06:41:12Z",
-    "etaMinutes": 2,
     "message": null
   }
 }
 ```
+
+Notice there's no `etaMinutes` here anymore — the backend used to guess it with straight-line distance ÷ an assumed speed, which was a poor estimate in a lagoon city like Lagos. Now it's your job: call Google Directions/Distance Matrix yourself with this `lat`/`lng` as the origin and `originLat`/`originLng` (from Step 2's response) as the destination, and use its `duration` field. Real road-and-traffic data, not a guess. See **Maps & ETA — what moved to your side** at the bottom.
 
 Or "not yet," with `available: false` and a `message` explaining why — and that message is written for you to just show directly on screen, word for word, not something to re-word yourself:
 
@@ -256,3 +259,9 @@ That's it. Nothing to tell the server, no cleanup call — just stop listening.
 7. Rider leaves → close the connection
 
 If any one step in that list is still fuzzy, tell me which number and I'll go deeper on just that one.
+
+---
+
+## Maps & ETA — what moved to your side
+
+Short version: the backend now only ever hands you raw coordinates. It doesn't compute distance, duration, route lines, or ETA text anymore — you already have a Google Maps SDK rendering the map on-screen, so you call Google directly for all of that, using the coordinates this API gives you. Full explanation, code shape, and the reasoning (Lagos/lagoon routing, batching, etc.) is in the separate `driver-trip-flow-fe-guide.md` doc — the "Maps & ETA" section there covers this screen too, not just the driver-side ones.

@@ -17,6 +17,10 @@ public record BookingDetailsResponse(
         BookingStatus status,
         String originLabel,
         String destinationLabel,
+        Double originLat,
+        Double originLng,
+        Double destinationLat,
+        Double destinationLng,
         Instant departureTime,
         Integer seatCount,
         BigDecimal fareTotal,
@@ -32,7 +36,6 @@ public record BookingDetailsResponse(
         String vehicleModel,
         String vehiclePlate,
         boolean vehicleHasAC,
-        String routeViaSummary,
         Integer durationMinutes
 ) {
 }

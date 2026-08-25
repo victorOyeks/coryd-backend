@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.trip.constants.GoogleMapsRoutes;
+import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeocodeResult;
 import org.coryd.trip.dto.PlaceSuggestion;
 import org.coryd.trip.dto.RoutePreview;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /** Thin wrapper over Google Maps Platform - one method per endpoint, Google's own status vocabulary surfaced as exceptions. Caching/circuit-breaking lives one layer up, in MapsService. */
 @Slf4j
@@ -103,6 +105,36 @@ public class GoogleMapsClient {
         return new RoutePreview(Math.round(distanceKm * 100.0) / 100.0, durationMinutes, leg.duration().text(), route.summary());
     }
 
+    /** Single origin, many destinations, one call - the search-results list's pickup-ETA column. Results come back in the same order as destinations; an individual pair's own failed status degrades to a null entry rather than failing the whole batch. */
+    public List<DistanceMatrixResult> getDistanceMatrix(double originLat, double originLng, List<double[]> destinations) {
+        String origins = originLat + "," + originLng;
+        String destinationsParam = destinations.stream()
+                .map(d -> d[0] + "," + d[1])
+                .collect(Collectors.joining("|"));
+
+        DistanceMatrixResponse response = mapsRestClient.get()
+                .uri(GoogleMapsRoutes.DISTANCE_MATRIX, origins, destinationsParam, apiKey)
+                .retrieve()
+                .body(DistanceMatrixResponse.class);
+        if (response == null || !STATUS_OK.equals(response.status())) {
+            log.warn("Distance Matrix status: {} for origin {},{} with {} destinations",
+                    response == null ? "null" : response.status(), originLat, originLng, destinations.size());
+            throw new BadRequestException("Distance Matrix service unavailable - please try again");
+        }
+
+        List<DistanceMatrixResponse.Row.Element> elements = response.rows().getFirst().elements();
+        return elements.stream()
+                .map(e -> {
+                    if (!STATUS_OK.equals(e.status()) || e.distance() == null || e.duration() == null) {
+                        return new DistanceMatrixResult(null, null);
+                    }
+                    double distanceKm = e.distance().value() / 1000.0;
+                    int durationMinutes = (int) Math.ceil(e.duration().value() / 60.0);
+                    return new DistanceMatrixResult(Math.round(distanceKm * 100.0) / 100.0, durationMinutes);
+                })
+                .toList();
+    }
+
     // ── Google API response records (internal deserialization only) ──────────
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -152,6 +184,18 @@ public class GoogleMapsClient {
             private record Leg(Distance distance, Duration duration) {
                 private record Distance(int value) {}
                 private record Duration(int value, String text) {}
+            }
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record DistanceMatrixResponse(List<Row> rows, String status) {
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        private record Row(List<Element> elements) {
+            @JsonIgnoreProperties(ignoreUnknown = true)
+            private record Element(String status, Distance distance, Duration duration) {
+                private record Distance(int value) {}
+                private record Duration(int value) {}
             }
         }
     }

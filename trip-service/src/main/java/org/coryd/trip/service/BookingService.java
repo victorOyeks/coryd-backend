@@ -90,7 +90,6 @@ public class BookingService {
     private final IdentityServiceClient identityServiceClient;
     private final ShareTokenService shareTokenService;
     private final LocationService locationService;
-    private final MapsService mapsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
@@ -317,7 +316,9 @@ public class BookingService {
 
         return new BookingDetailsResponse(
                 booking.getId(), booking.getStatus(),
-                route.getOriginLabel(), route.getDestinationLabel(), route.getDepartureTime(),
+                route.getOriginLabel(), route.getDestinationLabel(),
+                route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(),
+                route.getDepartureTime(),
                 booking.getSeatCount(), booking.getFareTotal(), booking.getFarePerSeatSnapshot(),
                 booking.getHoldExpiresAt(), SEAT_HOLD_MINUTES,
                 route.getDriverId(),
@@ -329,7 +330,6 @@ public class BookingService {
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
-                routeViaSummary(route),
                 booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(bookingId) : null
         );
     }
@@ -339,18 +339,6 @@ public class BookingService {
         return historyRepository.findByBookingIdOrderByCreatedAtAsc(bookingId).stream()
                 .map(h -> new BookingStatusHistoryEntry(h.getStatus(), h.getCreatedAt()))
                 .toList();
-    }
-
-    /** Best-effort - a Directions API hiccup shouldn't take down the whole booking-details screen over one text line. */
-    private String routeViaSummary(RoutePost route) {
-        try {
-            return mapsService.getRoutePreview(
-                    route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()
-            ).viaSummary();
-        } catch (Exception e) {
-            log.warn("Route preview unavailable for booking details (routePostId={}): {}", route.getId(), e.getMessage());
-            return null;
-        }
     }
 
     /** Receipt screen's trip duration - the gap between "trip in progress" and "trip completed" in the status history, not stored anywhere directly. */
@@ -620,10 +608,10 @@ public class BookingService {
         recordHistory(booking.getId(), BookingStatus.COMPLETED, "Trip completed");
 
         kafkaTemplate.send(KafkaTopics.TRIP_COMPLETED, TripCompletedEvent.builder()
-                .bookingId(booking.getId().toString())
-                .routePostId(booking.getRoutePostId().toString())
-                .riderId(booking.getRiderId().toString())
-                .driverId(route.getDriverId().toString())
+                .bookingId(booking.getId())
+                .routePostId(booking.getRoutePostId())
+                .riderId(booking.getRiderId())
+                .driverId(route.getDriverId())
                 .fareTotal(booking.getFareTotal())
                 .completedAt(LocalDateTime.now())
                 .build());
