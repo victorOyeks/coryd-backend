@@ -83,10 +83,10 @@ public class EarningsService {
         return new DriverEarningsSummary(account.getLifetimeGross(), lifetimeNet, todayNet, account.getAvailableBalance());
     }
 
-    /** Net-earned lookup for a specific set of bookings - e.g. trip-service's driver history page zips this in per route by bookingId. */
+    /** Earnings breakdown lookup for a specific set of bookings - e.g. trip-service's driver history page zips netCredit in per route by bookingId, and the post-trip settlement summary sums all three fields across a route's completed bookings. */
     public List<BookingEarningsItem> getTransactionsForBookings(List<String> bookingIds) {
         return earningsTransactionRepository.findByBookingIdIn(bookingIds).stream()
-                .map(t -> new BookingEarningsItem(t.getBookingId(), t.getNetCredit()))
+                .map(t -> new BookingEarningsItem(t.getBookingId(), t.getGrossFare(), t.getCommissionAmount(), t.getNetCredit()))
                 .toList();
     }
 

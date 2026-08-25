@@ -86,7 +86,7 @@ public class RouteService {
         }
 
         boolean hasActiveTrip = !routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
-                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL), startOfToday()).isEmpty();
+                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS), startOfToday()).isEmpty();
         if (hasActiveTrip) {
             throw new BadRequestException("You already have an active route - it must depart and complete, or be cancelled, before you can post another");
         }
@@ -282,6 +282,21 @@ public class RouteService {
                 .desiredDepartureTime(request.desiredDepartureTime())
                 .expiresAt(Instant.now().plus(24, ChronoUnit.HOURS))
                 .build());
+    }
+
+    /** "Start Trip" button on the Ready to Depart screen - moves the route out of the booking window and into its in-progress phase, where manifest marking and Complete Trip become available. */
+    @Transactional
+    public void startTrip(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can start it");
+        }
+        if (route.getStatus() != RouteStatus.PUBLISHED && route.getStatus() != RouteStatus.FULL) {
+            throw new BadRequestException("This trip can't be started from its current state");
+        }
+        route.setStatus(RouteStatus.IN_PROGRESS);
+        routePostRepository.save(route);
     }
 
     /** Anything not already a terminal state - HELD/CONFIRMED plus the trip-in-progress phases, all of which a driver-side route cancellation must still unwind and refund. */

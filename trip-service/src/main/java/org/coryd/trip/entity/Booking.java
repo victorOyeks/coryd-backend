@@ -55,4 +55,8 @@ public class Booking extends BaseEntity {
 
     @Column(precision = 10, scale = 2)
     private BigDecimal farePerSeatSnapshot;
+
+    private String pickupLabel;
+    private Double pickupLat;
+    private Double pickupLng;
 }

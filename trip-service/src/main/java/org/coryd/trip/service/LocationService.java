@@ -2,6 +2,7 @@ package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
@@ -35,6 +36,9 @@ public class LocationService {
     private static final int AVAILABLE_BEFORE_DEPARTURE_MINUTES = 30;
     private static final Set<BookingStatus> LOCATION_ELIGIBLE_STATUSES =
             Set.of(BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+    private static final Set<BookingStatus> NON_TERMINAL_BOOKING_STATUSES =
+            Set.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+    private static final String ROUTE_LOCATION_KEY_PREFIX = "trip:location:route:";
 
     private final BookingRepository bookingRepository;
     private final RoutePostRepository routePostRepository;
@@ -120,5 +124,57 @@ public class LocationService {
             throw new BadRequestException("Live tracking opens 30 minutes before departure");
         }
         return route;
+    }
+
+    /** Driver write path for the Live Trip map - one shared point per route instead of one per passenger, since it's the same physical vehicle. */
+    public LocationResponse recordLocationForRoute(String routePostId, String callerId, double lat, double lng) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can post its location");
+        }
+        if (route.getStatus() != RouteStatus.IN_PROGRESS) {
+            throw new BadRequestException("Live location isn't available for this trip's current status");
+        }
+
+        Instant now = Instant.now();
+        String value = lat + "," + lng + "," + now.toEpochMilli();
+        redisTemplate.opsForValue().set(ROUTE_LOCATION_KEY_PREFIX + routePostId, value, LOCATION_TTL);
+
+        LocationResponse response = new LocationResponse(true, lat, lng, now,
+                GeoUtils.estimateMinutes(lat, lng, route.getOriginLat(), route.getOriginLng()), null);
+
+        messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/location", response);
+        return response;
+    }
+
+    /** REST read path for the Live Trip map - the driver, or any rider with a non-terminal booking on this route. */
+    public LocationResponse getLocationForRoute(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        boolean isDriver = callerId.equals(route.getDriverId());
+        boolean isActiveRider = bookingRepository.findByRoutePostId(routePostId).stream()
+                .anyMatch(b -> callerId.equals(b.getRiderId()) && NON_TERMINAL_BOOKING_STATUSES.contains(b.getStatus()));
+        if (!isDriver && !isActiveRider) {
+            throw new UnauthorizedException("Not authorized for this trip's location");
+        }
+
+        if (route.getStatus() != RouteStatus.IN_PROGRESS) {
+            return LocationResponse.unavailable("Live tracking isn't available for this trip right now.");
+        }
+
+        String raw = redisTemplate.opsForValue().get(ROUTE_LOCATION_KEY_PREFIX + routePostId);
+        if (raw == null) {
+            return LocationResponse.unavailable("Waiting for the driver's location to come through.");
+        }
+
+        String[] parts = raw.split(",", 3);
+        double lat = Double.parseDouble(parts[0]);
+        double lng = Double.parseDouble(parts[1]);
+        Instant recordedAt = Instant.ofEpochMilli(Long.parseLong(parts[2]));
+
+        return new LocationResponse(true, lat, lng, recordedAt,
+                GeoUtils.estimateMinutes(lat, lng, route.getOriginLat(), route.getOriginLng()), null);
     }
 }

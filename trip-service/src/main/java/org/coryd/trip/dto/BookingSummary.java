@@ -12,6 +12,9 @@ public record BookingSummary(
         int seatCount,
         BigDecimal fareTotal,
         BookingStatus status,
-        Instant pickupConfirmedAt
+        Instant pickupConfirmedAt,
+        String pickupLabel,
+        Double pickupLat,
+        Double pickupLng
 ) {
 }

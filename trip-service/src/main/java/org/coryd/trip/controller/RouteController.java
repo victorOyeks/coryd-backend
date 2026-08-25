@@ -89,4 +89,11 @@ public class RouteController {
         routeService.cancel(routePostId, principal.getUserId());
         return ApiResponse.ok("Route cancelled", null);
     }
+
+    /** "Start Trip" button on the Ready to Depart screen. */
+    @PostMapping("/{routePostId}/start")
+    public ApiResponse<Void> start(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
+        routeService.startTrip(routePostId, principal.getUserId());
+        return ApiResponse.ok("Trip started", null);
+    }
 }

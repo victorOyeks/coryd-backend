@@ -14,5 +14,6 @@
     <include file="db/changelog/003-issue-report-optional-booking.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/004-saved-places.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/005-route-note.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/006-booking-pickup-point.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

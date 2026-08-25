@@ -118,7 +118,7 @@ public class BookingService {
     /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route, empty if they have none posted. Returns everything trip-service has on it (route + full booking list), not just the card's headline count, so the client can also build a tap-through detail view from this one call. */
     public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId) {
         List<RoutePost> candidates = routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
-                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL), startOfToday());
+                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS), startOfToday());
         if (candidates.isEmpty()) {
             return Optional.empty();
         }
@@ -156,7 +156,8 @@ public class BookingService {
 
     private static BookingSummary toSummary(Booking booking) {
         return new BookingSummary(booking.getId(), booking.getRiderId(), booking.getSeatCount(),
-                booking.getFareTotal(), booking.getStatus(), booking.getPickupConfirmedAt());
+                booking.getFareTotal(), booking.getStatus(), booking.getPickupConfirmedAt(),
+                booking.getPickupLabel(), booking.getPickupLat(), booking.getPickupLng());
     }
 
     /** Dashboard's "Trips this week" tile - completed bookings on routes that departed Monday through now. */
@@ -392,6 +393,9 @@ public class BookingService {
                 .vehiclePlateSnapshot(profileServiceClient.fetchVehiclePlate(route.getVehicleId()))
                 .routeSummarySnapshot(route.getOriginLabel() + " -> " + route.getDestinationLabel())
                 .farePerSeatSnapshot(route.getFarePerSeat())
+                .pickupLabel(request.pickupLabel())
+                .pickupLat(request.pickupLat())
+                .pickupLng(request.pickupLng())
                 .build();
         bookingRepository.save(booking);
         recordHistory(booking.getId(), BookingStatus.HELD, "Seat held pending payment");
@@ -493,12 +497,14 @@ public class BookingService {
                 .build());
     }
 
-    /** Rider taps "I've boarded" - advances status to IN_PROGRESS, not just a timestamp, so it drives the Track Live Trip phase timeline too. */
+    /** Rider taps "I've boarded", or the driver taps "Mark Picked Up" on the Passenger Manifest - either way advances status to IN_PROGRESS, not just a timestamp, so it drives the Track Live Trip phase timeline too. */
     @Transactional
     public void markPickedUp(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        if (!callerId.equals(booking.getRiderId())) {
-            throw new UnauthorizedException("Only this booking's rider can mark it picked up");
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(booking.getRiderId()) && !callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this booking's rider or the route's driver can mark it picked up");
         }
         booking.setPickupConfirmedAt(Instant.now());
         booking.setStatus(BookingStatus.IN_PROGRESS);
@@ -519,6 +525,48 @@ public class BookingService {
         recordHistory(bookingId, BookingStatus.NO_SHOW, "Rider did not show up within the grace period");
     }
 
+    /** Undoes a manifest mark (Picked Up or No Show) made in error, before the trip is completed - powers the manifest's "No Show x" undo chip. */
+    @Transactional
+    public void undoManifestMark(String bookingId, String callerId) {
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this trip's driver can reset a manifest mark");
+        }
+        if (route.getStatus() == RouteStatus.COMPLETED) {
+            throw new BadRequestException("This trip is already completed - manifest marks can no longer be changed");
+        }
+        if (booking.getStatus() != BookingStatus.IN_PROGRESS && booking.getStatus() != BookingStatus.NO_SHOW) {
+            throw new BadRequestException("This booking hasn't been marked yet");
+        }
+        booking.setStatus(BookingStatus.CONFIRMED);
+        booking.setPickupConfirmedAt(null);
+        bookingRepository.save(booking);
+        recordHistory(bookingId, BookingStatus.CONFIRMED, "Manifest mark reset by driver");
+    }
+
+    /** "Reset all Manifest" - undoes every Picked Up/No Show mark on the route in one call. */
+    @Transactional
+    public void resetManifest(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can reset its manifest");
+        }
+        if (route.getStatus() == RouteStatus.COMPLETED) {
+            throw new BadRequestException("This trip is already completed - manifest marks can no longer be changed");
+        }
+        bookingRepository.findByRoutePostId(routePostId).stream()
+                .filter(b -> b.getStatus() == BookingStatus.IN_PROGRESS || b.getStatus() == BookingStatus.NO_SHOW)
+                .forEach(b -> {
+                    b.setStatus(BookingStatus.CONFIRMED);
+                    b.setPickupConfirmedAt(null);
+                    bookingRepository.save(b);
+                    recordHistory(b.getId(), BookingStatus.CONFIRMED, "Manifest mark reset by driver");
+                });
+    }
+
     @Transactional
     public void completeTrip(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
@@ -527,10 +575,49 @@ public class BookingService {
         if (!callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this trip's driver can complete it");
         }
+        completeBookingInternal(booking, route);
+    }
 
+    /** Statuses that still need a Picked Up/No Show decision before a route-level Complete Trip is allowed. */
+    private static final List<BookingStatus> UNRESOLVED_MANIFEST_STATUSES =
+            List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
+
+    /** "Complete Trip" button - completes every picked-up passenger on the route in one call, gated on every booking having been marked Picked Up or No Show first (the manifest's "Mark all passengers before completing" banner). No-shows are left as-is; they never had a trip to complete or settle. */
+    @Transactional
+    public List<BookingSummary> completeRoute(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can complete it");
+        }
+        if (route.getStatus() != RouteStatus.IN_PROGRESS) {
+            throw new BadRequestException("This trip hasn't been started yet");
+        }
+
+        List<Booking> bookings = bookingRepository.findByRoutePostId(routePostId);
+        boolean anyUnresolved = bookings.stream().anyMatch(b -> UNRESOLVED_MANIFEST_STATUSES.contains(b.getStatus()));
+        if (anyUnresolved) {
+            throw new BadRequestException("Mark all passengers before completing this trip");
+        }
+
+        for (Booking booking : bookings) {
+            if (booking.getStatus() == BookingStatus.IN_PROGRESS) {
+                completeBookingInternal(booking, route);
+            }
+        }
+
+        route.setStatus(RouteStatus.COMPLETED);
+        routePostRepository.save(route);
+
+        return bookingRepository.findByRoutePostId(routePostId).stream()
+                .map(BookingService::toSummary)
+                .toList();
+    }
+
+    private void completeBookingInternal(Booking booking, RoutePost route) {
         booking.setStatus(BookingStatus.COMPLETED);
         bookingRepository.save(booking);
-        recordHistory(bookingId, BookingStatus.COMPLETED, "Trip completed");
+        recordHistory(booking.getId(), BookingStatus.COMPLETED, "Trip completed");
 
         kafkaTemplate.send(KafkaTopics.TRIP_COMPLETED, TripCompletedEvent.builder()
                 .bookingId(booking.getId().toString())

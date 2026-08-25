@@ -146,10 +146,30 @@ public class BookingController {
         return ApiResponse.ok("Rider marked as no-show", null);
     }
 
+    /** Undoes a Picked Up/No Show mark made in error - the manifest's "No Show x" undo chip. */
+    @PostMapping("/{bookingId}/undo-manifest-mark")
+    public ApiResponse<Void> undoManifestMark(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.undoManifestMark(bookingId, principal.getUserId());
+        return ApiResponse.ok("Manifest mark reset", null);
+    }
+
+    /** "Reset all Manifest" - undoes every mark on the route in one call. */
+    @PostMapping("/routes/{routePostId}/reset-manifest")
+    public ApiResponse<Void> resetManifest(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
+        bookingService.resetManifest(routePostId, principal.getUserId());
+        return ApiResponse.ok("Manifest reset", null);
+    }
+
     @PostMapping("/{bookingId}/complete")
     public ApiResponse<Void> complete(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
         bookingService.completeTrip(bookingId, principal.getUserId());
         return ApiResponse.ok("Trip completed", null);
+    }
+
+    /** "Complete Trip" button - completes every picked-up passenger on the route at once, gated on the whole manifest being resolved first. */
+    @PostMapping("/routes/{routePostId}/complete")
+    public ApiResponse<List<BookingSummary>> completeRoute(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
+        return ApiResponse.ok(bookingService.completeRoute(routePostId, principal.getUserId()));
     }
 
     @PostMapping("/{bookingId}/rate")

@@ -2,6 +2,7 @@ package org.coryd.trip.config;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.security.JwtUtil;
 import org.coryd.trip.entity.Booking;
@@ -17,6 +18,7 @@ import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,6 +34,9 @@ import java.util.regex.Pattern;
 public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
     private static final Pattern LOCATION_TOPIC = Pattern.compile("^/topic/bookings/([^/]+)/location$");
+    private static final Pattern ROUTE_LOCATION_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/location$");
+    private static final Set<BookingStatus> NON_TERMINAL_BOOKING_STATUSES =
+            Set.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
     private final JwtUtil jwtUtil;
     private final BookingRepository bookingRepository;
@@ -64,14 +69,20 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         if (destination == null) {
             return;
         }
-        Matcher matcher = LOCATION_TOPIC.matcher(destination);
-        if (!matcher.matches()) {
+
+        Matcher bookingMatcher = LOCATION_TOPIC.matcher(destination);
+        if (bookingMatcher.matches()) {
+            authorizeBookingSubscription(destination, bookingMatcher.group(1), currentUserId(accessor));
             return;
         }
 
-        String bookingId = matcher.group(1);
-        String userId = currentUserId(accessor);
+        Matcher routeMatcher = ROUTE_LOCATION_TOPIC.matcher(destination);
+        if (routeMatcher.matches()) {
+            authorizeRouteSubscription(destination, routeMatcher.group(1), currentUserId(accessor));
+        }
+    }
 
+    private void authorizeBookingSubscription(String destination, String bookingId, String userId) {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new MessagingException("Booking not found"));
         RoutePost route = routePostRepository.findById(booking.getRoutePostId())
@@ -80,6 +91,19 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         boolean isParty = userId.equals(booking.getRiderId()) || userId.equals(route.getDriverId());
         if (!isParty) {
             log.warn("Rejected WebSocket subscribe to {} - user {} is not a party to booking {}", destination, userId, bookingId);
+            throw new MessagingException("Not authorized for this trip's location updates");
+        }
+    }
+
+    private void authorizeRouteSubscription(String destination, String routePostId, String userId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new MessagingException("Route post not found"));
+
+        boolean isDriver = userId.equals(route.getDriverId());
+        boolean isActiveRider = bookingRepository.findByRoutePostId(routePostId).stream()
+                .anyMatch(b -> userId.equals(b.getRiderId()) && NON_TERMINAL_BOOKING_STATUSES.contains(b.getStatus()));
+        if (!isDriver && !isActiveRider) {
+            log.warn("Rejected WebSocket subscribe to {} - user {} is not a party to route {}", destination, userId, routePostId);
             throw new MessagingException("Not authorized for this trip's location updates");
         }
     }
