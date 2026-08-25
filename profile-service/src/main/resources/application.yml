@@ -45,6 +45,10 @@ jwt:
   secret: ${JWT_SECRET:change-me-in-every-environment}
   expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
+services:
+  internal:
+    api-key: ${INTERNAL_API_KEY}
+
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:placeholder}
   api-key: ${CLOUDINARY_API_KEY:placeholder}
