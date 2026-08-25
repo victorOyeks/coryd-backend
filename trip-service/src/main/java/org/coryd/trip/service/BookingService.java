@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.enums.RatingDirection;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.enums.VerificationStatus;
@@ -33,8 +34,10 @@ import org.coryd.trip.dto.DriverTripStatsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
+import org.coryd.trip.dto.ReceiptPassenger;
 import org.coryd.trip.dto.SharedTripResponse;
 import org.coryd.trip.dto.TripHistoryItem;
+import org.coryd.trip.dto.TripReceiptResponse;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.BookingStatusHistory;
 import org.coryd.trip.entity.IssueReport;
@@ -62,6 +65,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.List;
@@ -153,6 +157,55 @@ public class BookingService {
                 .toList();
     }
 
+    /** The Receipt screen - ownership-gated same as the manifest. totalEarned/seatsBooked come from every non-HELD booking regardless of status, same reasoning as the trip-history list; receiptReference is derived deterministically (not random) so the same trip always shows the same reference number, not a new one per view. */
+    public TripReceiptResponse getTripReceipt(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can view its receipt");
+        }
+
+        List<Booking> booked = bookingRepository.findByRoutePostId(routePostId).stream()
+                .filter(b -> b.getStatus() != BookingStatus.HELD)
+                .toList();
+
+        List<String> riderIds = booked.stream().map(Booking::getRiderId).distinct().toList();
+        List<String> bookingIds = booked.stream().map(Booking::getId).toList();
+        Map<String, ProfileServiceClient.RiderSummaryItem> riders = profileServiceClient.fetchRiderSummaries(riderIds);
+        Map<String, Rating> ratingsByBooking = ratingRepository.findByBookingIdInAndDirection(bookingIds, RatingDirection.DRIVER_TO_RIDER)
+                .stream().collect(Collectors.toMap(Rating::getBookingId, r -> r));
+
+        List<ReceiptPassenger> passengers = booked.stream().map(booking -> {
+            ProfileServiceClient.RiderSummaryItem rider = riders.get(booking.getRiderId());
+            Rating rating = ratingsByBooking.get(booking.getId());
+            return new ReceiptPassenger(
+                    booking.getRiderId(),
+                    rider == null ? null : rider.fullName(),
+                    rider == null ? null : rider.photoUrl(),
+                    booking.getStatus(),
+                    rating == null ? null : rating.getStars()
+            );
+        }).toList();
+
+        int seatsBooked = booked.stream().mapToInt(Booking::getSeatCount).sum();
+        BigDecimal totalEarned = booked.stream().map(Booking::getFareTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Integer durationMinutes = (route.getStartedAt() != null && route.getCompletedAt() != null)
+                ? (int) Duration.between(route.getStartedAt(), route.getCompletedAt()).toMinutes()
+                : null;
+
+        return new TripReceiptResponse(
+                route.getId(), route.getStatus(), route.getOriginLabel(), route.getDestinationLabel(),
+                route.getDepartureTime(), durationMinutes, passengers,
+                route.getFarePerSeat(), seatsBooked, totalEarned, receiptReference(route)
+        );
+    }
+
+    private static String receiptReference(RoutePost route) {
+        String datePart = LocalDate.ofInstant(route.getDepartureTime(), ZoneOffset.UTC).format(DateTimeFormatter.BASIC_ISO_DATE);
+        String idSuffix = route.getId().replace("-", "").toUpperCase();
+        return "CRY-" + datePart + "-" + idSuffix.substring(0, Math.min(6, idSuffix.length()));
+    }
+
     private static BookingSummary toSummary(Booking booking) {
         return new BookingSummary(booking.getId(), booking.getRiderId(), booking.getSeatCount(),
                 booking.getFareTotal(), booking.getStatus(), booking.getPickupConfirmedAt(),
@@ -171,10 +224,19 @@ public class BookingService {
         return new DriverTripStatsResponse((int) tripsThisWeek);
     }
 
-    /** Driver Trip History screen - one row per posted route (not per booking), newest first. Net earnings aren't included here - payment-service data, composed client-side from completedBookingIds. */
-    public PagedResponse<DriverTripHistoryItem> getHistoryForDriver(String driverId, Pageable pageable) {
-        Page<RoutePost> routes = routePostRepository.findByDriverIdAndStatusNotAndDepartureTimeBeforeOrderByDepartureTimeDesc(
-                driverId, RouteStatus.CANCELLED, Instant.now(), pageable);
+    /** Every RouteStatus that counts as "history" at all - a route that hasn't started yet isn't history, it's upcoming (dashboard/My Routes), since every posted route already has a departure time by definition - there's no separate "Scheduled" bucket. */
+    private static final List<RouteStatus> ALL_HISTORY_ROUTE_STATUSES =
+            List.of(RouteStatus.IN_PROGRESS, RouteStatus.COMPLETED, RouteStatus.CANCELLED);
+
+    /** Driver Trip History screen - one row per posted route (not per booking), newest first, optionally filtered by status bucket and searched by origin/destination. seatsBooked/totalEarned are summed from every non-HELD booking regardless of the route's own status, so a cancelled route still shows what it actually had booked, not zeros. */
+    public PagedResponse<DriverTripHistoryItem> getHistoryForDriver(String driverId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
+        List<RouteStatus> statuses = statusBucket == null ? ALL_HISTORY_ROUTE_STATUSES : switch (statusBucket) {
+            case ONGOING -> List.of(RouteStatus.IN_PROGRESS);
+            case COMPLETED -> List.of(RouteStatus.COMPLETED);
+            case CANCELLED -> List.of(RouteStatus.CANCELLED);
+        };
+        String searchTerm = (search == null || search.isBlank()) ? null : search;
+        Page<RoutePost> routes = routePostRepository.searchDriverHistory(driverId, statuses, searchTerm, pageable);
 
         List<String> routePostIds = routes.getContent().stream().map(RoutePost::getId).toList();
         Map<String, List<Booking>> bookingsByRoute = routePostIds.isEmpty() ? Map.of()
@@ -182,13 +244,13 @@ public class BookingService {
                         .collect(Collectors.groupingBy(Booking::getRoutePostId));
 
         List<DriverTripHistoryItem> items = routes.getContent().stream().map(route -> {
-            List<Booking> completed = bookingsByRoute.getOrDefault(route.getId(), List.of()).stream()
-                    .filter(b -> b.getStatus() == BookingStatus.COMPLETED)
+            List<Booking> booked = bookingsByRoute.getOrDefault(route.getId(), List.of()).stream()
+                    .filter(b -> b.getStatus() != BookingStatus.HELD)
                     .toList();
-            int passengerCount = completed.stream().mapToInt(Booking::getSeatCount).sum();
-            List<String> completedBookingIds = completed.stream().map(Booking::getId).toList();
+            int seatsBooked = booked.stream().mapToInt(Booking::getSeatCount).sum();
+            BigDecimal totalEarned = booked.stream().map(Booking::getFareTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
             return new DriverTripHistoryItem(route.getId(), route.getOriginLabel(), route.getDestinationLabel(),
-                    route.getDepartureTime(), passengerCount, completedBookingIds);
+                    route.getDepartureTime(), route.getStatus(), seatsBooked, totalEarned);
         }).toList();
 
         return PagedResponse.from(new PageImpl<>(items, pageable, routes.getTotalElements()));
@@ -595,6 +657,7 @@ public class BookingService {
         }
 
         route.setStatus(RouteStatus.COMPLETED);
+        route.setCompletedAt(Instant.now());
         routePostRepository.save(route);
 
         return bookingRepository.findByRoutePostId(routePostId).stream()

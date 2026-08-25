@@ -67,4 +67,8 @@ public class RoutePost extends BaseEntity {
     /** Rider-facing hint about the path, e.g. "via Ketu bypass" - not shown to the driver only, riders see it in search results too. */
     @Column(length = 255)
     private String routeNote;
+
+    /** When the driver actually tapped Start Trip / Complete Trip - departureTime is only the planned time, these are the real ones, used for the receipt's trip duration. */
+    private Instant startedAt;
+    private Instant completedAt;
 }

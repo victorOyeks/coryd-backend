@@ -17,6 +17,7 @@ import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
 import org.coryd.trip.dto.TripHistoryItem;
+import org.coryd.trip.dto.TripReceiptResponse;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
@@ -78,13 +79,15 @@ public class BookingController {
         return ApiResponse.ok(bookingService.getStatsForDriver(driverId));
     }
 
-    /** Driver Trip History screen - one row per posted route, not per booking. */
+    /** Driver Trip History screen - one row per posted route, not per booking. No "Scheduled" bucket - a route that hasn't started yet isn't history, it's upcoming. */
     @GetMapping("/drivers/{driverId}/history")
     public ApiResponse<PagedResponse<DriverTripHistoryItem>> historyForDriver(@PathVariable String driverId,
+                                                                                @RequestParam(required = false) TripHistoryStatus status,
+                                                                                @RequestParam(required = false) String search,
                                                                                 @RequestParam(defaultValue = "0") int page,
                                                                                 @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
-        return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, pageable));
+        return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, status, search, pageable));
     }
 
     /** "View Passenger Manifest" - only the route's own driver can see who's booked on it. */
@@ -92,6 +95,13 @@ public class BookingController {
     public ApiResponse<List<BookingSummary>> manifestForRoute(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                 @PathVariable String routePostId) {
         return ApiResponse.ok(bookingService.getManifestForRoute(routePostId, principal.getUserId()));
+    }
+
+    /** The Receipt screen - only the route's own driver can view it. */
+    @GetMapping("/routes/{routePostId}/receipt")
+    public ApiResponse<TripReceiptResponse> receipt(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                      @PathVariable String routePostId) {
+        return ApiResponse.ok(bookingService.getTripReceipt(routePostId, principal.getUserId()));
     }
 
     /** Account screen's star rating - works the same for a rider's or a driver's own id. */

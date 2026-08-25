@@ -23,9 +23,20 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
     /** Dashboard "Trips this week" count - the routes to check bookings against. */
     List<RoutePost> findByDriverIdAndDepartureTimeBetween(String driverId, Instant start, Instant end);
 
-    /** Driver Trip History screen - already-departed routes, newest first. Excludes CANCELLED so a driver-cancelled route doesn't show up as a hollow "0 passengers, ₦0" row in what's meant to be a list of completed, earnings-bearing trips. */
-    Page<RoutePost> findByDriverIdAndStatusNotAndDepartureTimeBeforeOrderByDepartureTimeDesc(
-            String driverId, RouteStatus excludedStatus, Instant before, Pageable pageable);
+    /** Driver Trip History screen's actual query - status is a bucket (Ongoing/Completed/Cancelled/All), search matches either end of the route. NULL check comes last, matching this repo's search convention. */
+    @Query("""
+            select r from RoutePost r
+            where r.driverId = :driverId
+              and r.status in :statuses
+              and (lower(r.originLabel) like lower(concat('%', :search, '%'))
+                or lower(r.destinationLabel) like lower(concat('%', :search, '%'))
+                or cast(:search as string) is null)
+            order by r.departureTime desc
+            """)
+    Page<RoutePost> searchDriverHistory(@Param("driverId") String driverId,
+                                         @Param("statuses") List<RouteStatus> statuses,
+                                         @Param("search") String search,
+                                         Pageable pageable);
 
     /**
      * Real great-circle radius match (Haversine, km) on both origin and destination,

@@ -316,6 +316,7 @@ public class RouteService {
             throw new BadRequestException("This trip can't be started from its current state");
         }
         route.setStatus(RouteStatus.IN_PROGRESS);
+        route.setStartedAt(Instant.now());
         routePostRepository.save(route);
     }
 

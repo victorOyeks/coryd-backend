@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.security.ForwardedAuthInterceptor;
+import org.coryd.common.security.InternalApiKeyInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -24,10 +25,12 @@ public class ProfileServiceClient {
 
     private final RestClient restClient;
 
-    public ProfileServiceClient(@Value("${services.profile.url}") String profileServiceUrl) {
+    public ProfileServiceClient(@Value("${services.profile.url}") String profileServiceUrl,
+                                 @Value("${services.internal.api-key}") String internalApiKey) {
         this.restClient = RestClient.builder()
                 .baseUrl(profileServiceUrl)
                 .requestInterceptor(new ForwardedAuthInterceptor())
+                .requestInterceptor(new InternalApiKeyInterceptor(internalApiKey))
                 .build();
     }
 
@@ -94,6 +97,23 @@ public class ProfileServiceClient {
         }
     }
 
+    /** One call for a whole receipt's passenger list, not one per rider - keyed by userId for easy zipping. */
+    public Map<String, RiderSummaryItem> fetchRiderSummaries(List<String> riderIds) {
+        if (riderIds == null || riderIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            RiderSummaryBatchResponse response = restClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/riders/batch").queryParam("userIds", riderIds).build())
+                    .retrieve()
+                    .body(RiderSummaryBatchResponse.class);
+            return toMap(response == null ? List.of() : response.data(), RiderSummaryItem::userId);
+        } catch (Exception e) {
+            log.warn("Could not fetch rider summaries for {}: {}", riderIds, e.getMessage());
+            return Map.of();
+        }
+    }
+
     /** Every emergency contact the rider has saved (Share Trip, SOS alert all of them, not just the primary). */
     public List<RiderContact> fetchRiderContacts(String riderId) {
         try {
@@ -141,6 +161,14 @@ public class ProfileServiceClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record VehicleSummaryBatchResponse(List<VehicleSummaryItem> data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RiderSummaryItem(String userId, String fullName, String photoUrl) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record RiderSummaryBatchResponse(List<RiderSummaryItem> data) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
