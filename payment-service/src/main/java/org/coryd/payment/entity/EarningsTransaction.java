@@ -27,6 +27,9 @@ public class EarningsTransaction extends BaseEntity {
     @Column(nullable = false)
     private String bookingId;
 
+    /** So a "Trip" row in the driver's wallet feed can link back to the Trip Receipt screen without a second lookup. */
+    private String routePostId;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal grossFare;
 

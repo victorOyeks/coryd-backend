@@ -23,6 +23,7 @@ import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
+import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.DriverVerificationCache;
@@ -277,6 +278,23 @@ public class RouteService {
     /** "My Routes" / dashboard repost card - newest first, no ownership check since this is a read (mutations are what's gated). */
     public PagedResponse<RoutePost> findByDriver(String driverId, Pageable pageable) {
         return PagedResponse.from(routePostRepository.findByDriverIdOrderByCreatedAtDesc(driverId, pageable));
+    }
+
+    /** Batch lookup for a client resolving routePostIds from elsewhere (e.g. the driver wallet's transaction feed) into display text - one call for a whole page, not one per row. */
+    public List<RouteSummary> getSummaries(List<String> routePostIds) {
+        if (routePostIds == null || routePostIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, List<Booking>> bookingsByRoute = bookingRepository.findByRoutePostIdIn(routePostIds).stream()
+                .filter(b -> b.getStatus() != BookingStatus.HELD)
+                .collect(Collectors.groupingBy(Booking::getRoutePostId));
+
+        return routePostRepository.findAllById(routePostIds).stream()
+                .map(route -> new RouteSummary(
+                        route.getId(), route.getOriginLabel(), route.getDestinationLabel(), route.getDepartureTime(),
+                        bookingsByRoute.getOrDefault(route.getId(), List.of()).stream().mapToInt(Booking::getSeatCount).sum()
+                ))
+                .toList();
     }
 
     public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm) {

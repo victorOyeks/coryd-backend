@@ -10,13 +10,21 @@ import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.config.KafkaConfig;
 import org.coryd.payment.dto.BookingEarningsItem;
 import org.coryd.payment.dto.DriverEarningsSummary;
+import org.coryd.payment.dto.EarningsPeriod;
+import org.coryd.payment.dto.PeriodEarningsSummary;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
+import org.coryd.payment.dto.WalletTransactionItem;
+import org.coryd.payment.dto.WalletTransactionType;
 import org.coryd.payment.repository.DriverEarningsAccountRepository;
 import org.coryd.payment.repository.EarningsTransactionRepository;
 import org.coryd.payment.repository.FareHoldRepository;
 import org.coryd.payment.repository.PaymentTransactionRepository;
+import org.coryd.payment.repository.WalletFeedRepository;
+import org.coryd.payment.util.PeriodRange;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -26,6 +34,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -38,6 +47,7 @@ public class EarningsService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final DriverEarningsAccountRepository earningsAccountRepository;
     private final EarningsTransactionRepository earningsTransactionRepository;
+    private final WalletFeedRepository walletFeedRepository;
     private final CommissionProperties commissionProperties;
     private final WalletService walletService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
@@ -68,10 +78,26 @@ public class EarningsService {
         earningsTransactionRepository.save(EarningsTransaction.builder()
                 .driverId(hold.getDriverId())
                 .bookingId(bookingId)
+                .routePostId(event.getRoutePostId())
                 .grossFare(hold.getAmount())
                 .commissionAmount(commission)
                 .netCredit(net)
                 .build());
+    }
+
+    /** Wallet screen's period-filtered Gross/Commission/Net card. */
+    public PeriodEarningsSummary getPeriodSummary(String driverId, EarningsPeriod period, YearMonth month) {
+        PeriodRange.Range range = PeriodRange.of(period, month);
+        EarningsTransactionRepository.PeriodSums sums = earningsTransactionRepository
+                .sumByDriverIdAndPeriod(driverId, range.since(), range.until());
+        return new PeriodEarningsSummary(sums.getGrossFare(), sums.getCommissionAmount(), sums.getNetCredit());
+    }
+
+    /** Wallet screen's mixed Trip/Withdrawal transaction feed - type=null means "All". */
+    public Page<WalletTransactionItem> getTransactionFeed(String driverId, WalletTransactionType type,
+                                                            EarningsPeriod period, YearMonth month, Pageable pageable) {
+        PeriodRange.Range range = PeriodRange.of(period, month);
+        return walletFeedRepository.findFeed(driverId, type, range.since(), range.until(), pageable);
     }
 
     /** Dashboard's two earnings tiles - lifetimeNet isn't a stored column, it's derived here rather than on every read of the raw account row. */

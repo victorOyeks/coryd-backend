@@ -26,11 +26,15 @@ public class PayoutRecipient extends BaseEntity {
     @Column(nullable = false, length = 100)
     private String bankName;
 
+    @Column(nullable = false, length = 10)
+    private String bankCode;
+
     @Column(nullable = false, length = 20)
     private String accountNumber;
 
     @Column(nullable = false, length = 100)
     private String accountName;
 
+    /** Non-null means "Verified" on the Withdraw Funds screen - the real Paystack transfer recipient exists, not just locally-saved bank details. */
     private String gatewayRecipientCode;
 }

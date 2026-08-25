@@ -12,6 +12,7 @@ import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.service.PaymentService;
+import org.coryd.payment.service.PayoutService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,8 +30,12 @@ public class PaymentController {
     private static final String PAYSTACK_SIGNATURE_HEADER = "x-paystack-signature";
     private static final String EVENT_CHARGE_SUCCESS = "charge.success";
     private static final String EVENT_CHARGE_FAILED = "charge.failed";
+    private static final String EVENT_TRANSFER_SUCCESS = "transfer.success";
+    private static final String EVENT_TRANSFER_FAILED = "transfer.failed";
+    private static final String EVENT_TRANSFER_REVERSED = "transfer.reversed";
 
     private final PaymentService paymentService;
+    private final PayoutService payoutService;
     private final PaymentGatewayClient gatewayClient;
     private final ObjectMapper objectMapper;
 
@@ -68,6 +73,11 @@ public class PaymentController {
             case EVENT_CHARGE_SUCCESS -> paymentService.handleWebhookSuccess(event.data().reference());
             case EVENT_CHARGE_FAILED -> paymentService.handleWebhookFailure(event.data().reference(),
                     event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Charge failed");
+            case EVENT_TRANSFER_SUCCESS -> payoutService.handleTransferSuccess(event.data().reference());
+            case EVENT_TRANSFER_FAILED -> payoutService.handleTransferFailure(event.data().reference(),
+                    event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Transfer failed");
+            case EVENT_TRANSFER_REVERSED -> payoutService.handleTransferFailure(event.data().reference(),
+                    event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Transfer reversed");
             default -> log.info("Ignoring unhandled Paystack webhook event: {}", event.event());
         }
 

@@ -49,9 +49,6 @@ paystack:
 commission:
   percentage: ${COMMISSION_PERCENTAGE:0.10}
 
-payout:
-  cron: ${PAYOUT_CRON:0 0 4 * * *}
-
 management:
   endpoints:
     web:

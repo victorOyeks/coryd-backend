@@ -9,6 +9,7 @@ import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
+import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.NotifyMeRequest;
 import org.coryd.trip.entity.RoutePost;
@@ -59,6 +60,12 @@ public class RouteController {
                                                             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
         return ApiResponse.ok(routeService.findByDriver(driverId, pageable));
+    }
+
+    /** Batch route resolution - e.g. the driver wallet's transaction feed turning routePostIds into "Ikorodu -> Victoria Island" text. */
+    @GetMapping("/batch")
+    public ApiResponse<List<RouteSummary>> batch(@RequestParam List<String> ids) {
+        return ApiResponse.ok(routeService.getSummaries(ids));
     }
 
     @GetMapping("/nearby")

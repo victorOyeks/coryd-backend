@@ -31,6 +31,10 @@ public class Payout extends BaseEntity {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
 
+    /** The reference sent on the Paystack /transfer call - what the transfer.success/failed webhook correlates back to, same field name/role as PaymentTransaction.gatewayReference. */
+    @Column(unique = true)
+    private String gatewayReference;
+
     @Enumerated(EnumType.STRING)
     @Builder.Default
     @Column(nullable = false, length = 20)
