@@ -2,6 +2,8 @@ package org.coryd.trip.repository;
 
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.trip.entity.RoutePost;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -12,7 +14,18 @@ import java.util.List;
 
 public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
-    List<RoutePost> findByDriverId(String driverId);
+    List<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId);
+
+    /** Dashboard "Active Trip" card - candidates for the driver's current/next trip, soonest first. */
+    List<RoutePost> findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
+            String driverId, List<RouteStatus> statuses, Instant after);
+
+    /** Dashboard "Trips this week" count - the routes to check bookings against. */
+    List<RoutePost> findByDriverIdAndDepartureTimeBetween(String driverId, Instant start, Instant end);
+
+    /** Driver Trip History screen - already-departed routes, newest first. Excludes CANCELLED so a driver-cancelled route doesn't show up as a hollow "0 passengers, ₦0" row in what's meant to be a list of completed, earnings-bearing trips. */
+    Page<RoutePost> findByDriverIdAndStatusNotAndDepartureTimeBeforeOrderByDepartureTimeDesc(
+            String driverId, RouteStatus excludedStatus, Instant before, Pageable pageable);
 
     /**
      * Real great-circle radius match (Haversine, km) on both origin and destination,

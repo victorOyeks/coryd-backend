@@ -233,6 +233,11 @@ public class RouteService {
         }).toList();
     }
 
+    /** "My Routes" / dashboard repost card - newest first, no ownership check since this is a read (mutations are what's gated). */
+    public List<RoutePost> findByDriver(String driverId) {
+        return routePostRepository.findByDriverIdOrderByCreatedAtDesc(driverId);
+    }
+
     public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm) {
         List<RoutePost> nearby = routePostRepository.findNearbyOrigins(lat, lng, radiusKm, Instant.now());
         List<GeoPin> pins = nearby.stream()

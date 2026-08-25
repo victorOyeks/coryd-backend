@@ -50,6 +50,11 @@ public class RouteController {
         return ApiResponse.ok(routeService.getNearbyOptions(request));
     }
 
+    @GetMapping("/drivers/{driverId}")
+    public ApiResponse<List<RoutePost>> byDriver(@PathVariable String driverId) {
+        return ApiResponse.ok(routeService.findByDriver(driverId));
+    }
+
     @GetMapping("/nearby")
     public ApiResponse<NearbyActivityResponse> nearby(@RequestParam double lat, @RequestParam double lng,
                                                         @RequestParam(defaultValue = "5") double radiusKm) {

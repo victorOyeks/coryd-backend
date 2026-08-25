@@ -8,6 +8,8 @@ import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.config.KafkaConfig;
+import org.coryd.payment.dto.BookingEarningsItem;
+import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
@@ -21,7 +23,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -66,6 +72,26 @@ public class EarningsService {
                 .commissionAmount(commission)
                 .netCredit(net)
                 .build());
+    }
+
+    /** Dashboard's two earnings tiles - lifetimeNet isn't a stored column, it's derived here rather than on every read of the raw account row. */
+    public DriverEarningsSummary getSummary(String driverId) {
+        DriverEarningsAccount account = earningsAccountRepository.findByDriverId(driverId)
+                .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
+        BigDecimal lifetimeNet = account.getLifetimeGross().subtract(account.getLifetimeCommission());
+        BigDecimal todayNet = earningsTransactionRepository.sumNetCreditByDriverIdSince(driverId, startOfToday());
+        return new DriverEarningsSummary(account.getLifetimeGross(), lifetimeNet, todayNet, account.getAvailableBalance());
+    }
+
+    /** Net-earned lookup for a specific set of bookings - e.g. trip-service's driver history page zips this in per route by bookingId. */
+    public List<BookingEarningsItem> getTransactionsForBookings(List<String> bookingIds) {
+        return earningsTransactionRepository.findByBookingIdIn(bookingIds).stream()
+                .map(t -> new BookingEarningsItem(t.getBookingId(), t.getNetCredit()))
+                .toList();
+    }
+
+    private static Instant startOfToday() {
+        return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 
     @Transactional

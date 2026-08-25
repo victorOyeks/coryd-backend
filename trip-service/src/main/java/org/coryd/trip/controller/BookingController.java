@@ -9,6 +9,9 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
+import org.coryd.trip.dto.DriverActiveTripResponse;
+import org.coryd.trip.dto.DriverTripHistoryItem;
+import org.coryd.trip.dto.DriverTripStatsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
@@ -60,6 +63,27 @@ public class BookingController {
                                                                  @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
         return ApiResponse.ok(bookingService.getHistory(riderId, status, search, pageable));
+    }
+
+    /** Dashboard's "Active Trip" card. */
+    @GetMapping("/drivers/{driverId}/active")
+    public ApiResponse<Optional<DriverActiveTripResponse>> activeTripForDriver(@PathVariable String driverId) {
+        return ApiResponse.ok(bookingService.getActiveTripForDriver(driverId));
+    }
+
+    /** Dashboard's "Trips this week" tile. */
+    @GetMapping("/drivers/{driverId}/stats")
+    public ApiResponse<DriverTripStatsResponse> statsForDriver(@PathVariable String driverId) {
+        return ApiResponse.ok(bookingService.getStatsForDriver(driverId));
+    }
+
+    /** Driver Trip History screen - one row per posted route, not per booking. */
+    @GetMapping("/drivers/{driverId}/history")
+    public ApiResponse<PagedResponse<DriverTripHistoryItem>> historyForDriver(@PathVariable String driverId,
+                                                                                @RequestParam(defaultValue = "0") int page,
+                                                                                @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, Math.min(size, 50));
+        return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, pageable));
     }
 
     /** Account screen's star rating - works the same for a rider's or a driver's own id. */

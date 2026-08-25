@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
@@ -25,6 +26,9 @@ import org.coryd.trip.config.CancellationPolicy;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
+import org.coryd.trip.dto.DriverActiveTripResponse;
+import org.coryd.trip.dto.DriverTripHistoryItem;
+import org.coryd.trip.dto.DriverTripStatsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
@@ -51,10 +55,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -104,6 +112,66 @@ public class BookingService {
     public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId) {
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
                 .map(booking -> getBookingDetails(booking.getId()));
+    }
+
+    /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route with live passenger count, empty if they have none posted. */
+    public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId) {
+        List<RoutePost> candidates = routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
+                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL), startOfToday());
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        RoutePost route = candidates.get(0);
+        int seatsBooked = bookingRepository.findByRoutePostId(route.getId()).stream()
+                .filter(b -> ACTIVE_TRIP_STATUSES.contains(b.getStatus()))
+                .mapToInt(Booking::getSeatCount)
+                .sum();
+        return Optional.of(new DriverActiveTripResponse(route.getId(), route.getOriginLabel(), route.getDestinationLabel(),
+                route.getDepartureTime(), seatsBooked, route.getSeatCapacity()));
+    }
+
+    /** Dashboard's "Trips this week" tile - completed bookings on routes that departed Monday through now. */
+    public DriverTripStatsResponse getStatsForDriver(String driverId) {
+        List<String> routeIdsThisWeek = routePostRepository
+                .findByDriverIdAndDepartureTimeBetween(driverId, startOfWeek(), Instant.now())
+                .stream().map(RoutePost::getId).toList();
+        if (routeIdsThisWeek.isEmpty()) {
+            return new DriverTripStatsResponse(0);
+        }
+        long tripsThisWeek = bookingRepository.countByRoutePostIdInAndStatus(routeIdsThisWeek, BookingStatus.COMPLETED);
+        return new DriverTripStatsResponse((int) tripsThisWeek);
+    }
+
+    /** Driver Trip History screen - one row per posted route (not per booking), newest first. Net earnings aren't included here - payment-service data, composed client-side from completedBookingIds. */
+    public PagedResponse<DriverTripHistoryItem> getHistoryForDriver(String driverId, Pageable pageable) {
+        Page<RoutePost> routes = routePostRepository.findByDriverIdAndStatusNotAndDepartureTimeBeforeOrderByDepartureTimeDesc(
+                driverId, RouteStatus.CANCELLED, Instant.now(), pageable);
+
+        List<String> routePostIds = routes.getContent().stream().map(RoutePost::getId).toList();
+        Map<String, List<Booking>> bookingsByRoute = routePostIds.isEmpty() ? Map.of()
+                : bookingRepository.findByRoutePostIdIn(routePostIds).stream()
+                        .collect(Collectors.groupingBy(Booking::getRoutePostId));
+
+        List<DriverTripHistoryItem> items = routes.getContent().stream().map(route -> {
+            List<Booking> completed = bookingsByRoute.getOrDefault(route.getId(), List.of()).stream()
+                    .filter(b -> b.getStatus() == BookingStatus.COMPLETED)
+                    .toList();
+            int passengerCount = completed.stream().mapToInt(Booking::getSeatCount).sum();
+            List<String> completedBookingIds = completed.stream().map(Booking::getId).toList();
+            return new DriverTripHistoryItem(route.getId(), route.getOriginLabel(), route.getDestinationLabel(),
+                    route.getDepartureTime(), passengerCount, completedBookingIds);
+        }).toList();
+
+        return PagedResponse.from(new PageImpl<>(items, pageable, routes.getTotalElements()));
+    }
+
+    private static Instant startOfToday() {
+        return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
+    }
+
+    private static Instant startOfWeek() {
+        return LocalDate.now(ZoneOffset.UTC).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                .atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 
     /** Account screen's star rating - same aggregate query used for driver ratings elsewhere, just keyed on the caller's own id. */

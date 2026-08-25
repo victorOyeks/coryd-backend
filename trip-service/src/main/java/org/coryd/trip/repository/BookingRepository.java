@@ -14,6 +14,8 @@ import java.util.Optional;
 
 public interface BookingRepository extends JpaRepository<Booking, String> {
     List<Booking> findByRoutePostId(String routePostId);
+    List<Booking> findByRoutePostIdIn(List<String> routePostIds);
+    long countByRoutePostIdInAndStatus(List<String> routePostIds, BookingStatus status);
     List<Booking> findTop5ByRiderIdOrderByCreatedAtDesc(String riderId);
     List<Booking> findByStatusAndHoldExpiresAtBefore(BookingStatus status, Instant before);
 
