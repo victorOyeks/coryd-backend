@@ -66,7 +66,7 @@ public class NotificationDispatchService {
                 .build());
 
         for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
-            boolean delivered = fcmService.sendPush(token.getFcmToken(), title, body);
+            boolean delivered = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, bookingId);
             notificationLogRepository.save(NotificationLog.builder()
                     .channel(NotificationChannel.PUSH)
                     .eventType(eventType)

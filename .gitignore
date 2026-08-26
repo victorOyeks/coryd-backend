@@ -9,6 +9,9 @@ target/
 .env.prod
 .env.local
 
+# Firebase service-account credentials - real secrets
+firebase-service-account.json
+
 # IDE
 .idea/
 *.iml

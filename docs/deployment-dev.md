@@ -88,6 +88,7 @@ Fill in at minimum:
 - `PAYSTACK_SECRET_KEY` — test key to start
 - `TERMII_API_KEY` / `TERMII_SENDER_ID`
 - `GOOGLE_MAPS_API_KEY`
+- `FIREBASE_CREDENTIALS_PATH` — push notifications; see [docs/firebase-fcm.md](firebase-fcm.md) for getting the service-account JSON onto the VPS. Optional to start — if left pointing at a file that doesn't exist yet, `notification-service` still starts fine and just skips push delivery (in-app/DB notifications are unaffected).
 
 `KAFKA_SERVERS=127.0.0.1:9092`, `REDIS_HOST=127.0.0.1`, `REDIS_PORT=6379`, and `REDIS_DATABASE=1` are already correct in the template for the shared-infra setup (confirmed reachable in Phase 3) — only change them if Phase 3's reachability check told you otherwise. `api-gateway` doesn't need this file at all (it has no DB/Kafka/Redis dependency, just routes), but there's no harm in it being present in the same `EnvironmentFile=` for every unit.
 

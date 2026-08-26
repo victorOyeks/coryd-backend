@@ -63,6 +63,9 @@ mail:
   from-address: ${MAIL_FROM_ADDRESS:no-reply@coryd.ng}
   from-name: ${MAIL_FROM_NAME:CoRyd}
 
+firebase:
+  credentials-path: ${FIREBASE_CREDENTIALS_PATH:firebase-service-account.json}
+
 management:
   endpoints:
     web:
