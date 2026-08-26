@@ -46,17 +46,17 @@ path, not a Docker volume mount.
 
 ```bash
 # From your local machine
-scp firebase-service-account.json devoyeks@<vps-ip>:/opt/coryd-dev/notification-service/firebase-service-account.json
+scp firebase-service-account.json devoyeks@<vps-ip>:/opt/coryd-dev/firebase-service-account.json
 
 # On the VPS
-chmod 600 /opt/coryd-dev/notification-service/firebase-service-account.json
+chmod 600 /opt/coryd-dev/firebase-service-account.json
 ```
 
 ### 3. Environment Variable
 
 In `/opt/coryd-dev/.env.dev` (see `.env.dev.example`):
 ```
-FIREBASE_CREDENTIALS_PATH=/opt/coryd-dev/notification-service/firebase-service-account.json
+FIREBASE_CREDENTIALS_PATH=/opt/coryd-dev/firebase-service-account.json
 ```
 
 Must be an **absolute path** - `coryd-notification-service.service` has no
