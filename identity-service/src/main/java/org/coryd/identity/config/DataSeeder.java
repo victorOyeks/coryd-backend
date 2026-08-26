@@ -34,7 +34,10 @@ public class DataSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         seedUser("08000000001", "Test Rider", UserRole.RIDER);
         seedUser("08000000002", "Test Driver", UserRole.DRIVER);
-        log.info("Seeded dev/test accounts - phone: 08000000001 / 08000000002, password: {}", SEED_PASSWORD);
+        // OPS_ADMIN can't be self-assigned via signup/roles-add (AuthService blocks it) - this
+        // seeder is the only way to get one in dev/test.
+        seedUser("08000000003", "Test Ops Admin", UserRole.OPS_ADMIN);
+        log.info("Seeded dev/test accounts - phone: 08000000001 / 08000000002 / 08000000003, password: {}", SEED_PASSWORD);
     }
 
     private void seedUser(String phone, String fullName, UserRole role) {
