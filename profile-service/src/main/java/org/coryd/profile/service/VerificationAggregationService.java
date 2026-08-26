@@ -1,12 +1,19 @@
 package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.DocumentType;
+import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
+import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
+import org.coryd.profile.dto.ItemDecision;
+import org.coryd.profile.dto.ReviewableItem;
+import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.entity.DriverDocument;
 import org.coryd.profile.entity.DriverProfile;
@@ -16,13 +23,15 @@ import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/** Combines every independently-reviewable driver item (identity, vehicle registration, documents) into one aggregate status - the single source of truth for both the driver-facing verification-status screen and the route-posting gate. */
+/** Combines every independently-reviewable driver item (identity, vehicle registration, documents) into one aggregate status - the single source of truth for both the driver-facing verification-status screen and the route-posting gate. Also the single place an ops admin decides any of those items, via decide() below - one call, keyed by driverId alone, instead of a separate endpoint (and a separate id to look up first) per item type. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class VerificationAggregationService {
@@ -30,6 +39,7 @@ public class VerificationAggregationService {
     private final DriverProfileRepository driverProfileRepository;
     private final VehicleRepository vehicleRepository;
     private final DriverDocumentRepository driverDocumentRepository;
+    private final CloudinaryService cloudinaryService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     public VerificationStatusResponse getStatus(String driverId) {
@@ -55,6 +65,89 @@ public class VerificationAggregationService {
                 documentStatuses(documents),
                 computeOverallStatus(profile, vehicle, documents)
         );
+    }
+
+    /** Ops admin's single decision call - approve/reject any/all of a driver's reviewable items in one request, then re-evaluate and publish once at the end (not once per item, which would fire redundant Kafka events/emails for a partial state). Returns the resulting status so the ops screen doesn't need a second call to refresh. */
+    @Transactional
+    public VerificationStatusResponse decide(String driverId, UserRole callerRole, VerificationDecisionBatchRequest request) {
+        if (callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("Only an ops admin can decide driver verification items");
+        }
+
+        for (ItemDecision decision : request.decisions()) {
+            applyDecision(driverId, decision);
+        }
+
+        reevaluateAndPublish(driverId, request.reviewedBy());
+        return getStatus(driverId);
+    }
+
+    private void applyDecision(String driverId, ItemDecision decision) {
+        switch (decision.item()) {
+            case GOVERNMENT_ID -> {
+                DriverProfile profile = driverProfileRepository.findByUserId(driverId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
+                profile.setGovernmentIdStatus(decision.status());
+                profile.setGovernmentIdRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
+                driverProfileRepository.save(profile);
+            }
+            case SELFIE -> {
+                DriverProfile profile = driverProfileRepository.findByUserId(driverId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
+                profile.setSelfieStatus(decision.status());
+                profile.setSelfieRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
+                if (decision.status() == VerificationStatus.APPROVED) {
+                    // Only ever needed for this review - nothing rider-facing surfaces it - so free
+                    // the storage once approved. Best-effort: a flaky Cloudinary call must never
+                    // block the approval itself.
+                    deleteFromCloudinary(profile.getSelfiePublicId(), "image");
+                    profile.setSelfieUrl(null);
+                    profile.setSelfiePublicId(null);
+                }
+                driverProfileRepository.save(profile);
+            }
+            case VEHICLE -> {
+                Vehicle vehicle = primaryVehicle(driverId);
+                if (vehicle == null) {
+                    throw new ResourceNotFoundException("No vehicle registered for this driver");
+                }
+                vehicle.setVerificationStatus(decision.status());
+                vehicle.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
+                if (decision.status() == VerificationStatus.APPROVED) {
+                    deleteFromCloudinary(vehicle.getExteriorPhotoPublicId(), "image");
+                    deleteFromCloudinary(vehicle.getInteriorPhotoPublicId(), "image");
+                    vehicle.setExteriorPhotoUrl(null);
+                    vehicle.setExteriorPhotoPublicId(null);
+                    vehicle.setInteriorPhotoUrl(null);
+                    vehicle.setInteriorPhotoPublicId(null);
+                }
+                vehicleRepository.save(vehicle);
+            }
+            case INSURANCE, ROADWORTHINESS_CERT -> {
+                DocumentType type = decision.item() == ReviewableItem.INSURANCE ? DocumentType.INSURANCE : DocumentType.ROADWORTHINESS_CERT;
+                DriverDocument document = driverDocumentRepository.findByDriverIdAndDocumentType(driverId, type)
+                        .orElseThrow(() -> new ResourceNotFoundException(type + " has not been uploaded for this driver"));
+                document.setStatus(decision.status());
+                document.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
+                if (decision.status() == VerificationStatus.APPROVED) {
+                    deleteFromCloudinary(document.getDocumentPublicId(), "raw");
+                    document.setDocumentUrl(null);
+                    document.setDocumentPublicId(null);
+                }
+                driverDocumentRepository.save(document);
+            }
+        }
+    }
+
+    private void deleteFromCloudinary(String publicId, String resourceType) {
+        if (publicId == null) {
+            return;
+        }
+        try {
+            cloudinaryService.delete(publicId, resourceType);
+        } catch (Exception e) {
+            log.warn("Could not delete verification asset {} from Cloudinary, leaving it orphaned: {}", publicId, e.getMessage());
+        }
     }
 
     /** Driver app's onboarding checklist - which steps the driver has actually done, distinct from getStatus()'s approval view (a submitted-but-pending-review item reads "done" here, since it's ops's turn next, not the driver's). */

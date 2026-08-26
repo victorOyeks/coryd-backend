@@ -1,12 +1,8 @@
 package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
-import org.coryd.common.enums.DriverProfileVerificationItem;
-import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
-import org.coryd.common.exception.UnauthorizedException;
-import org.coryd.profile.dto.DriverItemVerificationRequest;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.entity.DriverProfile;
@@ -21,7 +17,6 @@ import java.util.List;
 public class DriverProfileService {
 
     private final DriverProfileRepository driverProfileRepository;
-    private final VerificationAggregationService verificationAggregationService;
 
     public DriverProfile get(String userId) {
         return driverProfileRepository.findByUserId(userId)
@@ -62,25 +57,5 @@ public class DriverProfileService {
         }
 
         return driverProfileRepository.save(profile);
-    }
-
-    @Transactional
-    public DriverProfile decideItem(String driverId, UserRole callerRole, DriverItemVerificationRequest request) {
-        if (callerRole != UserRole.OPS_ADMIN) {
-            throw new UnauthorizedException("Only an ops admin can decide driver verification items");
-        }
-        DriverProfile profile = get(driverId);
-
-        if (request.item() == DriverProfileVerificationItem.GOVERNMENT_ID) {
-            profile.setGovernmentIdStatus(request.status());
-            profile.setGovernmentIdRejectionReason(request.status() == VerificationStatus.REJECTED ? request.rejectionReason() : null);
-        } else {
-            profile.setSelfieStatus(request.status());
-            profile.setSelfieRejectionReason(request.status() == VerificationStatus.REJECTED ? request.rejectionReason() : null);
-        }
-        driverProfileRepository.save(profile);
-
-        verificationAggregationService.reevaluateAndPublish(driverId, request.reviewedBy());
-        return profile;
     }
 }

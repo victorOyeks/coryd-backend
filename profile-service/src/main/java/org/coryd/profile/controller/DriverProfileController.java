@@ -4,10 +4,10 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
-import org.coryd.profile.dto.DriverItemVerificationRequest;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
+import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.service.DriverProfileService;
@@ -59,11 +59,12 @@ public class DriverProfileController {
         return ApiResponse.ok(verificationAggregationService.getOnboardingStatus(principal.getUserId()));
     }
 
+    /** Ops admin's single review call - approve/reject any/all of this driver's reviewable items (identity, vehicle, documents) in one request. */
     @PatchMapping("/{driverId}/verification")
-    public ApiResponse<DriverProfile> decideVerification(@AuthenticationPrincipal CoRydUserDetails principal,
-                                                           @PathVariable String driverId,
-                                                           @Valid @RequestBody DriverItemVerificationRequest request) {
-        return ApiResponse.ok(driverProfileService.decideItem(driverId, principal.getActiveRole(), request));
+    public ApiResponse<VerificationStatusResponse> decideVerification(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                        @PathVariable String driverId,
+                                                                        @Valid @RequestBody VerificationDecisionBatchRequest request) {
+        return ApiResponse.ok(verificationAggregationService.decide(driverId, principal.getActiveRole(), request));
     }
 
     @GetMapping("/{driverId}/verification-status")

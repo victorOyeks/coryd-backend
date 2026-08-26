@@ -6,12 +6,10 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
 import org.coryd.profile.dto.VehicleSummary;
-import org.coryd.profile.dto.VerificationDecisionRequest;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.service.VehicleService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -41,13 +39,6 @@ public class VehicleController {
                                         @PathVariable String vehicleId,
                                         @Valid @RequestBody VehicleRegistrationRequest request) {
         return ApiResponse.ok(vehicleService.update(vehicleId, principal.getUserId(), request));
-    }
-
-    @PatchMapping("/{vehicleId}/verification")
-    public ApiResponse<Vehicle> decide(@AuthenticationPrincipal CoRydUserDetails principal,
-                                        @PathVariable String vehicleId,
-                                        @Valid @RequestBody VerificationDecisionRequest request) {
-        return ApiResponse.ok(vehicleService.decide(vehicleId, principal.getActiveRole(), request));
     }
 
     @GetMapping("/drivers/{driverId}")
