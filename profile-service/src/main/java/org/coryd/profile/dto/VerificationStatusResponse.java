@@ -14,15 +14,16 @@ public record VerificationStatusResponse(
         List<DocumentStatus> documents,
         VerificationStatus overallStatus
 ) {
-    public record ItemStatus(VerificationStatus status, String rejectionReason) {
+    public record ItemStatus(VerificationStatus status, String rejectionReason, String url) {
     }
 
     public record VehicleRegistrationStatus(VerificationStatus status, String rejectionReason, VehicleFields vehicle) {
     }
 
-    public record VehicleFields(String make, String model, Integer year, String color, String plateNumber) {
+    public record VehicleFields(String make, String model, Integer year, String color, String plateNumber,
+                                 String exteriorPhotoUrl, String interiorPhotoUrl, boolean hasAC, boolean acConfirmedWorking) {
     }
 
-    public record DocumentStatus(DocumentType type, VerificationStatus status, String rejectionReason, LocalDate expiresOn) {
+    public record DocumentStatus(DocumentType type, VerificationStatus status, String rejectionReason, LocalDate expiresOn, String documentUrl) {
     }
 }

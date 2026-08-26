@@ -40,15 +40,18 @@ public class VerificationAggregationService {
         return new VerificationStatusResponse(
                 new VerificationStatusResponse.ItemStatus(
                         profile == null ? VerificationStatus.PENDING : profile.getGovernmentIdStatus(),
-                        profile == null ? null : profile.getGovernmentIdRejectionReason()),
+                        profile == null ? null : profile.getGovernmentIdRejectionReason(),
+                        profile == null ? null : profile.getGovernmentIdUrl()),
                 new VerificationStatusResponse.ItemStatus(
                         profile == null ? VerificationStatus.PENDING : profile.getSelfieStatus(),
-                        profile == null ? null : profile.getSelfieRejectionReason()),
+                        profile == null ? null : profile.getSelfieRejectionReason(),
+                        profile == null ? null : profile.getSelfieUrl()),
                 new VerificationStatusResponse.VehicleRegistrationStatus(
                         vehicle == null ? VerificationStatus.PENDING : vehicle.getVerificationStatus(),
                         vehicle == null ? null : vehicle.getRejectionReason(),
                         vehicle == null ? null : new VerificationStatusResponse.VehicleFields(
-                                vehicle.getMake(), vehicle.getModel(), vehicle.getYear(), vehicle.getColor(), vehicle.getPlateNumber())),
+                                vehicle.getMake(), vehicle.getModel(), vehicle.getYear(), vehicle.getColor(), vehicle.getPlateNumber(),
+                                vehicle.getExteriorPhotoUrl(), vehicle.getInteriorPhotoUrl(), vehicle.isHasAC(), vehicle.isAcConfirmedWorking())),
                 documentStatuses(documents),
                 computeOverallStatus(profile, vehicle, documents)
         );
@@ -116,7 +119,8 @@ public class VerificationAggregationService {
                     type,
                     doc == null ? VerificationStatus.PENDING : doc.getStatus(),
                     doc == null ? null : doc.getRejectionReason(),
-                    doc == null ? null : doc.getExpiresOn()));
+                    doc == null ? null : doc.getExpiresOn(),
+                    doc == null ? null : doc.getDocumentUrl()));
         }
         return result;
     }
