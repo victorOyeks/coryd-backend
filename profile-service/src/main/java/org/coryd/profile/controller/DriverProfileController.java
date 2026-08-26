@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverItemVerificationRequest;
+import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
@@ -50,6 +51,12 @@ public class DriverProfileController {
     public ApiResponse<DriverProfile> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
                                                   @Valid @RequestBody UpdateDriverProfileRequest request) {
         return ApiResponse.ok(driverProfileService.updateMine(principal.getUserId(), request));
+    }
+
+    /** Driver-side equivalent of identity-service's rider GET /auth/onboarding-status - lets the driver app resume onboarding at the right screen. Self-only (like /me above), not driverId-scoped - avoids the id/userId mixup a driverId path param invites. */
+    @GetMapping("/me/onboarding-status")
+    public ApiResponse<DriverOnboardingStatusResponse> onboardingStatus(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(verificationAggregationService.getOnboardingStatus(principal.getUserId()));
     }
 
     @PatchMapping("/{driverId}/verification")

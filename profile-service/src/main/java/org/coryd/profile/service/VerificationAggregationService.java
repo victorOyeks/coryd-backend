@@ -6,6 +6,7 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
+import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.entity.DriverDocument;
 import org.coryd.profile.entity.DriverProfile;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /** Combines every independently-reviewable driver item (identity, vehicle registration, documents) into one aggregate status - the single source of truth for both the driver-facing verification-status screen and the route-posting gate. */
@@ -48,6 +50,25 @@ public class VerificationAggregationService {
                         vehicle == null ? null : new VerificationStatusResponse.VehicleFields(
                                 vehicle.getMake(), vehicle.getModel(), vehicle.getYear(), vehicle.getColor(), vehicle.getPlateNumber())),
                 documentStatuses(documents),
+                computeOverallStatus(profile, vehicle, documents)
+        );
+    }
+
+    /** Driver app's onboarding checklist - which steps the driver has actually done, distinct from getStatus()'s approval view (a submitted-but-pending-review item reads "done" here, since it's ops's turn next, not the driver's). */
+    public DriverOnboardingStatusResponse getOnboardingStatus(String driverId) {
+        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
+        Vehicle vehicle = primaryVehicle(driverId);
+        List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
+
+        boolean profileSubmitted = profile != null && profile.getLegalName() != null && profile.getDateOfBirth() != null;
+        boolean governmentIdSubmitted = profile != null && profile.getGovernmentIdUrl() != null;
+        boolean selfieSubmitted = profile != null && profile.getSelfieUrl() != null;
+        boolean vehicleSubmitted = vehicle != null;
+        boolean documentsSubmitted = Arrays.stream(DocumentType.values())
+                .allMatch(type -> findByType(documents, type) != null);
+
+        return new DriverOnboardingStatusResponse(
+                profileSubmitted, governmentIdSubmitted, selfieSubmitted, vehicleSubmitted, documentsSubmitted,
                 computeOverallStatus(profile, vehicle, documents)
         );
     }
