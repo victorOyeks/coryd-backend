@@ -36,7 +36,6 @@ public class DriverDocument extends BaseEntity {
     @Column(nullable = false, length = 30)
     private DocumentType documentType;
 
-    @Column(nullable = false)
     private String documentUrl;
 
     private String documentPublicId;
