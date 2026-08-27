@@ -4,9 +4,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.RoleNotHeldError;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -81,6 +83,23 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception e) {
+        // Spring's own request-binding and dispatch failures - missing or unconvertible query
+        // params, unreadable body, wrong HTTP method, unmatched path - all implement
+        // ErrorResponse and already carry the correct 4xx. Declaring an Exception catch-all
+        // shadows DefaultHandlerExceptionResolver, which used to assign those statuses, so map
+        // them here instead of reporting a caller's mistake as a server fault.
+        if (e instanceof ErrorResponse errorResponse) {
+            HttpStatusCode status = errorResponse.getStatusCode();
+            String detail = errorResponse.getBody().getDetail();
+            String message = detail != null ? detail : e.getMessage();
+            if (status.is5xxServerError()) {
+                log.error("Request failed with {}", status, e);
+            } else {
+                log.warn("Rejected request with {}: {}", status, message);
+            }
+            return ResponseEntity.status(status).body(ApiResponse.error(message));
+        }
+
         log.error("Unhandled exception", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("An unexpected error occurred"));
