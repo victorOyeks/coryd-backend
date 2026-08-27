@@ -14,6 +14,7 @@ import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.VerificationStatus;
 
+import java.time.Instant;
 import java.time.LocalDate;
 
 
@@ -59,4 +60,11 @@ public class DriverProfile extends BaseEntity {
     private VerificationStatus selfieStatus = VerificationStatus.PENDING;
 
     private String selfieRejectionReason;
+
+    /**
+     * When the driver last sent a selfie in. Kept separately from selfieUrl because approving a
+     * selfie deletes the image and nulls the URL - the submission still happened, and the
+     * onboarding checklist has to keep saying so.
+     */
+    private Instant selfieSubmittedAt;
 }

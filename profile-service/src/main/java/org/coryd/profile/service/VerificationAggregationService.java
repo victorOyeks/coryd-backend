@@ -158,7 +158,9 @@ public class VerificationAggregationService {
 
         boolean profileSubmitted = profile != null && profile.getLegalName() != null && profile.getDateOfBirth() != null;
         boolean governmentIdSubmitted = profile != null && profile.getGovernmentIdUrl() != null;
-        boolean selfieSubmitted = profile != null && profile.getSelfieUrl() != null;
+        // Deliberately not getSelfieUrl(): approving a selfie purges the image (see applyDecision),
+        // and a purged selfie is still a submitted one.
+        boolean selfieSubmitted = profile != null && profile.getSelfieSubmittedAt() != null;
         boolean vehicleSubmitted = vehicle != null;
         boolean documentsSubmitted = Arrays.stream(DocumentType.values())
                 .allMatch(type -> findByType(documents, type) != null);

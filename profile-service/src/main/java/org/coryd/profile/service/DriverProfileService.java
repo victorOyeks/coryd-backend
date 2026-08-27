@@ -10,6 +10,7 @@ import org.coryd.profile.repository.DriverProfileRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 
 @Service
@@ -52,6 +53,7 @@ public class DriverProfileService {
         if (request.selfieUrl() != null) {
             profile.setSelfieUrl(request.selfieUrl());
             profile.setSelfiePublicId(request.selfiePublicId());
+            profile.setSelfieSubmittedAt(Instant.now());
             profile.setSelfieStatus(VerificationStatus.PENDING);
             profile.setSelfieRejectionReason(null);
         }

@@ -18,5 +18,6 @@
     <include file="db/changelog/007-driver-profile-email.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/008-drop-vehicle-ac-photo.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/009-driver-document-url-nullable.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/010-driver-selfie-submitted-at.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
