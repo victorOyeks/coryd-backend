@@ -49,6 +49,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -380,8 +381,22 @@ public class RouteService {
                 .build());
     }
 
+    /**
+     * Buckets postings by origin/destination pair. Labels come straight from Places
+     * autocomplete, so they carry incidental case and whitespace variation - normalising
+     * here keeps the driver's posted key and the rider's suggested-fare lookup landing in
+     * the same bucket. Both labels are capped at 255 chars by PostRouteRequest, so the key
+     * always fits corridor_key VARCHAR(512).
+     */
     private String corridorKey(String originLabel, String destinationLabel) {
-        return (originLabel + "->" + destinationLabel).toLowerCase();
+        return normalizeLabel(originLabel) + "->" + normalizeLabel(destinationLabel);
+    }
+
+    private static String normalizeLabel(String label) {
+        if (label == null) {
+            return "";
+        }
+        return label.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
 
     private static Instant startOfToday() {

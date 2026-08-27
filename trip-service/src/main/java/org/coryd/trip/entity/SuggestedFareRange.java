@@ -21,7 +21,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class SuggestedFareRange extends BaseEntity {
 
-    @Column(nullable = false, unique = true, length = 100)
+    @Column(nullable = false, unique = true, length = 512)
     private String corridorKey;
 
     @Column(nullable = false, precision = 10, scale = 2)

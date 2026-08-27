@@ -46,17 +46,42 @@ public class LoggingInterceptor implements HandlerInterceptor {
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
-        long elapsed = System.currentTimeMillis() - (Long) request.getAttribute("startTime");
-        log.info("<<< {} {} -> {} ({}ms) | user: {}",
-                request.getMethod(), request.getRequestURI(),
-                response.getStatus(), elapsed, resolveUser());
+        Object startTime = request.getAttribute("startTime");
+        long elapsed = startTime instanceof Long start ? System.currentTimeMillis() - start : -1L;
+        int status = resolveStatus(response, ex);
+        String user = resolveUser();
+
+        if (status >= 500) {
+            log.error("<<< {} {} -> {} ({}ms) | user: {}{}",
+                    request.getMethod(), request.getRequestURI(), status, elapsed, user,
+                    ex == null ? "" : " | " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+        } else if (status >= 400) {
+            log.warn("<<< {} {} -> {} ({}ms) | user: {}",
+                    request.getMethod(), request.getRequestURI(), status, elapsed, user);
+        } else {
+            log.info("<<< {} {} -> {} ({}ms) | user: {}",
+                    request.getMethod(), request.getRequestURI(), status, elapsed, user);
+        }
         MDC.clear();
+    }
+
+    /**
+     * Tomcat only stamps 500 on the response after the servlet rethrows, which is later than
+     * afterCompletion runs - so an unhandled exception would otherwise be logged as the 200
+     * the handler had optimistically set, hiding real failures from error-rate monitoring.
+     */
+    private int resolveStatus(HttpServletResponse response, Exception ex) {
+        int status = response.getStatus();
+        if (ex != null && status < HttpServletResponse.SC_BAD_REQUEST) {
+            return HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
+        }
+        return status;
     }
 
     private String resolveUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof CoRydUserDetails u) {
-            return u.getPhone() + " " + u.getActiveRole();
+            return SensitiveDataMasker.maskPhone(u.getPhone()) + " " + u.getActiveRole();
         }
         return "anonymous";
     }

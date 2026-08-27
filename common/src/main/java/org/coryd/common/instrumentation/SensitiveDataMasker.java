@@ -44,7 +44,7 @@ public final class SensitiveDataMasker {
 
     private static final Set<String> SENSITIVE_HEADER_NAMES = Set.of(
             "authorization", "cookie", "set-cookie",
-            "x-api-key", "x-paystack-signature",
+            "x-api-key", "x-internal-api-key", "x-paystack-signature",
             "x-auth-token", "x-csrf-token"
     );
 
@@ -127,7 +127,8 @@ public final class SensitiveDataMasker {
         return email.charAt(0) + "***" + email.substring(atIndex);
     }
 
-    private static String maskPhone(String phone) {
+    public static String maskPhone(String phone) {
+        if (phone == null) return null;
         if (phone.length() <= 4) return "****";
         return "***" + phone.substring(phone.length() - 4);
     }

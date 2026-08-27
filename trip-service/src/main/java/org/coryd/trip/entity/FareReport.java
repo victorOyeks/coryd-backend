@@ -15,8 +15,9 @@ import java.math.BigDecimal;
 /**
  * One row per published fare. {@code corridorKey} buckets postings on the same
  * origin/destination pair so the suggested-rate job can group comparable postings
- * (Section 10.2). For the pilot's single corridor this is a rounded lat/lng pair
- * concatenation - swap for a real geohash if a second corridor is added.
+ * (Section 10.2). Built from the normalised origin/destination labels by
+ * {@code RouteService#corridorKey} - swap for a real geohash if label drift between
+ * the driver's post and the rider's lookup starts fragmenting buckets.
  */
 @Entity
 @Table(name = "fare_reports", schema = "trip")
@@ -27,7 +28,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class FareReport extends BaseEntity {
 
-    @Column(nullable = false, length = 100)
+    @Column(nullable = false, length = 512)
     private String corridorKey;
 
     @Column(nullable = false, precision = 10, scale = 2)

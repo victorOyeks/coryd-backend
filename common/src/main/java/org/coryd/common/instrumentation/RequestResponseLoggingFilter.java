@@ -46,12 +46,15 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         ContentCachingRequestWrapper req = new ContentCachingRequestWrapper(request, 4096);
         ContentCachingResponseWrapper res = new ContentCachingResponseWrapper(response);
 
-        chain.doFilter(req, res);
-
-        logRequest(req);
-        logResponse(res);
-
-        res.copyBodyToResponse();
+        try {
+            chain.doFilter(req, res);
+        } finally {
+            // copyBodyToResponse has to run even when the handler threw, or the buffered
+            // body is discarded and the caller gets an empty response alongside the 500.
+            logRequest(req);
+            logResponse(res);
+            res.copyBodyToResponse();
+        }
     }
 
     private void logRequest(ContentCachingRequestWrapper request) {
@@ -91,7 +94,7 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
     private String resolveUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof CoRydUserDetails u) {
-            return u.getPhone() + " " + u.getActiveRole();
+            return SensitiveDataMasker.maskPhone(u.getPhone()) + " " + u.getActiveRole();
         }
         return "anonymous";
     }
