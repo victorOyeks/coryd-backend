@@ -27,6 +27,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
+                        .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
                         // Real auth for the socket happens inside the STOMP CONNECT frame
                         // (WebSocketAuthInterceptor), not at this HTTP-layer handshake - Spring
                         // Security still gates the initial SockJS handshake request otherwise.

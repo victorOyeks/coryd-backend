@@ -28,6 +28,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/payments/webhook").permitAll()
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
+                        .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

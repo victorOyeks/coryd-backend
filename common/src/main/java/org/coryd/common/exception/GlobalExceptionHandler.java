@@ -1,9 +1,12 @@
 package org.coryd.common.exception;
 
+import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.RoleNotHeldError;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -16,6 +19,7 @@ import java.util.stream.Collectors;
  * status code - picked up automatically by every service since they all
  * component-scan org.coryd.common already.
  */
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -56,5 +60,29 @@ public class GlobalExceptionHandler {
                 .map(err -> err.getField() + ": " + err.getDefaultMessage())
                 .collect(Collectors.joining(", "));
         return ResponseEntity.badRequest().body(ApiResponse.error(message));
+    }
+
+    /**
+     * Spring Security raises these, and only ExceptionTranslationFilter knows how to answer them
+     * with the configured entry point / access-denied handler. They must not be swallowed by the
+     * catch-all below, so rethrow and let them travel back out to the filter chain.
+     */
+    @ExceptionHandler({AuthenticationException.class, AccessDeniedException.class})
+    public void rethrowSecurityException(RuntimeException e) {
+        throw e;
+    }
+
+    /**
+     * Anything unmatched above would otherwise escape the DispatcherServlet, and the servlet
+     * container answers that by re-dispatching to /error - a second trip through the security
+     * filter chain with no authentication, which replaces the real 500 with a bogus 401.
+     * Handling it here keeps the response inside MVC. The client gets a generic message; the
+     * stack trace goes to the log only.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception e) {
+        log.error("Unhandled exception", e);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("An unexpected error occurred"));
     }
 }

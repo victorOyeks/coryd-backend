@@ -52,6 +52,7 @@ public class SecurityConfig {
                                 "/auth/forgot-password", "/auth/reset-password")
                         .permitAll()
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
+                        .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
                         // set-password, change-password, accept-terms and roles/add need a real
                         // authenticated principal (the JWT issued right after verify-otp/login) -
                         // everything else falls through here.
