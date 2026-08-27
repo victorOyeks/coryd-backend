@@ -12,3 +12,7 @@ management:
 springdoc:
   swagger-ui:
     enabled: true
+
+coryd:
+  dev-tools:
+    enabled: true

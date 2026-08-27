@@ -14,4 +14,9 @@ public final class InternalOnlyPaths {
     public static final String[] IDENTITY_SERVICE = {
             "/users/*/contact"
     };
+
+    /** Dev-only reset tooling, called by trip-service. Only reachable when coryd.dev-tools.enabled is true. */
+    public static final String[] PAYMENT_SERVICE = {
+            "/dev/**"
+    };
 }

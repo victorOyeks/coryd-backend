@@ -54,8 +54,16 @@ services:
     url: ${PROFILE_SERVICE_URL:http://localhost:9102/profile}
   identity:
     url: ${IDENTITY_SERVICE_URL:http://localhost:9101/identity}
+  payment:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:9104/payment}
   internal:
     api-key: ${INTERNAL_API_KEY}
+
+# Destructive test-only endpoints (see org.coryd.trip.dev). Off unless explicitly enabled -
+# with the flag absent the beans are never registered, so the paths do not exist at all.
+coryd:
+  dev-tools:
+    enabled: ${DEV_TOOLS_ENABLED:false}
 
 google:
   maps:

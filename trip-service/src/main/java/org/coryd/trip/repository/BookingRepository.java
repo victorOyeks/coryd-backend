@@ -14,6 +14,9 @@ import java.util.Optional;
 
 public interface BookingRepository extends JpaRepository<Booking, String> {
     List<Booking> findByRoutePostId(String routePostId);
+
+    /** Dev route reset only - see RouteResetService. */
+    long deleteByRoutePostId(String routePostId);
     List<Booking> findByRoutePostIdIn(List<String> routePostIds);
     long countByRoutePostIdInAndStatus(List<String> routePostIds, BookingStatus status);
     List<Booking> findTop5ByRiderIdOrderByCreatedAtDesc(String riderId);

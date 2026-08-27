@@ -46,8 +46,17 @@ paystack:
   secret-key: ${PAYSTACK_SECRET_KEY:sk_test_placeholder}
   base-url: https://api.paystack.co
 
+services:
+  internal:
+    api-key: ${INTERNAL_API_KEY}
+
 commission:
   percentage: ${COMMISSION_PERCENTAGE:0.10}
+
+# Destructive test-only endpoints (see org.coryd.payment.dev). Off unless explicitly enabled.
+coryd:
+  dev-tools:
+    enabled: ${DEV_TOOLS_ENABLED:false}
 
 management:
   endpoints:

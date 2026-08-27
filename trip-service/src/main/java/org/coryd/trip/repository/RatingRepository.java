@@ -10,6 +10,9 @@ import java.util.List;
 
 public interface RatingRepository extends JpaRepository<Rating, String> {
     List<Rating> findByBookingId(String bookingId);
+
+    /** Dev route reset only - see RouteResetService. */
+    long deleteByBookingIdIn(List<String> bookingIds);
     List<Rating> findByRateeId(String rateeId);
 
     /** The Trip Receipt's per-passenger stars - one query for every booking on the route, not one per passenger. A booking can have a Rating row in each direction; this narrows to just the one the receipt cares about. */

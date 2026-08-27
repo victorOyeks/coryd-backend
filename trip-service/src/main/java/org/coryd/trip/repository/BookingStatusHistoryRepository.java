@@ -7,4 +7,7 @@ import java.util.List;
 
 public interface BookingStatusHistoryRepository extends JpaRepository<BookingStatusHistory, String> {
     List<BookingStatusHistory> findByBookingIdOrderByCreatedAtAsc(String bookingId);
+
+    /** Dev route reset only - see RouteResetService. */
+    long deleteByBookingIdIn(List<String> bookingIds);
 }

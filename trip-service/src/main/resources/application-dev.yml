@@ -16,3 +16,7 @@ springdoc:
 app:
   testing:
     bypass-time-gates: true
+
+coryd:
+  dev-tools:
+    enabled: true
