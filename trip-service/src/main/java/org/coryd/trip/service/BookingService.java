@@ -130,8 +130,9 @@ public class BookingService {
                 .filter(b -> ACTIVE_TRIP_STATUSES.contains(b.getStatus()))
                 .toList();
 
+        Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(activeBookings);
         List<BookingSummary> bookingSummaries = activeBookings.stream()
-                .map(BookingService::toSummary)
+                .map(b -> toSummary(b, riderRatings))
                 .toList();
         int seatsBooked = activeBookings.stream().mapToInt(Booking::getSeatCount).sum();
 
@@ -151,10 +152,11 @@ public class BookingService {
         if (!callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this route's driver can view its passenger manifest");
         }
-        return bookingRepository.findByRoutePostId(routePostId).stream()
+        List<Booking> manifest = bookingRepository.findByRoutePostId(routePostId).stream()
                 .filter(b -> b.getStatus() != BookingStatus.HELD)
-                .map(BookingService::toSummary)
                 .toList();
+        Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(manifest);
+        return manifest.stream().map(b -> toSummary(b, riderRatings)).toList();
     }
 
     /** The Receipt screen - ownership-gated same as the manifest. totalEarned/seatsBooked come from every non-HELD booking regardless of status, same reasoning as the trip-history list; receiptReference is derived deterministically (not random) so the same trip always shows the same reference number, not a new one per view. */
@@ -206,10 +208,23 @@ public class BookingService {
         return "CRY-" + datePart + "-" + idSuffix.substring(0, Math.min(6, idSuffix.length()));
     }
 
-    private static BookingSummary toSummary(Booking booking) {
+    private static BookingSummary toSummary(Booking booking, Map<String, RatingRepository.RatingSummary> riderRatings) {
+        RatingRepository.RatingSummary rating = riderRatings.get(booking.getRiderId());
         return new BookingSummary(booking.getId(), booking.getRiderId(), booking.getSeatCount(),
                 booking.getFareTotal(), booking.getStatus(), booking.getPickupConfirmedAt(),
-                booking.getPickupLabel(), booking.getPickupLat(), booking.getPickupLng());
+                booking.getPickupLabel(), booking.getPickupLat(), booking.getPickupLng(),
+                rating == null ? null : rating.getAvgStars(),
+                rating == null ? null : rating.getRatingCount());
+    }
+
+    /** One batched query for every rider on a route, not one per row - same convention as getHistory()'s driver-rating batch. */
+    private Map<String, RatingRepository.RatingSummary> riderRatingsFor(List<Booking> bookings) {
+        List<String> riderIds = bookings.stream().map(Booking::getRiderId).distinct().toList();
+        if (riderIds.isEmpty()) {
+            return Map.of();
+        }
+        return ratingRepository.summarize(riderIds).stream()
+                .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, r -> r));
     }
 
     /** Dashboard's "Trips this week" tile - completed bookings on routes that departed Monday through now. */
@@ -660,9 +675,9 @@ public class BookingService {
         route.setCompletedAt(Instant.now());
         routePostRepository.save(route);
 
-        return bookingRepository.findByRoutePostId(routePostId).stream()
-                .map(BookingService::toSummary)
-                .toList();
+        List<Booking> finalBookings = bookingRepository.findByRoutePostId(routePostId);
+        Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(finalBookings);
+        return finalBookings.stream().map(b -> toSummary(b, riderRatings)).toList();
     }
 
     private void completeBookingInternal(Booking booking, RoutePost route) {

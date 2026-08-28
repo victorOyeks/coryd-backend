@@ -5,7 +5,7 @@ import org.coryd.common.enums.BookingStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 
-/** Shared shape for "who's booked on this route" - used by both the active-trip card and the Passenger Manifest. Rider name/photo aren't included - no rider-lookup client exists in trip-service yet, only driver-facing enrichment does. */
+/** Shared shape for "who's booked on this route" - used by both the active-trip card and the Passenger Manifest. Rider name/photo aren't included - no rider-lookup client exists in trip-service yet, only driver-facing enrichment does. riderRatingAvg/riderRatingCount are the rider's own aggregate rating from past trips (how previous drivers rated them) - lets a driver see who they're picking up, same idea as a rider seeing the driver's rating on a search result. */
 public record BookingSummary(
         String bookingId,
         String riderId,
@@ -15,6 +15,8 @@ public record BookingSummary(
         Instant pickupConfirmedAt,
         String pickupLabel,
         Double pickupLat,
-        Double pickupLng
+        Double pickupLng,
+        Double riderRatingAvg,
+        Long riderRatingCount
 ) {
 }
