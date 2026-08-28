@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.trip.dto.MultiStopRoutePreview;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
@@ -78,6 +79,13 @@ public class RouteController {
     public ApiResponse<RideDetailsResponse> details(@PathVariable String routePostId,
                                                       @RequestParam double riderLat, @RequestParam double riderLng) {
         return ApiResponse.ok(routeService.getRouteDetails(routePostId, riderLat, riderLng));
+    }
+
+    /** Multi-stop road-following line for the driver's Ready to Depart / Live Trip map and the
+     * rider's Live Trip map - origin -> every still-active pickup -> destination. */
+    @GetMapping("/{routePostId}/route-preview")
+    public ApiResponse<MultiStopRoutePreview> multiStopRoutePreview(@PathVariable String routePostId) {
+        return ApiResponse.ok(routeService.getMultiStopRoutePreview(routePostId));
     }
 
     @GetMapping("/suggested-fare")

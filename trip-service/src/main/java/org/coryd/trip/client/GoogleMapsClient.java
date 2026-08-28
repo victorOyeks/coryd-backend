@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.trip.constants.GoogleMapsRoutes;
+import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeocodeResult;
 import org.coryd.trip.dto.PlaceSuggestion;
@@ -106,6 +107,40 @@ public class GoogleMapsClient {
         return new RoutePreview(Math.round(distanceKm * 100.0) / 100.0, durationMinutes, leg.duration().text(), route.summary(), polyline);
     }
 
+    /** Origin -> every waypoint -> destination as one road-following route, with Google choosing
+     * the visiting order (optimize:true) - the driver/rider Live Trip map's multi-stop line.
+     * Caller (RouteService) has already capped waypointCoords against Directions' own limit. */
+    public DirectionsMultiStopResult getMultiStopRoutePreview(double originLat, double originLng,
+                                                               double destLat, double destLng,
+                                                               List<double[]> waypointCoords) {
+        String waypointsParam = "optimize:true|" + waypointCoords.stream()
+                .map(w -> w[0] + "," + w[1])
+                .collect(Collectors.joining("|"));
+
+        DirectionsResponse response = mapsRestClient.get()
+                .uri(GoogleMapsRoutes.DIRECTIONS_WITH_WAYPOINTS, originLat + "," + originLng, destLat + "," + destLng,
+                        waypointsParam, apiKey)
+                .retrieve()
+                .body(DirectionsResponse.class);
+        if (response == null) throw new BadRequestException("No route found between the given points");
+        if (STATUS_ZERO_RESULTS.equals(response.status())) {
+            throw new BadRequestException("No driving route found between the given points");
+        }
+        if (!STATUS_OK.equals(response.status())) {
+            log.warn("Directions (multi-stop) status: {} for {},{} -> {},{} with {} waypoints | reason: {}",
+                    response.status(), originLat, originLng, destLat, destLng, waypointCoords.size(), response.errorMessage());
+            throw new BadRequestException("Directions service unavailable - please try again");
+        }
+
+        DirectionsResponse.Route route = response.routes().getFirst();
+        double distanceKm = route.legs().stream().mapToInt(leg -> leg.distance().value()).sum() / 1000.0;
+        int durationMinutes = (int) Math.ceil(route.legs().stream().mapToInt(leg -> leg.duration().value()).sum() / 60.0);
+        String polyline = route.overviewPolyline() == null ? null : route.overviewPolyline().points();
+        List<Integer> waypointOrder = route.waypointOrder() == null ? List.of() : route.waypointOrder();
+
+        return new DirectionsMultiStopResult(Math.round(distanceKm * 100.0) / 100.0, durationMinutes, polyline, waypointOrder);
+    }
+
     /** Single origin, many destinations, one call - the search-results list's pickup-ETA column. Results come back in the same order as destinations; an individual pair's own failed status degrades to a null entry rather than failing the whole batch. */
     public List<DistanceMatrixResult> getDistanceMatrix(double originLat, double originLng, List<double[]> destinations) {
         String origins = originLat + "," + originLng;
@@ -181,7 +216,8 @@ public class GoogleMapsClient {
                                        @JsonProperty("error_message") String errorMessage) {
         @JsonIgnoreProperties(ignoreUnknown = true)
         private record Route(String summary, List<Leg> legs,
-                              @JsonProperty("overview_polyline") OverviewPolyline overviewPolyline) {
+                              @JsonProperty("overview_polyline") OverviewPolyline overviewPolyline,
+                              @JsonProperty("waypoint_order") List<Integer> waypointOrder) {
             @JsonIgnoreProperties(ignoreUnknown = true)
             private record Leg(Distance distance, Duration duration) {
                 private record Distance(int value) {}

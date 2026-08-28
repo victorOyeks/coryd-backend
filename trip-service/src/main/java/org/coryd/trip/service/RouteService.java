@@ -17,12 +17,15 @@ import org.coryd.common.kafka.events.RoutePublishedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
+import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeoPin;
+import org.coryd.trip.dto.MultiStopRoutePreview;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
+import org.coryd.trip.dto.RoutePreview;
 import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
@@ -64,6 +67,18 @@ public class RouteService {
     private static final int NEARBY_OPTIONS_LIMIT = 5;
     private static final double NEARBY_OPTIONS_RADIUS_MULTIPLIER = 3.0;
     private static final int NEARBY_OPTIONS_TIME_WINDOW_HOURS = 24;
+
+    /** Google's Directions API caps waypoints at 25 (23 here, leaving headroom - origin/destination
+     * are separate params, not counted against this, but keeping a margin against any per-account
+     * quota difference is safer than pushing the exact documented ceiling). */
+    private static final int MAX_MULTI_STOP_WAYPOINTS = 23;
+
+    /** Bookings still "on" this trip's manifest - a stop the multi-stop route line should pass
+     * through. Excludes HELD (not yet confirmed, may never be) and both cancelled statuses;
+     * includes IN_PROGRESS since that rider's pickup point is still part of the planned route
+     * shape even after they've boarded. */
+    private static final List<BookingStatus> MANIFEST_STOP_STATUSES = List.of(
+            BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
     private final RoutePostRepository routePostRepository;
     private final FareReportRepository fareReportRepository;
@@ -216,6 +231,41 @@ public class RouteService {
                 base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
                 BookingService.SEAT_HOLD_MINUTES, base.routeNote()
         );
+    }
+
+    /** Road-following route through the whole current manifest - origin -> every still-active
+     * pickup -> destination - for the driver's Ready to Depart / Live Trip map and the rider's
+     * Live Trip map. Falls back to a direct origin->destination preview (no waypoints) when
+     * there are no confirmed pickups yet, or when there are more than a single Directions call
+     * can take - a degraded straight-line-for-the-uncovered-stops map beats no map at all. */
+    public MultiStopRoutePreview getMultiStopRoutePreview(String routePostId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        List<Booking> stops = bookingRepository.findByRoutePostId(routePostId).stream()
+                .filter(b -> MANIFEST_STOP_STATUSES.contains(b.getStatus()))
+                .filter(b -> b.getPickupLat() != null && b.getPickupLng() != null)
+                .toList();
+
+        if (stops.isEmpty() || stops.size() > MAX_MULTI_STOP_WAYPOINTS) {
+            if (stops.size() > MAX_MULTI_STOP_WAYPOINTS) {
+                log.warn("Route {} has {} active pickups, over the {}-waypoint cap - falling back to a direct origin->destination preview",
+                        routePostId, stops.size(), MAX_MULTI_STOP_WAYPOINTS);
+            }
+            RoutePreview direct = mapsService.getRoutePreview(route.getOriginLat(), route.getOriginLng(),
+                    route.getDestinationLat(), route.getDestinationLng());
+            return new MultiStopRoutePreview(direct.distanceKm(), direct.durationMinutes(), direct.overviewPolyline(), List.of());
+        }
+
+        List<double[]> waypointCoords = stops.stream().map(b -> new double[]{b.getPickupLat(), b.getPickupLng()}).toList();
+        DirectionsMultiStopResult result = mapsService.getMultiStopRoutePreview(
+                route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(), waypointCoords);
+
+        List<String> orderedBookingIds = result.waypointOrder().isEmpty()
+                ? stops.stream().map(BaseEntity::getId).toList()
+                : result.waypointOrder().stream().map(i -> stops.get(i).getId()).toList();
+
+        return new MultiStopRoutePreview(result.distanceKm(), result.durationMinutes(), result.overviewPolyline(), orderedBookingIds);
     }
 
     /** Batch-joins driver/vehicle/rating data onto raw route matches, plus one batched Google Distance Matrix call for pickup-ETA - four calls total for the whole page, never one per row. */

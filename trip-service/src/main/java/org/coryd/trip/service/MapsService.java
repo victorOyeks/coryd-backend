@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.trip.client.GoogleMapsClient;
+import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeocodeResult;
 import org.coryd.trip.dto.PlaceSuggestion;
@@ -138,6 +139,31 @@ public class MapsService {
             recordMapsFailure();
             log.error("Directions API call failed: {}", e.getMessage());
             throw new BadRequestException("Unable to load route preview. Please try again.");
+        }
+    }
+
+    /** The driver/rider Live Trip map's multi-stop line. Not cached: keyed to a trip's current
+     * set of active pickups, which changes as the trip proceeds (a pickup confirmed, a booking
+     * cancelled), so a cached result would go stale mid-trip exactly when it matters most. */
+    public DirectionsMultiStopResult getMultiStopRoutePreview(double originLat, double originLng,
+                                                               double destLat, double destLng,
+                                                               List<double[]> waypointCoords) {
+        if (isMapsCircuitOpen()) {
+            log.warn("Maps circuit open - rejecting multi-stop route-preview request");
+            throw new BadRequestException("Maps service is temporarily unavailable. Please try again in a moment.");
+        }
+
+        try {
+            DirectionsMultiStopResult result = googleMapsClient.getMultiStopRoutePreview(
+                    originLat, originLng, destLat, destLng, waypointCoords);
+            resetMapsCircuit();
+            return result;
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (Exception e) {
+            recordMapsFailure();
+            log.error("Multi-stop Directions API call failed: {}", e.getMessage());
+            throw new BadRequestException("Unable to load multi-stop route preview. Please try again.");
         }
     }
 

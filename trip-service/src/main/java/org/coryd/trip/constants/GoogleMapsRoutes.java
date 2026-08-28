@@ -20,4 +20,9 @@ public final class GoogleMapsRoutes {
 
     public static final String DIRECTIONS =
             "/directions/json?origin={origin}&destination={destination}&mode=driving&key={key}";
+
+    /** {waypoints} is a single pre-joined "optimize:true|lat,lng|lat,lng|..." string, same
+     * pipe-joining convention as DISTANCE_MATRIX's destinations param. */
+    public static final String DIRECTIONS_WITH_WAYPOINTS =
+            "/directions/json?origin={origin}&destination={destination}&waypoints={waypoints}&mode=driving&key={key}";
 }
