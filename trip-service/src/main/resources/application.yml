@@ -71,7 +71,7 @@ google:
     base-url: https://maps.googleapis.com/maps/api
 
 matching:
-  time-tolerance-minutes: 60
+  time-tolerance-minutes: 180
   geo-tolerance-meters: 4000
   min-fare-reports: 5
 
