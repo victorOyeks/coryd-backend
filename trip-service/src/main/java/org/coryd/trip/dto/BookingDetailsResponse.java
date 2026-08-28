@@ -11,6 +11,9 @@ import java.time.Instant;
  * trip summary and driver card). originLabel/departureTime are enough for the client to
  * compose the pickup-reminder text itself; gate-level detail isn't in the data model anywhere
  * ("exact stop shown after booking" is a driver-communicated fact, not a system one).
+ * overviewPolyline is Google's encoded polyline for the road-following line between origin
+ * and destination (same field/format as RoutePreview) - null if Directions couldn't be
+ * reached, since a missing map line shouldn't block the rest of this screen.
  */
 public record BookingDetailsResponse(
         String bookingId,
@@ -36,6 +39,7 @@ public record BookingDetailsResponse(
         String vehicleModel,
         String vehiclePlate,
         boolean vehicleHasAC,
-        Integer durationMinutes
+        Integer durationMinutes,
+        String overviewPolyline
 ) {
 }

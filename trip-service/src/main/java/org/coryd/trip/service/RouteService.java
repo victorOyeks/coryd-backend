@@ -215,7 +215,7 @@ public class RouteService {
         return enrich(capped, request.originLat(), request.originLng());
     }
 
-    /** The Ride Details screen - one enriched route plus its coordinates; the route's own distance/duration/via-summary is now computed by mobile on-device (it already has an on-screen map and the coordinates below to call Google Directions itself with). */
+    /** The Ride Details screen - one enriched route plus its coordinates and road-following route line. */
     public RideDetailsResponse getRouteDetails(String routePostId, double riderLat, double riderLng) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
@@ -229,8 +229,22 @@ public class RouteService {
                 base.farePerSeat(), base.seatsAvailable(), base.driverId(), base.driverName(), base.driverPhotoUrl(),
                 base.driverVerified(), base.vehicleMake(), base.vehicleModel(), base.vehiclePlate(), base.vehicleHasAC(),
                 base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
-                BookingService.SEAT_HOLD_MINUTES, base.routeNote()
+                BookingService.SEAT_HOLD_MINUTES, base.routeNote(),
+                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng())
         );
+    }
+
+    /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern as pickupEtaMinutesBatch() - a Directions failure means no line on the map, not a broken screen. Cached 7 days in MapsService keyed by rounded coordinates, so this is a fresh Directions call only the first time any two points are looked up. Boxed params (not primitives) - unboxing a null before this method's own try/catch could see it would throw uncaught, not degrade gracefully. */
+    private String overviewPolyline(Double originLat, Double originLng, Double destLat, Double destLng) {
+        if (originLat == null || originLng == null || destLat == null || destLng == null) {
+            return null;
+        }
+        try {
+            return mapsService.getRoutePreview(originLat, originLng, destLat, destLng).overviewPolyline();
+        } catch (Exception e) {
+            log.warn("Route preview unavailable for {},{} -> {},{}: {}", originLat, originLng, destLat, destLng, e.getMessage());
+            return null;
+        }
     }
 
     /** Road-following route through the whole current manifest - origin -> every still-active

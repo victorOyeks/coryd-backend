@@ -94,6 +94,7 @@ public class BookingService {
     private final IdentityServiceClient identityServiceClient;
     private final ShareTokenService shareTokenService;
     private final LocationService locationService;
+    private final MapsService mapsService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
@@ -407,8 +408,22 @@ public class BookingService {
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
-                booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(bookingId) : null
+                booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(bookingId) : null,
+                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng())
         );
+    }
+
+    /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern used elsewhere - a Directions failure means no line on the map, not a broken Pay Now/Booking Confirmed screen. Cached 7 days in MapsService keyed by rounded coordinates. */
+    private String overviewPolyline(Double originLat, Double originLng, Double destLat, Double destLng) {
+        if (originLat == null || originLng == null || destLat == null || destLng == null) {
+            return null;
+        }
+        try {
+            return mapsService.getRoutePreview(originLat, originLng, destLat, destLng).overviewPolyline();
+        } catch (Exception e) {
+            log.warn("Route preview unavailable for {},{} -> {},{}: {}", originLat, originLng, destLat, destLng, e.getMessage());
+            return null;
+        }
     }
 
     /** Track Live Trip's status timeline - kept off BookingDetailsResponse since Pay Now/Booking Confirmed don't render it. */

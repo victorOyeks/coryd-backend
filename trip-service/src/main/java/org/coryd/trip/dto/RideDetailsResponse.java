@@ -5,10 +5,11 @@ import java.time.Instant;
 
 /**
  * The Ride Details screen: everything RideSearchResult carries (driver/vehicle/rating/
- * pickup-eta) plus origin/destination coordinates - the route's own distance/duration/via-
- * summary/ETA is no longer computed here, mobile derives it on-device (it already renders the
- * map, so it calls Google Directions itself for this single origin/destination pair rather than
- * this service doing it server-side and shipping the text down).
+ * pickup-eta) plus origin/destination coordinates and the road-following route line
+ * between them. {@code overviewPolyline} is Google's encoded polyline (same format/field
+ * as {@link RoutePreview}) - the app's Maps SDK key can't call Directions directly (a
+ * different key-restriction model than the Maps SDK), so this is computed server-side,
+ * not on-device.
  */
 public record RideDetailsResponse(
         String routePostId,
@@ -33,6 +34,7 @@ public record RideDetailsResponse(
         long ratingCount,
         Integer pickupEtaMinutes,
         int seatHoldMinutes,
-        String routeNote
+        String routeNote,
+        String overviewPolyline
 ) {
 }
