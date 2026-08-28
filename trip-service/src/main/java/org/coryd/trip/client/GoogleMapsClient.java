@@ -102,7 +102,8 @@ public class GoogleMapsClient {
         DirectionsResponse.Route.Leg leg = route.legs().getFirst();
         double distanceKm = leg.distance().value() / 1000.0;
         int durationMinutes = (int) Math.ceil(leg.duration().value() / 60.0);
-        return new RoutePreview(Math.round(distanceKm * 100.0) / 100.0, durationMinutes, leg.duration().text(), route.summary());
+        String polyline = route.overviewPolyline() == null ? null : route.overviewPolyline().points();
+        return new RoutePreview(Math.round(distanceKm * 100.0) / 100.0, durationMinutes, leg.duration().text(), route.summary(), polyline);
     }
 
     /** Single origin, many destinations, one call - the search-results list's pickup-ETA column. Results come back in the same order as destinations; an individual pair's own failed status degrades to a null entry rather than failing the whole batch. */
@@ -179,12 +180,15 @@ public class GoogleMapsClient {
     private record DirectionsResponse(List<Route> routes, String status,
                                        @JsonProperty("error_message") String errorMessage) {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Route(String summary, List<Leg> legs) {
+        private record Route(String summary, List<Leg> legs,
+                              @JsonProperty("overview_polyline") OverviewPolyline overviewPolyline) {
             @JsonIgnoreProperties(ignoreUnknown = true)
             private record Leg(Distance distance, Duration duration) {
                 private record Distance(int value) {}
                 private record Duration(int value, String text) {}
             }
+
+            private record OverviewPolyline(String points) {}
         }
     }
 

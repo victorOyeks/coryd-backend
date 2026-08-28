@@ -103,9 +103,12 @@ public class MapsService {
         try {
             String cached = redisTemplate.opsForValue().get(cacheKey);
             if (cached != null) {
-                String[] parts = cached.split("\\|", 4);
-                if (parts.length == 4) {
-                    return new RoutePreview(Double.parseDouble(parts[0]), Integer.parseInt(parts[1]), parts[2], parts[3]);
+                // limit=5: overviewPolyline (last field) is Google's encoded-polyline format,
+                // which can itself contain a literal "|" - splitting with a limit keeps
+                // everything past the 4th delimiter intact as one final part.
+                String[] parts = cached.split("\\|", 5);
+                if (parts.length == 5) {
+                    return new RoutePreview(Double.parseDouble(parts[0]), Integer.parseInt(parts[1]), parts[2], parts[3], parts[4]);
                 }
             }
         } catch (Exception e) {
@@ -123,7 +126,7 @@ public class MapsService {
             try {
                 String encoded = String.join("|",
                         String.valueOf(preview.distanceKm()), String.valueOf(preview.durationMinutes()),
-                        nullSafe(preview.durationText()), nullSafe(preview.viaSummary()));
+                        nullSafe(preview.durationText()), nullSafe(preview.viaSummary()), nullSafe(preview.overviewPolyline()));
                 redisTemplate.opsForValue().set(cacheKey, encoded, ROUTE_PREVIEW_TTL);
             } catch (Exception e) {
                 log.warn("Route preview cache write failed: {}", e.getMessage());
