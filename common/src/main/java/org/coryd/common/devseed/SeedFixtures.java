@@ -23,21 +23,23 @@ public final class SeedFixtures {
     }
 
     public static final List<SeedPerson> DRIVERS = List.of(
-            new SeedPerson("08000000201", "Test Driver 1"),
-            new SeedPerson("08000000202", "Test Driver 2"),
-            new SeedPerson("08000000203", "Test Driver 3"),
-            new SeedPerson("08000000204", "Test Driver 4"),
-            new SeedPerson("08000000205", "Test Driver 5"),
-            new SeedPerson("08000000206", "Test Driver 6"),
-            new SeedPerson("08000000207", "Test Driver 7"),
-            new SeedPerson("08000000208", "Test Driver 8"),
-            new SeedPerson("08000000209", "Test Driver 9"),
-            new SeedPerson("08000000210", "Test Driver 10")
+            new SeedPerson("08000000201", "Kunle Adeyemi"),
+            new SeedPerson("08000000202", "Chidi Okafor"),
+            new SeedPerson("08000000203", "Bola Ogunleye"),
+            new SeedPerson("08000000204", "Emeka Nwosu"),
+            new SeedPerson("08000000205", "Tunde Bakare"),
+            new SeedPerson("08000000206", "Ifeoma Chukwu"),
+            new SeedPerson("08000000207", "Segun Alabi"),
+            new SeedPerson("08000000208", "Ngozi Eze"),
+            new SeedPerson("08000000209", "Yusuf Abdullahi"),
+            new SeedPerson("08000000210", "Femi Adebayo")
     );
 
     public static final List<SeedPerson> RIDERS = List.of(
-            new SeedPerson("08000000101", "Test Rider 1"),
-            new SeedPerson("08000000102", "Test Rider 2"),
-            new SeedPerson("08000000103", "Test Rider 3")
+            new SeedPerson("08000000101", "Amaka Obi"),
+            new SeedPerson("08000000102", "Tolu Fashola"),
+            new SeedPerson("08000000103", "Chinwe Anya"),
+            new SeedPerson("08000000104", "Bisi Adekunle"),
+            new SeedPerson("08000000105", "Musa Ibrahim")
     );
 }
