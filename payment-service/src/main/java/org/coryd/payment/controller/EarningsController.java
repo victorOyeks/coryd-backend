@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.time.YearMonth;
 import java.util.List;
 
@@ -34,10 +35,12 @@ public class EarningsController {
     private final EarningsService earningsService;
     private final CommissionProperties commissionProperties;
 
-    /** So the client computes gross/commission/net from the real configured rate instead of hardcoding it. */
+    /** So the client computes gross/commission/net from the real configured rate instead of hardcoding it.
+     * commission.percentage is stored as a fraction (0.15) since that's what EarningsService multiplies
+     * fares by directly - scaled to a plain percentage number (15) here so the FE doesn't have to. */
     @GetMapping("/commission-rate")
     public ApiResponse<CommissionRate> commissionRate() {
-        return ApiResponse.ok(new CommissionRate(commissionProperties.getPercentage()));
+        return ApiResponse.ok(new CommissionRate(commissionProperties.getPercentage().multiply(BigDecimal.valueOf(100))));
     }
 
     @GetMapping("/drivers/{driverId}")
