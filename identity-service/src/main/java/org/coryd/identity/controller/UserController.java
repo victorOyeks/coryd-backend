@@ -11,9 +11,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Minimal cross-service contact lookup (e.g. trip-service's Call-driver button) - deliberately exposes only phone/fullName, nothing auth-related. */
+/** Minimal cross-service contact lookup (e.g. trip-service's Call-driver button) - deliberately exposes only phone/fullName, nothing auth-related. Service-to-service only - never called by a mobile client directly, gated by InternalApiKeyFilter via the /internal/** prefix and hidden from Swagger. */
 @RestController
-@RequestMapping("/users")
+@RequestMapping("/internal/users")
 @RequiredArgsConstructor
 public class UserController {
 

@@ -4,7 +4,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
-import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
 import org.coryd.profile.entity.RiderProfile;
 import org.coryd.profile.service.RiderProfileService;
@@ -14,10 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/riders")
@@ -29,11 +25,6 @@ public class RiderProfileController {
     @GetMapping("/{userId}")
     public ApiResponse<RiderProfile> get(@PathVariable String userId) {
         return ApiResponse.ok(riderProfileService.get(userId));
-    }
-
-    @GetMapping("/batch")
-    public ApiResponse<List<RiderSummary>> batch(@RequestParam List<String> userIds) {
-        return ApiResponse.ok(riderProfileService.getBatch(userIds));
     }
 
     @GetMapping("/me")

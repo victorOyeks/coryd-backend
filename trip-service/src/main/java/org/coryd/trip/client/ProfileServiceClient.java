@@ -37,7 +37,7 @@ public class ProfileServiceClient {
     public String fetchDriverName(String driverId) {
         try {
             return restClient.get()
-                    .uri("/drivers/{userId}", driverId)
+                    .uri("/internal/drivers/{userId}", driverId)
                     .retrieve()
                     .body(DriverProfileView.class)
                     .data().legalName();
@@ -53,7 +53,7 @@ public class ProfileServiceClient {
         }
         try {
             return restClient.get()
-                    .uri("/vehicles/{vehicleId}", vehicleId)
+                    .uri("/internal/vehicles/{vehicleId}", vehicleId)
                     .retrieve()
                     .body(VehicleView.class)
                     .data().plateNumber();
@@ -70,7 +70,7 @@ public class ProfileServiceClient {
         }
         try {
             DriverSummaryBatchResponse response = restClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/drivers/batch").queryParam("userIds", driverIds).build())
+                    .uri(uriBuilder -> uriBuilder.path("/internal/drivers/batch").queryParam("userIds", driverIds).build())
                     .retrieve()
                     .body(DriverSummaryBatchResponse.class);
             return toMap(response == null ? List.of() : response.data(), DriverSummaryItem::userId);
@@ -87,7 +87,7 @@ public class ProfileServiceClient {
         }
         try {
             VehicleSummaryBatchResponse response = restClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/vehicles/batch").queryParam("ids", vehicleIds).build())
+                    .uri(uriBuilder -> uriBuilder.path("/internal/vehicles/batch").queryParam("ids", vehicleIds).build())
                     .retrieve()
                     .body(VehicleSummaryBatchResponse.class);
             return toMap(response == null ? List.of() : response.data(), VehicleSummaryItem::id);
@@ -104,7 +104,7 @@ public class ProfileServiceClient {
         }
         try {
             RiderSummaryBatchResponse response = restClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/riders/batch").queryParam("userIds", riderIds).build())
+                    .uri(uriBuilder -> uriBuilder.path("/internal/riders/batch").queryParam("userIds", riderIds).build())
                     .retrieve()
                     .body(RiderSummaryBatchResponse.class);
             return toMap(response == null ? List.of() : response.data(), RiderSummaryItem::userId);
@@ -118,7 +118,7 @@ public class ProfileServiceClient {
     public List<RiderContact> fetchRiderContacts(String riderId) {
         try {
             RiderContactBatchResponse response = restClient.get()
-                    .uri("/riders/{userId}/emergency-contacts", riderId)
+                    .uri("/internal/riders/{userId}/emergency-contacts", riderId)
                     .retrieve()
                     .body(RiderContactBatchResponse.class);
             return response == null || response.data() == null ? List.of() : response.data();

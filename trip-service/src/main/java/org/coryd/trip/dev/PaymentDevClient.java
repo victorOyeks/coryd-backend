@@ -42,7 +42,7 @@ public class PaymentDevClient {
             return "no bookings to purge";
         }
         PurgeView response = restClient.post()
-                .uri("/dev/bookings/purge")
+                .uri("/internal/dev/bookings/purge")
                 .body(Map.of("bookingIds", bookingIds))
                 .retrieve()
                 .body(PurgeView.class);

@@ -63,5 +63,6 @@ management:
         include: health
 
 springdoc:
+  paths-to-exclude: /internal/**
   swagger-ui:
     path: /swagger-ui.html

@@ -43,13 +43,4 @@ public class EmergencyContactController {
         return ApiResponse.ok(emergencyContactService.selectPrimary(principal.getUserId(), contactId));
     }
 
-    /**
-     * Service-to-service read (trip-service's Share Trip/SOS) - explicit userId, not /me, since
-     * the caller here isn't necessarily the rider themselves (SOS can be triggered by the driver,
-     * whose own forwarded JWT wouldn't resolve to the rider's contacts via @AuthenticationPrincipal).
-     */
-    @GetMapping("/{userId}/emergency-contacts")
-    public ApiResponse<List<EmergencyContact>> listForUser(@PathVariable String userId) {
-        return ApiResponse.ok(emergencyContactService.getContacts(userId));
-    }
 }

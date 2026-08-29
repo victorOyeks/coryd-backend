@@ -11,11 +11,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Dev-only. Registered only when coryd.dev-tools.enabled is true, and additionally gated by
- * InternalApiKeyFilter (InternalOnlyPaths.PAYMENT_SERVICE covers /dev/**) so a mobile JWT
- * alone cannot reach it - only trip-service, holding the internal key, can.
+ * InternalApiKeyFilter (InternalOnlyPaths.PAYMENT_SERVICE covers /internal/**) so a mobile JWT
+ * alone cannot reach it - only trip-service, holding the internal key, can. Hidden from Swagger
+ * along with every other /internal/** endpoint.
  */
 @RestController
-@RequestMapping("/dev")
+@RequestMapping("/internal/dev")
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "coryd.dev-tools.enabled", havingValue = "true")
 public class PaymentDevController {

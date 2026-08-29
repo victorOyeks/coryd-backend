@@ -1,22 +1,24 @@
 package org.coryd.common.security;
 
-/** Per-service lists of paths only ever meant to be called by another CoRyd service, never a mobile client directly - gated by InternalApiKeyFilter on top of the normal JWT check. */
+/**
+ * Per-service internal-only path prefix, gated by InternalApiKeyFilter on top of the normal
+ * JWT check - never called by a mobile client directly, only by another CoRyd service.
+ * Every internal-only endpoint lives under /internal/** (its own dedicated controller, e.g.
+ * InternalDriverController) rather than sharing a path with a public endpoint - a single
+ * fixed prefix per service instead of a per-resource glob list that could accidentally
+ * overlap with a public path (as the old "/vehicles/*" pattern did with the public
+ * PUT /vehicles/{vehicleId} update endpoint, both matching the same path regardless of
+ * HTTP method).
+ */
 public final class InternalOnlyPaths {
 
     private InternalOnlyPaths() {
     }
 
-    public static final String[] PROFILE_SERVICE = {
-            "/drivers/batch", "/drivers/*", "/vehicles/batch", "/vehicles/*",
-            "/riders/batch", "/riders/*/emergency-contacts"
-    };
+    public static final String[] PROFILE_SERVICE = {"/internal/**"};
 
-    public static final String[] IDENTITY_SERVICE = {
-            "/users/*/contact"
-    };
+    public static final String[] IDENTITY_SERVICE = {"/internal/**"};
 
-    /** Dev-only reset tooling, called by trip-service. Only reachable when coryd.dev-tools.enabled is true. */
-    public static final String[] PAYMENT_SERVICE = {
-            "/dev/**"
-    };
+    /** Also covers the dev-only reset tooling (/internal/dev/**), called by trip-service - only reachable when coryd.dev-tools.enabled is true. */
+    public static final String[] PAYMENT_SERVICE = {"/internal/**"};
 }

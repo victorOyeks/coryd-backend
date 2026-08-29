@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
-import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
@@ -19,10 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/drivers")
@@ -31,16 +27,6 @@ public class DriverProfileController {
 
     private final DriverProfileService driverProfileService;
     private final VerificationAggregationService verificationAggregationService;
-
-    @GetMapping("/{userId}")
-    public ApiResponse<DriverProfile> get(@PathVariable String userId) {
-        return ApiResponse.ok(driverProfileService.get(userId));
-    }
-
-    @GetMapping("/batch")
-    public ApiResponse<List<DriverSummary>> batch(@RequestParam List<String> userIds) {
-        return ApiResponse.ok(driverProfileService.getBatch(userIds));
-    }
 
     @GetMapping("/me")
     public ApiResponse<DriverProfile> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {

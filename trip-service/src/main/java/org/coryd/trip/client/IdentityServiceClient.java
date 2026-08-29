@@ -27,7 +27,7 @@ public class IdentityServiceClient {
     public String fetchPhone(String userId) {
         try {
             return restClient.get()
-                    .uri("/users/{userId}/contact", userId)
+                    .uri("/internal/users/{userId}/contact", userId)
                     .retrieve()
                     .body(UserContactView.class)
                     .data().phone();
