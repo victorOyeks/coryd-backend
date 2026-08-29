@@ -22,6 +22,7 @@ import org.coryd.profile.repository.DriverDocumentRepository;
 import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /** Combines every independently-reviewable driver item (identity, vehicle registration, documents) into one aggregate status - the single source of truth for both the driver-facing verification-status screen and the route-posting gate. Also the single place an ops admin decides any of those items, via decide() below - one call, keyed by driverId alone, instead of a separate endpoint (and a separate id to look up first) per item type. */
 @Slf4j
@@ -182,23 +184,39 @@ public class VerificationAggregationService {
         String email = profile == null ? null : profile.getEmail();
 
         if (overall == VerificationStatus.APPROVED) {
-            kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
-                    .driverId(driverId)
-                    .vehicleId(vehicleId)
-                    .email(email)
-                    .reviewedBy(reviewedBy)
-                    .approvedAt(LocalDateTime.now())
-                    .build());
+            logKafkaResult(driverId, KafkaTopics.DRIVER_APPROVED,
+                    kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
+                            .driverId(driverId)
+                            .vehicleId(vehicleId)
+                            .email(email)
+                            .reviewedBy(reviewedBy)
+                            .approvedAt(LocalDateTime.now())
+                            .build()));
         } else if (overall == VerificationStatus.REJECTED) {
-            kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
-                    .driverId(driverId)
-                    .vehicleId(vehicleId)
-                    .email(email)
-                    .rejectionReason(firstRejectionReason(profile, vehicle, documents))
-                    .reviewedBy(reviewedBy)
-                    .rejectedAt(LocalDateTime.now())
-                    .build());
+            logKafkaResult(driverId, KafkaTopics.DRIVER_REJECTED,
+                    kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
+                            .driverId(driverId)
+                            .vehicleId(vehicleId)
+                            .email(email)
+                            .rejectionReason(firstRejectionReason(profile, vehicle, documents))
+                            .reviewedBy(reviewedBy)
+                            .rejectedAt(LocalDateTime.now())
+                            .build()));
         }
+    }
+
+    /** KafkaTemplate.send() is fire-and-forget by default - a broker-side failure (topic
+     * missing, connection issue, whatever) would otherwise vanish silently, leaving
+     * trip-service's route-posting gate out of sync with no trace of why. */
+    private void logKafkaResult(String driverId, String topic, CompletableFuture<SendResult<String, Object>> future) {
+        future.whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("Failed to publish {} for driver {}: {}", topic, driverId, ex.getMessage(), ex);
+            } else {
+                log.info("Published {} for driver {} - partition={} offset={}", topic, driverId,
+                        result.getRecordMetadata().partition(), result.getRecordMetadata().offset());
+            }
+        });
     }
 
     private Vehicle primaryVehicle(String driverId) {
