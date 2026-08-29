@@ -240,13 +240,9 @@ public class BookingService {
         return new DriverTripStatsResponse((int) tripsThisWeek);
     }
 
-    /** Every RouteStatus that counts as "history" at all - a route that hasn't started yet isn't history, it's upcoming (dashboard/My Routes), since every posted route already has a departure time by definition - there's no separate "Scheduled" bucket. */
-    private static final List<RouteStatus> ALL_HISTORY_ROUTE_STATUSES =
-            List.of(RouteStatus.IN_PROGRESS, RouteStatus.COMPLETED, RouteStatus.CANCELLED);
-
-    /** Driver Trip History screen - one row per posted route (not per booking), newest first, optionally filtered by status bucket and searched by origin/destination. seatsBooked/totalEarned are summed from every non-HELD booking regardless of the route's own status, so a cancelled route still shows what it actually had booked, not zeros. */
+    /** Driver Trip History screen - one row per posted route (not per booking), newest first, optionally filtered by status bucket and searched by origin/destination. No status picked means every route regardless of status (including still-upcoming PUBLISHED/FULL ones), not just the "already happened" ONGOING/COMPLETED/CANCELLED buckets. seatsBooked/totalEarned are summed from every non-HELD booking regardless of the route's own status, so a cancelled route still shows what it actually had booked, not zeros. */
     public PagedResponse<DriverTripHistoryItem> getHistoryForDriver(String driverId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
-        List<RouteStatus> statuses = statusBucket == null ? ALL_HISTORY_ROUTE_STATUSES : switch (statusBucket) {
+        List<RouteStatus> statuses = statusBucket == null ? List.of(RouteStatus.values()) : switch (statusBucket) {
             case ONGOING -> List.of(RouteStatus.IN_PROGRESS);
             case COMPLETED -> List.of(RouteStatus.COMPLETED);
             case CANCELLED -> List.of(RouteStatus.CANCELLED);
