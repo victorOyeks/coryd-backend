@@ -453,6 +453,10 @@ public class BookingService {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
+        if (bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(request.riderId(), ACTIVE_TRIP_STATUSES).isPresent()) {
+            throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before booking another");
+        }
+
         int updated = routePostRepository.holdSeats(routePostId, request.seatCount());
         if (updated == 0) {
             throw new BadRequestException("Not enough seats available");
