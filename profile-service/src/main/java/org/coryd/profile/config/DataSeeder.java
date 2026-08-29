@@ -6,6 +6,7 @@ import org.coryd.common.devseed.SeedFixtures;
 import org.coryd.common.enums.DocumentType;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
+import org.coryd.profile.client.IdentityAuthClient;
 import org.coryd.profile.dto.ItemDecision;
 import org.coryd.profile.dto.ReviewableItem;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
@@ -29,13 +30,16 @@ import java.util.List;
 
 /**
  * dev/test only - the profile-service half of the fleet identity-service's DataSeeder starts:
- * for every SeedFixtures.DRIVERS entry, builds a submitted-and-complete DriverProfile/Vehicle/
- * pair of DriverDocuments, then runs the exact same VerificationAggregationService.decide() an
- * OPS_ADMIN would use to approve a real driver - so it ends up APPROVED via the real code path
- * (Kafka DriverApprovedEvent included, which is what flips trip-service's DriverVerificationCache
- * so these drivers can actually post routes), not a shortcut that bypasses it. Every
- * SeedFixtures.RIDERS entry gets a plain RiderProfile - riders don't have a verification step.
- * Idempotent: safe to run on every restart.
+ * for every SeedFixtures.DRIVERS entry, resolves its real userId by logging in as it (see
+ * IdentityAuthClient - a fixed id doesn't survive identity-service's own UUID generation, so
+ * this is how the two independently-seeded services end up agreeing on the same id), builds a
+ * submitted-and-complete DriverProfile/Vehicle/pair of DriverDocuments against that userId, then
+ * runs the exact same VerificationAggregationService.decide() an OPS_ADMIN would use to approve
+ * a real driver - so it ends up APPROVED via the real code path (Kafka DriverApprovedEvent
+ * included, which is what flips trip-service's DriverVerificationCache so these drivers can
+ * actually post routes), not a shortcut that bypasses it. Every SeedFixtures.RIDERS entry gets
+ * a plain RiderProfile - riders don't have a verification step. Idempotent: safe to run on
+ * every restart.
  */
 @Slf4j
 @Component
@@ -50,6 +54,7 @@ public class DataSeeder implements ApplicationRunner {
     private final DriverDocumentRepository driverDocumentRepository;
     private final RiderProfileRepository riderProfileRepository;
     private final VerificationAggregationService verificationAggregationService;
+    private final IdentityAuthClient identityAuthClient;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -62,7 +67,7 @@ public class DataSeeder implements ApplicationRunner {
     }
 
     private void seedDriver(SeedFixtures.SeedPerson driver, int index) {
-        String driverId = driver.id();
+        String driverId = identityAuthClient.resolveUserId(driver.phone(), SeedFixtures.SEED_PASSWORD, UserRole.DRIVER);
 
         DriverProfile profile = driverProfileRepository.findByUserId(driverId)
                 .orElseGet(() -> DriverProfile.builder().userId(driverId).build());
@@ -113,8 +118,9 @@ public class DataSeeder implements ApplicationRunner {
     }
 
     private void seedRider(SeedFixtures.SeedPerson rider) {
-        RiderProfile profile = riderProfileRepository.findByUserId(rider.id())
-                .orElseGet(() -> RiderProfile.builder().userId(rider.id()).build());
+        String riderId = identityAuthClient.resolveUserId(rider.phone(), SeedFixtures.SEED_PASSWORD, UserRole.RIDER);
+        RiderProfile profile = riderProfileRepository.findByUserId(riderId)
+                .orElseGet(() -> RiderProfile.builder().userId(riderId).build());
         profile.setFullName(rider.fullName());
         profile.setEmail(rider.fullName().toLowerCase().replace(" ", "") + "@coryd.test");
         riderProfileRepository.save(profile);

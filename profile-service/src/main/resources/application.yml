@@ -46,6 +46,8 @@ jwt:
   expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
 services:
+  identity:
+    url: ${IDENTITY_SERVICE_URL:http://localhost:9101/identity}
   internal:
     api-key: ${INTERNAL_API_KEY}
 
