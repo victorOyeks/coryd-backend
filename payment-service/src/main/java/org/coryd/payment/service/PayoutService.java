@@ -44,7 +44,7 @@ public class PayoutService {
             throw new BadRequestException("Withdrawal amount must be greater than zero");
         }
 
-        PayoutRecipient recipient = payoutRecipientRepository.findByDriverId(driverId)
+        PayoutRecipient recipient = payoutRecipientRepository.findByDriverIdAndIsDefaultTrue(driverId)
                 .filter(r -> r.getGatewayRecipientCode() != null)
                 .orElseThrow(() -> new BadRequestException("Add and verify a bank account before withdrawing"));
 
@@ -120,7 +120,7 @@ public class PayoutService {
         if (!callerId.equals(payout.getDriverId())) {
             throw new UnauthorizedException("Only this payout's driver can view its receipt");
         }
-        PayoutRecipient recipient = payoutRecipientRepository.findByDriverId(payout.getDriverId()).orElse(null);
+        PayoutRecipient recipient = payoutRecipientRepository.findByDriverIdAndIsDefaultTrue(payout.getDriverId()).orElse(null);
 
         return new PayoutReceiptResponse(
                 payout.getId(), payout.getStatus(), payout.getAmount(), payout.getCreatedAt(),

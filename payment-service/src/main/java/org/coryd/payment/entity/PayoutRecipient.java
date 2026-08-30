@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -11,6 +12,9 @@ import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 
 
+/** A driver can save several bank accounts (Payout Setup screen) - isDefault marks the one
+ * actual withdrawals go to; exactly one row per driver has it true (enforced in
+ * PayoutRecipientService, not the database). */
 @Entity
 @Table(name = "payout_recipients", schema = "payment")
 @Getter
@@ -20,7 +24,7 @@ import org.coryd.common.entity.BaseEntity;
 @AllArgsConstructor
 public class PayoutRecipient extends BaseEntity {
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private String driverId;
 
     @Column(nullable = false, length = 100)
@@ -35,6 +39,10 @@ public class PayoutRecipient extends BaseEntity {
     @Column(nullable = false, length = 100)
     private String accountName;
 
-    /** Non-null means "Verified" on the Withdraw Funds screen - the real Paystack transfer recipient exists, not just locally-saved bank details. */
+    /** Non-null means "Verified" on the Payout Setup screen - the real Paystack transfer recipient exists, not just locally-saved bank details. */
     private String gatewayRecipientCode;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean isDefault = false;
 }

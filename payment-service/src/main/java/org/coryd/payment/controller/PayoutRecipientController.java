@@ -12,6 +12,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -37,10 +38,23 @@ public class PayoutRecipientController {
         return ApiResponse.ok(payoutRecipientService.resolve(accountNumber, bankCode));
     }
 
-    /** Sets which bank account a driver's future withdrawals go to - ownership-gated, since getting this wrong would mean redirecting someone else's payouts. */
+    /** Payout Setup screen's saved-accounts list. */
+    @GetMapping("/payout-recipients/drivers/{driverId}")
+    public ApiResponse<List<PayoutRecipient>> list(@PathVariable String driverId) {
+        return ApiResponse.ok(payoutRecipientService.list(driverId));
+    }
+
+    /** Adds a new saved bank account - ownership-gated, since getting this wrong would mean saving bank details under someone else's account. */
     @PostMapping("/payout-recipients/drivers/{driverId}")
-    public ApiResponse<PayoutRecipient> upsert(@AuthenticationPrincipal CoRydUserDetails principal,
-                                                @PathVariable String driverId, @Valid @RequestBody PayoutRecipientRequest request) {
-        return ApiResponse.ok(payoutRecipientService.upsert(driverId, principal.getUserId(), request));
+    public ApiResponse<PayoutRecipient> add(@AuthenticationPrincipal CoRydUserDetails principal,
+                                             @PathVariable String driverId, @Valid @RequestBody PayoutRecipientRequest request) {
+        return ApiResponse.ok(payoutRecipientService.add(driverId, principal.getUserId(), request));
+    }
+
+    /** "Select preferred payout account" - switches which saved account future withdrawals go to. */
+    @PutMapping("/payout-recipients/drivers/{driverId}/{recipientId}/select")
+    public ApiResponse<PayoutRecipient> selectDefault(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                       @PathVariable String driverId, @PathVariable String recipientId) {
+        return ApiResponse.ok(payoutRecipientService.selectDefault(driverId, principal.getUserId(), recipientId));
     }
 }

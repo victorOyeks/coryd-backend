@@ -12,5 +12,6 @@
     <include file="db/changelog/001-initial-schema.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/002-wallets.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/003-wallet-payouts.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/004-payout-recipients-multi.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
