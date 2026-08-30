@@ -67,4 +67,9 @@ public class DriverProfile extends BaseEntity {
      * onboarding checklist has to keep saying so.
      */
     private Instant selfieSubmittedAt;
+
+    /** Set once, the first time this driver ever reaches overallStatus APPROVED - never moves
+     * after that, even if a later rejection + re-approval cycle happens. "Verified Since" on the
+     * Verification Status screen. */
+    private Instant verifiedSince;
 }

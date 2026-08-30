@@ -26,6 +26,7 @@ import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -65,7 +66,8 @@ public class VerificationAggregationService {
                                 vehicle.getMake(), vehicle.getModel(), vehicle.getYear(), vehicle.getColor(), vehicle.getPlateNumber(),
                                 vehicle.getExteriorPhotoUrl(), vehicle.getInteriorPhotoUrl(), vehicle.isHasAC(), vehicle.isAcConfirmedWorking())),
                 documentStatuses(documents),
-                computeOverallStatus(profile, vehicle, documents)
+                computeOverallStatus(profile, vehicle, documents),
+                profile == null ? null : profile.getVerifiedSince()
         );
     }
 
@@ -182,6 +184,11 @@ public class VerificationAggregationService {
         VerificationStatus overall = computeOverallStatus(profile, vehicle, documents);
         String vehicleId = vehicle == null ? null : vehicle.getId();
         String email = profile == null ? null : profile.getEmail();
+
+        if (overall == VerificationStatus.APPROVED && profile != null && profile.getVerifiedSince() == null) {
+            profile.setVerifiedSince(Instant.now());
+            driverProfileRepository.save(profile);
+        }
 
         if (overall == VerificationStatus.APPROVED) {
             logKafkaResult(driverId, KafkaTopics.DRIVER_APPROVED,
