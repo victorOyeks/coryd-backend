@@ -20,5 +20,6 @@
     <include file="db/changelog/009-saved-places-user-id.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/010-rating-booking-id-nullable.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/011-chat-messages.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/012-chat-message-media-public-id.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

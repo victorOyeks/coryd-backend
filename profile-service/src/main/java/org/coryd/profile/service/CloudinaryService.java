@@ -41,9 +41,9 @@ public class CloudinaryService {
 
         try {
             String publicId = folder + "/" + UUID.randomUUID().toString().replace("-", "");
-            String contentType = file.getContentType();
+            String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase();
             String resourceType = "application/pdf".equals(contentType) ? "raw"
-                    : ALLOWED_AUDIO_TYPES.contains(contentType == null ? null : contentType.toLowerCase()) ? "video"
+                    : ALLOWED_AUDIO_TYPES.contains(contentType) ? "video"
                     : "image";
 
             @SuppressWarnings("unchecked")

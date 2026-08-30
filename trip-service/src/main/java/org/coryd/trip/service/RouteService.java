@@ -91,6 +91,7 @@ public class RouteService {
     private final MapsService mapsService;
     private final MatchingProperties matchingProperties;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ChatService chatService;
 
     @Transactional
     public RoutePost post(String driverId, String callerId, PostRouteRequest request) {
@@ -443,6 +444,9 @@ public class RouteService {
                 .affectedBookingIds(affectedIds)
                 .cancelledAt(LocalDateTime.now())
                 .build());
+
+        // Same as completion - the route's group chat has no reason to outlive the route itself.
+        chatService.deleteChatForRoute(routePostId);
     }
 
     /**

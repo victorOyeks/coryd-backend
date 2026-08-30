@@ -41,4 +41,8 @@ public class ChatMessage extends BaseEntity {
 
     /** Only set for VOICE messages. */
     private Integer durationSeconds;
+
+    /** Cloudinary public_id for a VOICE message's audio, from the earlier /media/upload response -
+     * lets the route's media be purged from Cloudinary itself when its chat is deleted, not just this row. */
+    private String mediaPublicId;
 }

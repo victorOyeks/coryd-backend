@@ -8,11 +8,11 @@ import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.BookingStatusHistoryRepository;
-import org.coryd.trip.repository.ChatMessageRepository;
 import org.coryd.trip.repository.IssueReportRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SosIncidentRepository;
+import org.coryd.trip.service.ChatService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,7 +40,7 @@ public class RouteResetService {
     private final RatingRepository ratingRepository;
     private final IssueReportRepository issueReportRepository;
     private final SosIncidentRepository sosIncidentRepository;
-    private final ChatMessageRepository chatMessageRepository;
+    private final ChatService chatService;
     private final PaymentDevClient paymentDevClient;
 
     @Transactional
@@ -63,7 +63,7 @@ public class RouteResetService {
             sosIncidentsDeleted = sosIncidentRepository.deleteByBookingIdIn(bookingIds);
         }
         bookingRepository.deleteByRoutePostId(routePostId);
-        long chatMessagesDeleted = chatMessageRepository.deleteByRoutePostId(routePostId);
+        long chatMessagesDeleted = chatService.deleteChatForRoute(routePostId);
 
         RouteStatus previousStatus = route.getStatus();
         route.setStatus(RouteStatus.PUBLISHED);

@@ -2,8 +2,10 @@ package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.enums.ChatMessageType;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
+import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.dto.SendChatMessageRequest;
 import org.coryd.trip.entity.ChatMessage;
 import org.coryd.trip.entity.RoutePost;
@@ -22,8 +24,8 @@ import java.util.Set;
  * WebSocketAuthInterceptor/LocationService already do it (driver, or any rider with a
  * non-terminal booking on this route) rather than a separate membership table: a rider is "in"
  * the chat exactly as long as their booking is live, no explicit add/remove step needed on
- * booking or cancellation. Every message is deleted the moment the route completes -
- * see BookingService.completeRoute().
+ * booking or cancellation. Every message is deleted the moment the route completes or is
+ * cancelled - see BookingService.completeRoute() and RouteService.cancel().
  */
 @Service
 @RequiredArgsConstructor
@@ -36,6 +38,7 @@ public class ChatService {
     private final RoutePostRepository routePostRepository;
     private final BookingRepository bookingRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ProfileServiceClient profileServiceClient;
 
     public List<ChatMessage> getMessages(String routePostId, String callerId) {
         requireParty(routePostId, callerId);
@@ -52,16 +55,26 @@ public class ChatService {
                 .type(request.type())
                 .content(request.content())
                 .durationSeconds(request.durationSeconds())
+                .mediaPublicId(request.mediaPublicId())
                 .build());
 
         messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/chat", message);
         return message;
     }
 
-    /** Called once, right after a route is marked COMPLETED - the whole conversation is gone, not just marked deleted. */
+    /** Called once a route reaches COMPLETED or CANCELLED (and by the dev route-reset tool) - the
+     * whole conversation is gone, not just marked deleted, and any voice notes are purged from
+     * Cloudinary too, not just this table. Returns how many messages were deleted. */
     @Transactional
-    public void deleteChatForRoute(String routePostId) {
+    public long deleteChatForRoute(String routePostId) {
+        List<ChatMessage> messages = chatMessageRepository.findByRoutePostIdOrderByCreatedAtAsc(routePostId);
         chatMessageRepository.deleteByRoutePostId(routePostId);
+
+        messages.stream()
+                .filter(m -> m.getType() == ChatMessageType.VOICE && m.getMediaPublicId() != null)
+                .forEach(m -> profileServiceClient.deleteMedia(m.getMediaPublicId(), "video"));
+
+        return messages.size();
     }
 
     private void requireParty(String routePostId, String callerId) {

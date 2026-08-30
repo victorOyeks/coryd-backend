@@ -114,6 +114,22 @@ public class ProfileServiceClient {
         }
     }
 
+    /** Best-effort: a route's chat is deleted from this service's own DB regardless of whether the
+     * Cloudinary asset behind a voice note can be purged, so a failure here only logs a warning. */
+    public void deleteMedia(String publicId, String resourceType) {
+        try {
+            restClient.delete()
+                    .uri(uriBuilder -> uriBuilder.path("/internal/media")
+                            .queryParam("publicId", publicId)
+                            .queryParam("resourceType", resourceType)
+                            .build())
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (Exception e) {
+            log.warn("Could not delete Cloudinary media {}: {}", publicId, e.getMessage());
+        }
+    }
+
     /** Every emergency contact the rider has saved (Share Trip, SOS alert all of them, not just the primary). */
     public List<RiderContact> fetchRiderContacts(String riderId) {
         try {
