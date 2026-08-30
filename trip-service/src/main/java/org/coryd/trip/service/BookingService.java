@@ -95,6 +95,7 @@ public class BookingService {
     private final ShareTokenService shareTokenService;
     private final LocationService locationService;
     private final MapsService mapsService;
+    private final ChatService chatService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
@@ -706,6 +707,9 @@ public class BookingService {
         route.setStatus(RouteStatus.COMPLETED);
         route.setCompletedAt(Instant.now());
         routePostRepository.save(route);
+
+        // The Trip Group Chat's whole purpose ends with the trip - delete its conversation outright, not just mark it inactive.
+        chatService.deleteChatForRoute(routePostId);
 
         List<Booking> finalBookings = bookingRepository.findByRoutePostId(routePostId);
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(finalBookings);

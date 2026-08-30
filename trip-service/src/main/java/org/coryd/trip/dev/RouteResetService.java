@@ -8,6 +8,7 @@ import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.BookingStatusHistoryRepository;
+import org.coryd.trip.repository.ChatMessageRepository;
 import org.coryd.trip.repository.IssueReportRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
@@ -39,6 +40,7 @@ public class RouteResetService {
     private final RatingRepository ratingRepository;
     private final IssueReportRepository issueReportRepository;
     private final SosIncidentRepository sosIncidentRepository;
+    private final ChatMessageRepository chatMessageRepository;
     private final PaymentDevClient paymentDevClient;
 
     @Transactional
@@ -61,6 +63,7 @@ public class RouteResetService {
             sosIncidentsDeleted = sosIncidentRepository.deleteByBookingIdIn(bookingIds);
         }
         bookingRepository.deleteByRoutePostId(routePostId);
+        long chatMessagesDeleted = chatMessageRepository.deleteByRoutePostId(routePostId);
 
         RouteStatus previousStatus = route.getStatus();
         route.setStatus(RouteStatus.PUBLISHED);
@@ -77,7 +80,7 @@ public class RouteResetService {
         RouteResetResult result = new RouteResetResult(
                 routePostId, previousStatus.name(), route.getSeatCapacity(), bookingIds.size(),
                 statusHistoryDeleted, ratingsDeleted, issueReportsDeleted, sosIncidentsDeleted,
-                paymentRecordsPurged);
+                chatMessagesDeleted, paymentRecordsPurged);
         log.warn("DEV route reset: {}", result);
         return result;
     }

@@ -25,8 +25,8 @@ import java.util.regex.Pattern;
 /**
  * Authenticates the STOMP CONNECT frame with the same JwtUtil plain REST calls use (the token
  * travels as a STOMP native header, not a query param, so it never ends up in a URL/access log)
- * and, on SUBSCRIBE, checks the caller is actually a party to the booking they're trying to
- * read location updates for.
+ * and, on SUBSCRIBE, checks the caller is actually a party to the booking/route they're trying
+ * to read live location updates or Trip Group Chat messages for.
  */
 @Slf4j
 @Component
@@ -35,6 +35,7 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
     private static final Pattern LOCATION_TOPIC = Pattern.compile("^/topic/bookings/([^/]+)/location$");
     private static final Pattern ROUTE_LOCATION_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/location$");
+    private static final Pattern ROUTE_CHAT_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/chat$");
     private static final Set<BookingStatus> NON_TERMINAL_BOOKING_STATUSES =
             Set.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
@@ -79,6 +80,12 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         Matcher routeMatcher = ROUTE_LOCATION_TOPIC.matcher(destination);
         if (routeMatcher.matches()) {
             authorizeRouteSubscription(destination, routeMatcher.group(1), currentUserId(accessor));
+            return;
+        }
+
+        Matcher chatMatcher = ROUTE_CHAT_TOPIC.matcher(destination);
+        if (chatMatcher.matches()) {
+            authorizeRouteSubscription(destination, chatMatcher.group(1), currentUserId(accessor));
         }
     }
 
@@ -104,7 +111,7 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
                 .anyMatch(b -> userId.equals(b.getRiderId()) && NON_TERMINAL_BOOKING_STATUSES.contains(b.getStatus()));
         if (!isDriver && !isActiveRider) {
             log.warn("Rejected WebSocket subscribe to {} - user {} is not a party to route {}", destination, userId, routePostId);
-            throw new MessagingException("Not authorized for this trip's location updates");
+            throw new MessagingException("Not authorized for this trip");
         }
     }
 

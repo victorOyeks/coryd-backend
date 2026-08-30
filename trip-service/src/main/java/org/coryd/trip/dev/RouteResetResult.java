@@ -10,6 +10,7 @@ public record RouteResetResult(
         long ratingsDeleted,
         long issueReportsDeleted,
         long sosIncidentsDeleted,
+        long chatMessagesDeleted,
         String paymentRecordsPurged
 ) {
 }

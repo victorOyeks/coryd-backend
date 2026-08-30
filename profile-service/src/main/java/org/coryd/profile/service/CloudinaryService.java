@@ -26,8 +26,13 @@ public class CloudinaryService {
     @Value("${cloudinary.folder:coryd/uploads}")
     private String folder;
 
-    private static final List<String> ALLOWED_TYPES = List.of(
+    private static final List<String> ALLOWED_IMAGE_AND_DOC_TYPES = List.of(
             "image/jpeg", "image/jpg", "image/png", "image/webp", "application/pdf"
+    );
+    /** Group chat voice notes - covers the common iOS/Android recorder output formats. Cloudinary
+     * files audio under resource_type "video", not "raw" or "image" - see upload() below. */
+    private static final List<String> ALLOWED_AUDIO_TYPES = List.of(
+            "audio/m4a", "audio/x-m4a", "audio/mp4", "audio/aac", "audio/mpeg", "audio/wav", "audio/webm", "audio/3gpp"
     );
     private static final long MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -36,7 +41,10 @@ public class CloudinaryService {
 
         try {
             String publicId = folder + "/" + UUID.randomUUID().toString().replace("-", "");
-            boolean isPdf = "application/pdf".equals(file.getContentType());
+            String contentType = file.getContentType();
+            String resourceType = "application/pdf".equals(contentType) ? "raw"
+                    : ALLOWED_AUDIO_TYPES.contains(contentType == null ? null : contentType.toLowerCase()) ? "video"
+                    : "image";
 
             @SuppressWarnings("unchecked")
             Map<String, Object> result = cloudinary.uploader().upload(
@@ -44,7 +52,7 @@ public class CloudinaryService {
                     ObjectUtils.asMap(
                             "public_id", publicId,
                             "overwrite", false,
-                            "resource_type", isPdf ? "raw" : "image"
+                            "resource_type", resourceType
                     )
             );
 
@@ -82,9 +90,9 @@ public class CloudinaryService {
         if (file == null || file.isEmpty()) {
             throw new BadRequestException("No file was uploaded");
         }
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_TYPES.contains(contentType.toLowerCase())) {
-            throw new BadRequestException("Unsupported file type - only JPEG, PNG, WebP, and PDF are accepted");
+        String contentType = file.getContentType() == null ? null : file.getContentType().toLowerCase();
+        if (contentType == null || !(ALLOWED_IMAGE_AND_DOC_TYPES.contains(contentType) || ALLOWED_AUDIO_TYPES.contains(contentType))) {
+            throw new BadRequestException("Unsupported file type - only JPEG, PNG, WebP, PDF, and common audio formats (m4a/mp4/aac/mp3/wav/webm/3gp) are accepted");
         }
         if (file.getSize() > MAX_BYTES) {
             throw new BadRequestException("File too large - maximum size is 10 MB");
