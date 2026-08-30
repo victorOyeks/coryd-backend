@@ -14,6 +14,7 @@ import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.SavedPlaceType;
 
+/** Any user's saved location (rider or driver) - "Saved Places" screen. userId is whoever's JWT it was created under, not role-scoped. */
 @Entity
 @Table(name = "saved_places", schema = "trip")
 @Getter
@@ -24,7 +25,7 @@ import org.coryd.common.enums.SavedPlaceType;
 public class SavedPlace extends BaseEntity {
 
     @Column(nullable = false)
-    private String riderId;
+    private String userId;
 
     @Column(nullable = false, length = 100)
     private String label;

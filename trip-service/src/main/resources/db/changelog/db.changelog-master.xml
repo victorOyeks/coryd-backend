@@ -17,5 +17,7 @@
     <include file="db/changelog/006-booking-pickup-point.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/007-route-trip-timestamps.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/008-widen-corridor-key.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/009-saved-places-user-id.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/010-rating-booking-id-nullable.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

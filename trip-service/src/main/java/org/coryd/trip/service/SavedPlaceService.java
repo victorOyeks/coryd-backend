@@ -18,14 +18,14 @@ public class SavedPlaceService {
 
     private final SavedPlaceRepository savedPlaceRepository;
 
-    public List<SavedPlace> getPlaces(String riderId) {
-        return savedPlaceRepository.findByRiderIdOrderByCreatedAtAsc(riderId);
+    public List<SavedPlace> getPlaces(String userId) {
+        return savedPlaceRepository.findByUserIdOrderByCreatedAtAsc(userId);
     }
 
     @Transactional
-    public SavedPlace addPlace(String riderId, SavePlaceRequest request) {
+    public SavedPlace addPlace(String userId, SavePlaceRequest request) {
         return savedPlaceRepository.save(SavedPlace.builder()
-                .riderId(riderId)
+                .userId(userId)
                 .label(request.label())
                 .formattedAddress(request.formattedAddress())
                 .lat(request.lat())
@@ -35,10 +35,10 @@ public class SavedPlaceService {
     }
 
     @Transactional
-    public void deletePlace(String riderId, String placeId) {
+    public void deletePlace(String userId, String placeId) {
         SavedPlace place = savedPlaceRepository.findById(placeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Saved place not found"));
-        if (!riderId.equals(place.getRiderId())) {
+        if (!userId.equals(place.getUserId())) {
             throw new UnauthorizedException("Not authorized for this saved place");
         }
         savedPlaceRepository.delete(place);
