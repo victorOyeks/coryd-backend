@@ -244,11 +244,17 @@ public class BookingService {
         List<String> routeIdsThisWeek = routePostRepository
                 .findByDriverIdAndDepartureTimeBetween(driverId, startOfWeek(), Instant.now())
                 .stream().map(RoutePost::getId).toList();
-        if (routeIdsThisWeek.isEmpty()) {
-            return new DriverTripStatsResponse(0);
-        }
-        long tripsThisWeek = bookingRepository.countByRoutePostIdInAndStatus(routeIdsThisWeek, BookingStatus.COMPLETED);
-        return new DriverTripStatsResponse((int) tripsThisWeek);
+        long tripsThisWeek = routeIdsThisWeek.isEmpty() ? 0
+                : bookingRepository.countByRoutePostIdInAndStatus(routeIdsThisWeek, BookingStatus.COMPLETED);
+
+        BookingRepository.DriverTripCounts counts = bookingRepository.countLifetimeTripsForDriver(driverId);
+        long completed = counts.getCompleted() == null ? 0 : counts.getCompleted();
+        long cancelledByDriver = counts.getCancelledDriver() == null ? 0 : counts.getCancelledDriver();
+        long reliabilityBase = completed + cancelledByDriver;
+        Integer reliabilityPercent = reliabilityBase == 0 ? null
+                : (int) Math.round(completed * 100.0 / reliabilityBase);
+
+        return new DriverTripStatsResponse((int) tripsThisWeek, completed, reliabilityPercent);
     }
 
     /** Driver Trip History screen - one row per posted route (not per booking), newest first, optionally filtered by status bucket and searched by origin/destination. No status picked means every route regardless of status (including still-upcoming PUBLISHED/FULL ones), not just the "already happened" ONGOING/COMPLETED/CANCELLED buckets. seatsBooked/totalEarned are summed from every non-HELD booking regardless of the route's own status, so a cancelled route still shows what it actually had booked, not zeros. */

@@ -35,4 +35,22 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
             """)
     Page<Booking> findHistory(@Param("riderId") String riderId, @Param("statuses") List<BookingStatus> statuses,
                                @Param("search") String search, Pageable pageable);
+
+    /** Dashboard's lifetime "Total Trips"/"Reliability" tiles - one query for both counts (not two),
+     * joined against route_posts since Booking has no JPA relation to RoutePost, only a plain
+     * routePostId column. */
+    @Query(value = """
+            select
+                count(*) filter (where b.status = 'COMPLETED') as completed,
+                count(*) filter (where b.status = 'CANCELLED_DRIVER') as cancelledDriver
+            from trip.bookings b
+            join trip.route_posts r on b.route_post_id = r.id
+            where r.driver_id = :driverId
+            """, nativeQuery = true)
+    DriverTripCounts countLifetimeTripsForDriver(@Param("driverId") String driverId);
+
+    interface DriverTripCounts {
+        Long getCompleted();
+        Long getCancelledDriver();
+    }
 }
