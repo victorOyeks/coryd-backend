@@ -24,6 +24,7 @@ import org.coryd.identity.dto.ResendOtpRequest;
 import org.coryd.identity.dto.ResetPasswordRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
+import org.coryd.identity.dto.UserContactResponse;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.entity.OtpCode;
 import org.coryd.identity.entity.RefreshToken;
@@ -286,6 +287,13 @@ public class AuthService {
         boolean termsAccepted = user.getTermsAcceptedAt() != null;
 
         return new OnboardingStatusResponse(phoneVerified, passwordSet, profileComplete, termsAccepted);
+    }
+
+    /** The one place a logged-in user's own phone number is available - profile-service's DriverProfile/RiderProfile never store it, and the only other place it lives (GET /internal/users/{userId}/contact) is service-to-service only, not reachable with a user's own JWT. */
+    public UserContactResponse getMyContact(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+        return new UserContactResponse(user.getId(), user.getFullName(), user.getPhone());
     }
 
     @Transactional

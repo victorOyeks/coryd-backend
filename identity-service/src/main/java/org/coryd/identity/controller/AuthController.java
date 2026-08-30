@@ -16,6 +16,7 @@ import org.coryd.identity.dto.ResendOtpRequest;
 import org.coryd.identity.dto.ResetPasswordRequest;
 import org.coryd.identity.dto.SetPasswordRequest;
 import org.coryd.identity.dto.SignupRequest;
+import org.coryd.identity.dto.UserContactResponse;
 import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.service.AuthService;
 import org.springframework.http.HttpHeaders;
@@ -113,5 +114,11 @@ public class AuthController {
     public ApiResponse<OnboardingStatusResponse> onboardingStatus(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                     HttpServletRequest request) {
         return ApiResponse.ok(authService.onboardingStatus(principal, request.getHeader(HttpHeaders.AUTHORIZATION)));
+    }
+
+    /** The only self-serve way to get a logged-in user's own phone number - profile-service's driver/rider profiles never store it. */
+    @GetMapping("/me")
+    public ApiResponse<UserContactResponse> me(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(authService.getMyContact(principal.getUserId()));
     }
 }
