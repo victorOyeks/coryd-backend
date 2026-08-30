@@ -2,10 +2,13 @@ package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
+import org.coryd.common.kafka.events.RiderProfileCreatedEvent;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
 import org.coryd.profile.entity.RiderProfile;
 import org.coryd.profile.repository.RiderProfileRepository;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +19,7 @@ import java.util.List;
 public class RiderProfileService {
 
     private final RiderProfileRepository riderProfileRepository;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
     public RiderProfile get(String userId) {
         return riderProfileRepository.findByUserId(userId)
@@ -29,10 +33,15 @@ public class RiderProfileService {
                 .toList();
     }
 
+    /** Publishes RiderProfileCreatedEvent only the first time this profile is created, so trip-service seeds this rider's system starting rating exactly once, not on every profile edit. */
     @Transactional
     public RiderProfile updateMine(String userId, UpdateRiderProfileRequest request) {
-        RiderProfile profile = riderProfileRepository.findByUserId(userId)
-                .orElseGet(() -> RiderProfile.builder().userId(userId).build());
+        boolean isNewProfile = false;
+        RiderProfile profile = riderProfileRepository.findByUserId(userId).orElse(null);
+        if (profile == null) {
+            isNewProfile = true;
+            profile = RiderProfile.builder().userId(userId).build();
+        }
 
         profile.setFullName(request.fullName());
         profile.setEmail(request.email());
@@ -40,6 +49,10 @@ public class RiderProfileService {
         profile.setEmergencyContactName(request.emergencyContactName());
         profile.setEmergencyContactPhone(request.emergencyContactPhone());
 
-        return riderProfileRepository.save(profile);
+        RiderProfile saved = riderProfileRepository.save(profile);
+        if (isNewProfile) {
+            kafkaTemplate.send(KafkaTopics.RIDER_PROFILE_CREATED, RiderProfileCreatedEvent.builder().riderId(userId).build());
+        }
+        return saved;
     }
 }

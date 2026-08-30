@@ -23,7 +23,7 @@ import org.coryd.common.enums.RatingDirection;
 @AllArgsConstructor
 public class Rating extends BaseEntity {
 
-    @Column(nullable = false)
+    /** Null only for the system-seeded starting rating every new driver/rider profile gets - every real rating is always tied to a booking. */
     private String bookingId;
 
     @Column(nullable = false)

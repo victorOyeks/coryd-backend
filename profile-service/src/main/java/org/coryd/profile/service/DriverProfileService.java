@@ -3,10 +3,13 @@ package org.coryd.profile.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.kafka.KafkaTopics;
+import org.coryd.common.kafka.events.DriverProfileCreatedEvent;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.repository.DriverProfileRepository;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +21,7 @@ import java.util.List;
 public class DriverProfileService {
 
     private final DriverProfileRepository driverProfileRepository;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
     public DriverProfile get(String userId) {
         return driverProfileRepository.findByUserId(userId)
@@ -31,11 +35,15 @@ public class DriverProfileService {
                 .toList();
     }
 
-    /** Upsert: this is now the only place a DriverProfile row is ever created - no event listener creates a shell in the background, so there's no race to reason about here at all. */
+    /** Upsert: this is now the only place a DriverProfile row is ever created - no event listener creates a shell in the background, so there's no race to reason about here at all. Publishes DriverProfileCreatedEvent only the first time, so trip-service seeds this driver's system starting rating exactly once, not on every profile edit. */
     @Transactional
     public DriverProfile updateMine(String userId, UpdateDriverProfileRequest request) {
-        DriverProfile profile = driverProfileRepository.findByUserId(userId)
-                .orElseGet(() -> DriverProfile.builder().userId(userId).build());
+        boolean isNewProfile = false;
+        DriverProfile profile = driverProfileRepository.findByUserId(userId).orElse(null);
+        if (profile == null) {
+            isNewProfile = true;
+            profile = DriverProfile.builder().userId(userId).build();
+        }
 
         profile.setLegalName(request.legalName());
         profile.setPhotoUrl(request.photoUrl());
@@ -58,6 +66,10 @@ public class DriverProfileService {
             profile.setSelfieRejectionReason(null);
         }
 
-        return driverProfileRepository.save(profile);
+        DriverProfile saved = driverProfileRepository.save(profile);
+        if (isNewProfile) {
+            kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
+        }
+        return saved;
     }
 }
