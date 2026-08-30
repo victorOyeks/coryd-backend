@@ -5,10 +5,10 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
+import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
-import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.service.DriverProfileService;
 import org.coryd.profile.service.VerificationAggregationService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -29,13 +29,13 @@ public class DriverProfileController {
     private final VerificationAggregationService verificationAggregationService;
 
     @GetMapping("/me")
-    public ApiResponse<DriverProfile> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
-        return ApiResponse.ok(driverProfileService.get(principal.getUserId()));
+    public ApiResponse<DriverProfileResponse> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(driverProfileService.getMine(principal.getUserId()));
     }
 
     @PutMapping("/me")
-    public ApiResponse<DriverProfile> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
-                                                  @Valid @RequestBody UpdateDriverProfileRequest request) {
+    public ApiResponse<DriverProfileResponse> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                          @Valid @RequestBody UpdateDriverProfileRequest request) {
         return ApiResponse.ok(driverProfileService.updateMine(principal.getUserId(), request));
     }
 

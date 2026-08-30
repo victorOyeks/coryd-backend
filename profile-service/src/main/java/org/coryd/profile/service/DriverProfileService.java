@@ -5,6 +5,8 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverProfileCreatedEvent;
+import org.coryd.profile.client.IdentityServiceClient;
+import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.entity.DriverProfile;
@@ -22,7 +24,9 @@ public class DriverProfileService {
 
     private final DriverProfileRepository driverProfileRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final IdentityServiceClient identityServiceClient;
 
+    /** Internal/batch use (InternalDriverController, getBatch below) - no phone, no extra cross-service call. */
     public DriverProfile get(String userId) {
         return driverProfileRepository.findByUserId(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
@@ -35,9 +39,14 @@ public class DriverProfileService {
                 .toList();
     }
 
+    /** The driver's own Profile screen - the one place phone belongs alongside everything else, since DriverProfile itself never stores it. */
+    public DriverProfileResponse getMine(String userId) {
+        return toResponse(get(userId));
+    }
+
     /** Upsert: this is now the only place a DriverProfile row is ever created - no event listener creates a shell in the background, so there's no race to reason about here at all. Publishes DriverProfileCreatedEvent only the first time, so trip-service seeds this driver's system starting rating exactly once, not on every profile edit. */
     @Transactional
-    public DriverProfile updateMine(String userId, UpdateDriverProfileRequest request) {
+    public DriverProfileResponse updateMine(String userId, UpdateDriverProfileRequest request) {
         boolean isNewProfile = false;
         DriverProfile profile = driverProfileRepository.findByUserId(userId).orElse(null);
         if (profile == null) {
@@ -70,6 +79,10 @@ public class DriverProfileService {
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
         }
-        return saved;
+        return toResponse(saved);
+    }
+
+    private DriverProfileResponse toResponse(DriverProfile profile) {
+        return DriverProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()));
     }
 }

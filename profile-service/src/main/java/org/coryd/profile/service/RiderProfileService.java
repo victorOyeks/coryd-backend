@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RiderProfileCreatedEvent;
+import org.coryd.profile.client.IdentityServiceClient;
+import org.coryd.profile.dto.RiderProfileResponse;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
 import org.coryd.profile.entity.RiderProfile;
@@ -20,7 +22,9 @@ public class RiderProfileService {
 
     private final RiderProfileRepository riderProfileRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final IdentityServiceClient identityServiceClient;
 
+    /** Internal/batch use (RiderProfileController.get, getBatch below) - no phone, no extra cross-service call. */
     public RiderProfile get(String userId) {
         return riderProfileRepository.findByUserId(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Rider profile not found"));
@@ -33,9 +37,14 @@ public class RiderProfileService {
                 .toList();
     }
 
+    /** The rider's own Profile screen - the one place phone belongs alongside everything else, since RiderProfile itself never stores it. */
+    public RiderProfileResponse getMine(String userId) {
+        return toResponse(get(userId));
+    }
+
     /** Publishes RiderProfileCreatedEvent only the first time this profile is created, so trip-service seeds this rider's system starting rating exactly once, not on every profile edit. */
     @Transactional
-    public RiderProfile updateMine(String userId, UpdateRiderProfileRequest request) {
+    public RiderProfileResponse updateMine(String userId, UpdateRiderProfileRequest request) {
         boolean isNewProfile = false;
         RiderProfile profile = riderProfileRepository.findByUserId(userId).orElse(null);
         if (profile == null) {
@@ -53,6 +62,10 @@ public class RiderProfileService {
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.RIDER_PROFILE_CREATED, RiderProfileCreatedEvent.builder().riderId(userId).build());
         }
-        return saved;
+        return toResponse(saved);
+    }
+
+    private RiderProfileResponse toResponse(RiderProfile profile) {
+        return RiderProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()));
     }
 }
