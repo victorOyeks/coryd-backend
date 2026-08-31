@@ -30,8 +30,12 @@ public class SecurityConfig {
                         .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
                         // Real auth for the socket happens inside the STOMP CONNECT frame
                         // (WebSocketAuthInterceptor), not at this HTTP-layer handshake - Spring
-                        // Security still gates the initial SockJS handshake request otherwise.
-                        .requestMatchers("/ws/**").permitAll()
+                        // Security still gates the initial handshake request otherwise. Both
+                        // endpoints need this: /ws (SockJS, browser) and /ws-native (plain
+                        // WebSocket upgrade, mobile) - the native upgrade request carries no
+                        // Authorization header at all, so leaving it off here 401s the upgrade
+                        // itself before a single STOMP frame is ever sent.
+                        .requestMatchers("/ws/**", "/ws-native/**").permitAll()
                         // Read-only public trip-share link - the whole point is no login (see ShareController).
                         .requestMatchers("/shared/**").permitAll()
                         .anyRequest().authenticated())
