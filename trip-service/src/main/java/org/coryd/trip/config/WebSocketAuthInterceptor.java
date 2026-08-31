@@ -15,6 +15,7 @@ import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
+import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Component;
 
@@ -45,7 +46,16 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
-        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(message);
+        // MUST be getAccessor(), not StompHeaderAccessor.wrap() - wrap() builds a fresh,
+        // disconnected accessor, so a CONNECT-time setUser() below would mutate a throwaway
+        // copy that's never read back. getAccessor() returns the same live accessor instance
+        // Spring's STOMP session handling reads afterward to attach the Principal to the
+        // session for every later frame - without it, SUBSCRIBE always sees accessor.getUser()
+        // as null even though CONNECT itself appeared to succeed.
+        StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+        if (accessor == null) {
+            accessor = StompHeaderAccessor.wrap(message);
+        }
 
         if (StompCommand.CONNECT.equals(accessor.getCommand())) {
             CoRydUserDetails userDetails = authenticate(accessor.getFirstNativeHeader("Authorization"));
