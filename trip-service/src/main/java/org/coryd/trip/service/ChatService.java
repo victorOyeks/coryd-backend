@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.ChatMessageType;
+import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.trip.client.ProfileServiceClient;
@@ -80,6 +81,13 @@ public class ChatService {
     private void requireParty(String routePostId, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+
+        // The conversation is gone once the route is COMPLETED/CANCELLED (deleteChatForRoute already
+        // ran) - without this, the driver's own isDriver check below has no route-status condition
+        // of its own, so they could otherwise still write new messages into an already-deleted chat.
+        if (route.getStatus() == RouteStatus.COMPLETED || route.getStatus() == RouteStatus.CANCELLED) {
+            throw new UnauthorizedException("This trip's group chat has ended");
+        }
 
         boolean isDriver = callerId.equals(route.getDriverId());
         boolean isActiveRider = bookingRepository.findByRoutePostId(routePostId).stream()

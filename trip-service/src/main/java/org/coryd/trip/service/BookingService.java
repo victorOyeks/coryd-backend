@@ -407,7 +407,7 @@ public class BookingService {
         String driverPhone = identityServiceClient.fetchPhone(route.getDriverId());
 
         return new BookingDetailsResponse(
-                booking.getId(), booking.getStatus(),
+                booking.getId(), booking.getRoutePostId(), booking.getStatus(),
                 route.getOriginLabel(), route.getDestinationLabel(),
                 route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(),
                 route.getDepartureTime(),

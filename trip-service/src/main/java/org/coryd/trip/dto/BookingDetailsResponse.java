@@ -14,9 +14,13 @@ import java.time.Instant;
  * overviewPolyline is Google's encoded polyline for the road-following line between origin
  * and destination (same field/format as RoutePreview) - null if Directions couldn't be
  * reached, since a missing map line shouldn't block the rest of this screen.
+ * routePostId is what the client needs to reach the route's Trip Group Chat
+ * (GET/POST /routes/{routePostId}/chat/messages and the /topic/routes/{routePostId}/chat
+ * WebSocket topic) - the chat is scoped to the whole route, not to a single booking.
  */
 public record BookingDetailsResponse(
         String bookingId,
+        String routePostId,
         BookingStatus status,
         String originLabel,
         String destinationLabel,
