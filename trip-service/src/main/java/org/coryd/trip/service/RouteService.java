@@ -409,8 +409,15 @@ public class RouteService {
             BookingStatus.HELD, BookingStatus.CONFIRMED,
             BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
-    @Transactional
     public void cancel(String routePostId, String callerId) {
+        cancel(routePostId, callerId, "DRIVER");
+    }
+
+    /** cancelledBy also drives the rider's push copy ("Your booking was cancelled by ...") - RouteExpiryJob
+     * passes "SYSTEM" for a never-started route so a driver who simply never showed up isn't reported to
+     * the rider as having actively cancelled. */
+    @Transactional
+    public void cancel(String routePostId, String callerId, String cancelledBy) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
         if (!callerId.equals(route.getDriverId())) {
@@ -431,7 +438,7 @@ public class RouteService {
                         .bookingId(booking.getId())
                         .routePostId(routePostId)
                         .riderId(booking.getRiderId())
-                        .cancelledBy("DRIVER")
+                        .cancelledBy(cancelledBy)
                         .feeApplied(false)
                         .cancelledAt(LocalDateTime.now())
                         .build());

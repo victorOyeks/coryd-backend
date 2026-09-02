@@ -118,4 +118,7 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
     int lockOnFirstBooking(@Param("id") String id, @Param("now") Instant now);
 
     List<RoutePost> findByStatusAndDepartureTimeBefore(RouteStatus status, Instant before);
+
+    /** RouteExpiryJob's "never started" sweep - PUBLISHED/FULL routes whose departure has passed by more than the grace window. */
+    List<RoutePost> findByStatusInAndDepartureTimeBefore(List<RouteStatus> statuses, Instant before);
 }
