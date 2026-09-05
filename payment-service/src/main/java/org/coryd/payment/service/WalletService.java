@@ -42,10 +42,21 @@ public class WalletService {
                 });
     }
 
+    // @Transactional here isn't decoration - getOrCreateWallet() calls a @Modifying repository
+    // query (insertIfAbsent), which requires an already-active transaction to execute at all.
+    // getOrCreateWallet()'s OWN @Transactional doesn't provide that when called from here: it's
+    // a same-class call (self-invocation), which bypasses Spring's proxy - the annotation is
+    // silently ignored, and Hibernate throws TransactionRequiredException with no transaction
+    // anywhere in the call chain. Annotating the actual entry point (invoked through the real
+    // proxy, from WalletController) fixes it for the same reason it never mattered before this
+    // method existed: walletRepository.save() always got its own transaction from Spring Data's
+    // CRUD-method wrapping regardless of the caller, but a custom @Modifying query doesn't.
+    @Transactional
     public BigDecimal getBalance(String userId) {
         return getOrCreateWallet(userId).getAvailableBalance();
     }
 
+    @Transactional
     public PagedResponse<WalletTransaction> getTransactions(String userId, Pageable pageable) {
         Wallet wallet = getOrCreateWallet(userId);
         return PagedResponse.from(walletTransactionRepository.findByWalletIdOrderByCreatedAtDesc(wallet.getId(), pageable));
