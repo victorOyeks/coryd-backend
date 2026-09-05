@@ -501,9 +501,38 @@ public class BookingService {
         return booking;
     }
 
+    /**
+     * PAYMENT_SUCCEEDED can arrive well after the 4-minute hold window if a Paystack webhook is
+     * delayed - by then SeatHoldExpiryJob may have already released the seat and cancelled the
+     * booking out from under it. Blindly setting CONFIRMED here would resurrect a booking whose
+     * seat may already be back in inventory (or resold to someone else), with no seat re-hold to
+     * back it up. So this only ever confirms a booking that's still HELD; anything else means the
+     * rider's payment succeeded for a reservation that's already gone, and the right outcome is a
+     * refund, not a fake confirmation - reusing the existing cancellation-refund pipeline (payment-
+     * service's EarningsService.refund() is keyed off bookingId, not the booking's current status,
+     * so republishing BookingCancelledEvent here is enough to trigger it).
+     */
     @Transactional
     public void confirm(String bookingId) {
         Booking booking = getOrThrow(bookingId);
+        if (booking.getStatus() == BookingStatus.CONFIRMED) {
+            return;
+        }
+        if (booking.getStatus() != BookingStatus.HELD) {
+            log.warn("Payment succeeded for booking {} but it's no longer HELD (status={}) - seat hold must have "
+                            + "already expired before the webhook arrived. Refunding instead of confirming.",
+                    bookingId, booking.getStatus());
+            kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
+                    .bookingId(booking.getId())
+                    .routePostId(booking.getRoutePostId())
+                    .riderId(booking.getRiderId())
+                    .cancelledBy("SYSTEM")
+                    .feeApplied(false)
+                    .cancelledAt(LocalDateTime.now())
+                    .build());
+            return;
+        }
+
         booking.setStatus(BookingStatus.CONFIRMED);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Payment succeeded");

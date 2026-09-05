@@ -19,8 +19,10 @@ public class PaymentEventListener {
 
     @KafkaListener(topics = KafkaTopics.PAYMENT_SUCCEEDED, groupId = KafkaConfig.GROUP_ID)
     public void onPaymentSucceeded(PaymentSucceededEvent event) {
+        // confirm() itself logs a warning (and refunds instead) if the booking's seat hold had
+        // already expired by the time this arrived - don't unconditionally claim success here too.
         bookingService.confirm(event.getBookingId());
-        log.info("Booking {} confirmed after successful payment", event.getBookingId());
+        log.info("Payment succeeded for booking {} - handed to BookingService.confirm()", event.getBookingId());
     }
 
     @KafkaListener(topics = KafkaTopics.PAYMENT_FAILED, groupId = KafkaConfig.GROUP_ID)
