@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class PaymentFailedEvent {
     private String bookingId;
+    private String riderId;
     private String reason;
     private LocalDateTime failedAt;
 }

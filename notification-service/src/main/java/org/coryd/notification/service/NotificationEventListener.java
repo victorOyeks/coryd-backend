@@ -13,6 +13,8 @@ import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.common.kafka.events.EmergencyContactPayload;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
+import org.coryd.common.kafka.events.PaymentFailedEvent;
+import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
@@ -51,6 +53,33 @@ public class NotificationEventListener {
         dispatchService.sendPush(event.getRiderId(), "Booking cancelled",
                 "Your booking was cancelled by " + event.getCancelledBy().toLowerCase() + ".", "BOOKING_CANCELLED",
                 event.getBookingId());
+
+        // Only tell the driver when the RIDER was the one who cancelled - a seat just freed up on
+        // their route and they'd otherwise have no way to know. A driver- or system-initiated
+        // cancellation already means the driver knows (they did it, or ROUTE_CANCELLED told them).
+        if ("RIDER".equals(event.getCancelledBy()) && event.getDriverId() != null) {
+            dispatchService.sendPush(event.getDriverId(), "A seat opened up",
+                    "A rider cancelled their booking on your route - the seat is available again.",
+                    "BOOKING_CANCELLED", event.getBookingId());
+        }
+    }
+
+    @KafkaListener(topics = KafkaTopics.PAYMENT_FAILED, groupId = KafkaConfig.GROUP_ID)
+    public void onPaymentFailed(PaymentFailedEvent event) {
+        if (event.getRiderId() == null) {
+            return;
+        }
+        dispatchService.sendPush(event.getRiderId(), "Payment failed",
+                "Your payment couldn't be completed" + (event.getReason() == null ? "." : " - " + event.getReason() + ".")
+                        + " Your seat hold may have expired - please try booking again.",
+                "PAYMENT_FAILED", event.getBookingId());
+    }
+
+    @KafkaListener(topics = KafkaTopics.REFUND_ISSUED, groupId = KafkaConfig.GROUP_ID)
+    public void onRefundIssued(RefundIssuedEvent event) {
+        dispatchService.sendPush(event.getRiderId(), "Refund issued",
+                "You've been refunded ₦" + event.getAmount().toPlainString() + " for a cancelled booking.",
+                "REFUND_ISSUED", event.getBookingId());
     }
 
     @KafkaListener(topics = KafkaTopics.DRIVER_EN_ROUTE, groupId = KafkaConfig.GROUP_ID)
@@ -80,6 +109,17 @@ public class NotificationEventListener {
     public void onTripCompleted(TripCompletedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Trip completed",
                 "Your trip is complete. Rate your driver!", "TRIP_COMPLETED", event.getBookingId());
+
+        // fareTotal here is gross (pre-commission) - it's what the rider paid, not the driver's net
+        // credit, but it's the only figure this event carries; still a reasonable "trip closed out"
+        // confirmation without payment-service's EarningsTransaction data on hand.
+        if (event.getDriverId() != null) {
+            dispatchService.sendPush(event.getDriverId(), "Trip completed",
+                    event.getFareTotal() == null
+                            ? "A trip on your route is complete."
+                            : "A trip on your route is complete - ₦" + event.getFareTotal().toPlainString() + " collected.",
+                    "TRIP_COMPLETED", event.getBookingId());
+        }
     }
 
     @KafkaListener(topics = KafkaTopics.NOTIFY_ME_MATCHED, groupId = KafkaConfig.GROUP_ID)

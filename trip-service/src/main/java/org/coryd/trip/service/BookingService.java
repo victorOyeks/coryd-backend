@@ -576,6 +576,7 @@ public class BookingService {
                 .bookingId(booking.getId())
                 .routePostId(booking.getRoutePostId())
                 .riderId(booking.getRiderId())
+                .driverId(route.getDriverId())
                 .cancelledBy("RIDER")
                 .feeApplied(feeApplies)
                 .cancelledAt(LocalDateTime.now())

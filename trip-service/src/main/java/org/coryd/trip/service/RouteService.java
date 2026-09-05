@@ -438,6 +438,7 @@ public class RouteService {
                         .bookingId(booking.getId())
                         .routePostId(routePostId)
                         .riderId(booking.getRiderId())
+                        .driverId(route.getDriverId())
                         .cancelledBy(cancelledBy)
                         .feeApplied(false)
                         .cancelledAt(LocalDateTime.now())

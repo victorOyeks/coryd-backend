@@ -142,6 +142,7 @@ public class PaymentService {
 
         kafkaTemplate.send(KafkaTopics.PAYMENT_FAILED, PaymentFailedEvent.builder()
                 .bookingId(transaction.getBookingId())
+                .riderId(transaction.getRiderId())
                 .reason(reason)
                 .failedAt(LocalDateTime.now())
                 .build());

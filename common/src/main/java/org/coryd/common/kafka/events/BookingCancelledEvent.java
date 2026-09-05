@@ -15,6 +15,7 @@ public class BookingCancelledEvent {
     private String bookingId;
     private String routePostId;
     private String riderId;
+    private String driverId;
     private String cancelledBy;
     private boolean feeApplied;
     private LocalDateTime cancelledAt;
