@@ -35,7 +35,11 @@ public class WalletService {
     @Transactional
     public Wallet getOrCreateWallet(String userId) {
         return walletRepository.findByUserId(userId)
-                .orElseGet(() -> walletRepository.save(Wallet.builder().userId(userId).build()));
+                .orElseGet(() -> {
+                    walletRepository.insertIfAbsent(UUID.randomUUID().toString(), userId);
+                    return walletRepository.findByUserId(userId)
+                            .orElseThrow(() -> new IllegalStateException("Wallet insert-if-absent left no row for userId=" + userId));
+                });
     }
 
     public BigDecimal getBalance(String userId) {
