@@ -7,6 +7,7 @@ import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.trip.client.ProfileServiceClient;
+import org.coryd.trip.dto.ChatMessageResponse;
 import org.coryd.trip.dto.SendChatMessageRequest;
 import org.coryd.trip.entity.ChatMessage;
 import org.coryd.trip.entity.RoutePost;
@@ -18,7 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Trip Group Chat - one thread per route post, membership computed the same way
@@ -41,14 +44,15 @@ public class ChatService {
     private final SimpMessagingTemplate messagingTemplate;
     private final ProfileServiceClient profileServiceClient;
 
-    public List<ChatMessage> getMessages(String routePostId, String callerId) {
-        requireParty(routePostId, callerId);
-        return chatMessageRepository.findByRoutePostIdOrderByCreatedAtAsc(routePostId);
+    public List<ChatMessageResponse> getMessages(String routePostId, String callerId) {
+        RoutePost route = requireParty(routePostId, callerId);
+        List<ChatMessage> messages = chatMessageRepository.findByRoutePostIdOrderByCreatedAtAsc(routePostId);
+        return enrich(messages, route);
     }
 
     @Transactional
-    public ChatMessage sendMessage(String routePostId, String callerId, SendChatMessageRequest request) {
-        requireParty(routePostId, callerId);
+    public ChatMessageResponse sendMessage(String routePostId, String callerId, SendChatMessageRequest request) {
+        RoutePost route = requireParty(routePostId, callerId);
 
         ChatMessage message = chatMessageRepository.save(ChatMessage.builder()
                 .routePostId(routePostId)
@@ -59,8 +63,46 @@ public class ChatService {
                 .mediaPublicId(request.mediaPublicId())
                 .build());
 
-        messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/chat", message);
-        return message;
+        ChatMessageResponse response = enrich(List.of(message), route).get(0);
+        messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/chat", response);
+        return response;
+    }
+
+    /** One driver lookup + one batched rider-summaries lookup for the whole thread, not one call
+     * per message - a route's driver is fixed, and its riders are exactly whoever has ever sent a
+     * message here, which is at most the route's booked riders. */
+    private List<ChatMessageResponse> enrich(List<ChatMessage> messages, RoutePost route) {
+        Set<String> senderIds = messages.stream().map(ChatMessage::getSenderId).collect(Collectors.toSet());
+        String driverId = route.getDriverId();
+
+        Map<String, ProfileServiceClient.DriverSummaryItem> driverById = senderIds.contains(driverId)
+                ? profileServiceClient.fetchDriverSummaries(List.of(driverId))
+                : Map.of();
+
+        List<String> riderSenderIds = senderIds.stream().filter(id -> !id.equals(driverId)).toList();
+        Map<String, ProfileServiceClient.RiderSummaryItem> riderById = riderSenderIds.isEmpty()
+                ? Map.of()
+                : profileServiceClient.fetchRiderSummaries(riderSenderIds);
+
+        return messages.stream().map(m -> {
+            String senderName = null;
+            String senderPhotoUrl = null;
+            if (m.getSenderId().equals(driverId)) {
+                ProfileServiceClient.DriverSummaryItem driver = driverById.get(m.getSenderId());
+                if (driver != null) {
+                    senderName = driver.legalName();
+                    senderPhotoUrl = driver.photoUrl();
+                }
+            } else {
+                ProfileServiceClient.RiderSummaryItem rider = riderById.get(m.getSenderId());
+                if (rider != null) {
+                    senderName = rider.fullName();
+                    senderPhotoUrl = rider.photoUrl();
+                }
+            }
+            return new ChatMessageResponse(m.getId(), m.getRoutePostId(), m.getSenderId(), senderName, senderPhotoUrl,
+                    m.getType(), m.getContent(), m.getDurationSeconds(), m.getMediaPublicId(), m.getCreatedAt());
+        }).toList();
     }
 
     /** Called once a route reaches COMPLETED or CANCELLED (and by the dev route-reset tool) - the
@@ -78,7 +120,7 @@ public class ChatService {
         return messages.size();
     }
 
-    private void requireParty(String routePostId, String callerId) {
+    private RoutePost requireParty(String routePostId, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
@@ -95,5 +137,6 @@ public class ChatService {
         if (!isDriver && !isActiveRider) {
             throw new UnauthorizedException("Not authorized for this trip's group chat");
         }
+        return route;
     }
 }

@@ -80,6 +80,8 @@ Authorization: Bearer {accessToken}
       "createdAt": "2026-08-31T06:41:12Z",
       "routePostId": "rp_456",
       "senderId": "u_789",
+      "senderName": "Emeka Okafor",
+      "senderPhotoUrl": "https://res.cloudinary.com/coryd/image/upload/v100/coryd/uploads/driver1.jpg",
       "type": "TEXT",
       "content": "On my way to the pickup point now",
       "durationSeconds": null,
@@ -90,6 +92,8 @@ Authorization: Bearer {accessToken}
       "createdAt": "2026-08-31T06:42:03Z",
       "routePostId": "rp_456",
       "senderId": "u_321",
+      "senderName": "Amaka Obi",
+      "senderPhotoUrl": null,
       "type": "VOICE",
       "content": "https://res.cloudinary.com/coryd/video/upload/v123/coryd/uploads/a1b2c3.m4a",
       "durationSeconds": 8,
@@ -101,7 +105,7 @@ Authorization: Bearer {accessToken}
 
 Comes back oldest-first, ready to render top-to-bottom. A brand-new route with no messages yet just returns `[]` — not an error.
 
-**`senderId` is a bare user id — no name or photo comes attached.** You already have that data on-screen from getting into the chat in the first place (the driver card, or `riderName`/`riderPhotoUrl` in the Passenger Manifest's booking list) — build a local `senderId → {name, photo}` map from that instead of expecting the message payload to carry it. This keeps the message table small and avoids a second lookup on every single message.
+**`senderName`/`senderPhotoUrl` are resolved for you** — one driver lookup plus one batched rider lookup per request, not a call per message — so you don't need to cross-reference `senderId` against the driver card or Passenger Manifest yourself. Either can come back `null` if that lookup didn't find a match (a profile-service hiccup, not something you need to special-case beyond "don't crash on a missing name" — falling back to showing just the initials or a placeholder avatar is enough). They can also change between messages if someone updates their profile photo mid-trip — that's expected, not a bug; nothing is cached against the message itself.
 
 ---
 
@@ -243,8 +247,7 @@ The WebSocket side fails differently: a bad token or a non-party subscribe just 
 3. Subscribe to `/topic/routes/{routePostId}/chat` on your STOMP client (reuse the one from Track Live Trip if it's already open)
 4. Text message → `POST .../chat/messages` with `{ type: "TEXT", content }`
 5. Voice note → `POST /profile/media/upload` first, then `POST .../chat/messages` with `{ type: "VOICE", content: url, durationSeconds, mediaPublicId }`
-6. New messages from anyone else arrive on your subscription automatically — append, don't re-fetch
-7. Resolve `senderId` → name/photo yourself from data you already have on-screen (driver card / passenger manifest)
-8. Keep polling trip `status` like you already do for Track Live Trip — the moment it's `COMPLETED` or `CANCELLED`, close the chat screen; the conversation is being deleted server-side at that same moment
+6. New messages from anyone else arrive on your subscription automatically, `senderName`/`senderPhotoUrl` already filled in — append, don't re-fetch
+7. Keep polling trip `status` like you already do for Track Live Trip — the moment it's `COMPLETED` or `CANCELLED`, close the chat screen; the conversation is being deleted server-side at that same moment
 
 If any step is still fuzzy, say which number and I'll go deeper on just that one.

@@ -4,8 +4,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.trip.dto.ChatMessageResponse;
 import org.coryd.trip.dto.SendChatMessageRequest;
-import org.coryd.trip.entity.ChatMessage;
 import org.coryd.trip.service.ChatService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,15 +27,15 @@ public class ChatController {
     private final ChatService chatService;
 
     @GetMapping("/messages")
-    public ApiResponse<List<ChatMessage>> messages(@AuthenticationPrincipal CoRydUserDetails principal,
-                                                     @PathVariable String routePostId) {
+    public ApiResponse<List<ChatMessageResponse>> messages(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                             @PathVariable String routePostId) {
         return ApiResponse.ok(chatService.getMessages(routePostId, principal.getUserId()));
     }
 
     @PostMapping("/messages")
-    public ApiResponse<ChatMessage> send(@AuthenticationPrincipal CoRydUserDetails principal,
-                                          @PathVariable String routePostId,
-                                          @Valid @RequestBody SendChatMessageRequest request) {
+    public ApiResponse<ChatMessageResponse> send(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                  @PathVariable String routePostId,
+                                                  @Valid @RequestBody SendChatMessageRequest request) {
         return ApiResponse.ok(chatService.sendMessage(routePostId, principal.getUserId(), request));
     }
 }
