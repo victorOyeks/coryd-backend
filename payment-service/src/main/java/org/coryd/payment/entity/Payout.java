@@ -40,5 +40,12 @@ public class Payout extends BaseEntity {
     @Column(nullable = false, length = 20)
     private PayoutStatus status = PayoutStatus.PENDING;
 
+    /** The exact bank account this withdrawal paid out to, pinned at withdrawal time. The driver's
+     * default account can change afterwards, and a receipt or feed row that resolved the bank
+     * details through the current default would silently rewrite itself when it did. Recipient
+     * rows are only ever inserted, never updated or deleted, so the id stays a valid snapshot.
+     * Null only on payouts written before this column existed. */
+    private String payoutRecipientId;
+
     private String failureReason;
 }

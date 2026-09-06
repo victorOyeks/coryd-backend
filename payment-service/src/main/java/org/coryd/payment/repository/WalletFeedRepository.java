@@ -6,6 +6,7 @@ import jakarta.persistence.Query;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.payment.dto.WalletTransactionItem;
 import org.coryd.payment.dto.WalletTransactionType;
+import org.coryd.payment.util.AccountNumberMask;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageImpl;
@@ -22,6 +23,11 @@ import java.util.List;
  * entities/tables; a Page requires a real count, so fetching each table separately and merging in
  * memory can't paginate correctly - a UNION with LIMIT/OFFSET is what makes "Load more" advance
  * cleanly across both sources.
+ *
+ * <p>The payouts branch left-joins the payout recipient the withdrawal was actually paid to, so a
+ * withdrawal row arrives with its bank details already attached. The trip branch carries rider_id
+ * only; the rider's name and photo live in profile-service and are stitched on afterwards, once
+ * per page (EarningsService.getTransactionFeed).
  */
 @Repository
 public class WalletFeedRepository {
@@ -32,27 +38,38 @@ public class WalletFeedRepository {
      * JPQL) query has no entity metamodel to infer the bind type from, and can throw depending on
      * the Hibernate/driver version. type comes from a validated enum @RequestParam, never raw user
      * text, so splicing it is safe (nothing to inject).
+     *
+     * <p>id is the ordering tiebreaker, not decoration - occurred_at alone is not unique (the trips
+     * on one route settle in the same millisecond batch), and an unstable sort across a LIMIT/OFFSET
+     * boundary silently duplicates and drops rows as the client pages.
      */
     private static final String FEED_SQL_TEMPLATE = """
             select * from (
-                select 'TRIP' as type, id, created_at as occurred_at,
-                       route_post_id, gross_fare, commission_amount, net_credit,
-                       null::numeric as amount, null::varchar as payout_status
-                from payment.earnings_transactions
-                where driver_id = :driverId and created_at >= :since and created_at < :until
+                select 'TRIP' as type, e.id as id, e.created_at as occurred_at,
+                       e.booking_id, e.route_post_id, e.gross_fare, e.commission_amount, e.net_credit,
+                       e.rider_id,
+                       null::numeric as amount, null::varchar as payout_status,
+                       null::varchar as failure_reason, null::varchar as bank_name,
+                       null::varchar as account_name, null::varchar as account_number
+                from payment.earnings_transactions e
+                where e.driver_id = :driverId and e.created_at >= :since and e.created_at < :until
                   %s
 
                 union all
 
-                select 'WITHDRAWAL' as type, id, created_at as occurred_at,
-                       null::varchar as route_post_id, null::numeric as gross_fare,
-                       null::numeric as commission_amount, null::numeric as net_credit,
-                       amount, status as payout_status
-                from payment.payouts
-                where driver_id = :driverId and created_at >= :since and created_at < :until
+                select 'WITHDRAWAL' as type, p.id as id, p.created_at as occurred_at,
+                       null::varchar as booking_id, null::varchar as route_post_id,
+                       null::numeric as gross_fare, null::numeric as commission_amount,
+                       null::numeric as net_credit, null::varchar as rider_id,
+                       p.amount, p.status as payout_status,
+                       p.failure_reason, r.bank_name,
+                       r.account_name, r.account_number
+                from payment.payouts p
+                left join payment.payout_recipients r on r.id = p.payout_recipient_id
+                where p.driver_id = :driverId and p.created_at >= :since and p.created_at < :until
                   %s
             ) feed
-            order by occurred_at desc
+            order by occurred_at desc, id desc
             limit :limit offset :offset
             """;
 
@@ -99,16 +116,27 @@ public class WalletFeedRepository {
     }
 
     private WalletTransactionItem toItem(Object[] row) {
+        String riderId = (String) row[8];
+        String bankName = (String) row[12];
+        String accountName = (String) row[13];
+        String accountNumber = (String) row[14];
+
         return new WalletTransactionItem(
                 WalletTransactionType.valueOf((String) row[0]),
                 (String) row[1],
                 toInstant(row[2]),
                 (String) row[3],
-                (BigDecimal) row[4],
+                (String) row[4],
                 (BigDecimal) row[5],
                 (BigDecimal) row[6],
                 (BigDecimal) row[7],
-                row[8] == null ? null : PayoutStatus.valueOf((String) row[8])
+                // Identity only at this layer - the name/photo are filled in per page, not per row.
+                riderId == null ? null : new WalletTransactionItem.Rider(riderId, null, null),
+                (BigDecimal) row[9],
+                row[10] == null ? null : PayoutStatus.valueOf((String) row[10]),
+                (String) row[11],
+                bankName == null ? null : new WalletTransactionItem.BankAccount(
+                        bankName, accountName, AccountNumberMask.mask(accountNumber))
         );
     }
 

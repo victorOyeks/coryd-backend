@@ -13,6 +13,7 @@ import org.coryd.payment.gateway.PaystackGatewayClient;
 import org.coryd.payment.repository.DriverEarningsAccountRepository;
 import org.coryd.payment.repository.PayoutRecipientRepository;
 import org.coryd.payment.repository.PayoutRepository;
+import org.coryd.payment.util.AccountNumberMask;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,6 +59,7 @@ public class PayoutService {
                 .driverId(driverId)
                 .amount(amount)
                 .gatewayReference(reference)
+                .payoutRecipientId(recipient.getId())
                 .status(PayoutStatus.PENDING)
                 .build());
 
@@ -120,21 +122,26 @@ public class PayoutService {
         if (!callerId.equals(payout.getDriverId())) {
             throw new UnauthorizedException("Only this payout's driver can view its receipt");
         }
-        PayoutRecipient recipient = payoutRecipientRepository.findByDriverIdAndIsDefaultTrue(payout.getDriverId()).orElse(null);
+        PayoutRecipient recipient = paidToRecipient(payout);
 
         return new PayoutReceiptResponse(
                 payout.getId(), payout.getStatus(), payout.getAmount(), payout.getCreatedAt(),
                 recipient == null ? null : recipient.getBankName(),
-                recipient == null ? null : maskAccountNumber(recipient.getAccountNumber()),
+                recipient == null ? null : recipient.getAccountName(),
+                recipient == null ? null : AccountNumberMask.mask(recipient.getAccountNumber()),
                 receiptReference(payout)
         );
     }
 
-    private static String maskAccountNumber(String accountNumber) {
-        if (accountNumber == null || accountNumber.length() < 4) {
-            return accountNumber;
+    /** The account this payout was actually sent to. Falling back to the driver's current default
+     * is only for payouts written before payoutRecipientId existed - resolving through the default
+     * for everything is what used to make a past receipt change its bank details the moment the
+     * driver switched preferred accounts. */
+    private PayoutRecipient paidToRecipient(Payout payout) {
+        if (payout.getPayoutRecipientId() != null) {
+            return payoutRecipientRepository.findById(payout.getPayoutRecipientId()).orElse(null);
         }
-        return accountNumber.substring(0, 2) + "****" + accountNumber.substring(accountNumber.length() - 2);
+        return payoutRecipientRepository.findByDriverIdAndIsDefaultTrue(payout.getDriverId()).orElse(null);
     }
 
     private static String receiptReference(Payout payout) {

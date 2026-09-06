@@ -7,6 +7,7 @@ import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
+import org.coryd.payment.client.ProfileServiceClient;
 import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.config.KafkaConfig;
 import org.coryd.payment.dto.BookingEarningsItem;
@@ -39,6 +40,8 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -50,6 +53,7 @@ public class EarningsService {
     private final DriverEarningsAccountRepository earningsAccountRepository;
     private final EarningsTransactionRepository earningsTransactionRepository;
     private final WalletFeedRepository walletFeedRepository;
+    private final ProfileServiceClient profileServiceClient;
     private final CommissionProperties commissionProperties;
     private final WalletService walletService;
     private final PaystackGatewayClient paystackGatewayClient;
@@ -82,6 +86,7 @@ public class EarningsService {
                 .driverId(hold.getDriverId())
                 .bookingId(bookingId)
                 .routePostId(event.getRoutePostId())
+                .riderId(event.getRiderId())
                 .grossFare(hold.getAmount())
                 .commissionAmount(commission)
                 .netCredit(net)
@@ -96,11 +101,41 @@ public class EarningsService {
         return new PeriodEarningsSummary(sums.getGrossFare(), sums.getCommissionAmount(), sums.getNetCredit());
     }
 
-    /** Wallet screen's mixed Trip/Withdrawal transaction feed - type=null means "All". */
+    /** Wallet screen's mixed Trip/Withdrawal transaction feed - type=null means "All". Withdrawal
+     * rows come out of the query already carrying their bank account; trip rows carry only the
+     * rider's id, so the names and photos are fetched here in one batched call for the whole page
+     * rather than one call per row. */
     public Page<WalletTransactionItem> getTransactionFeed(String driverId, WalletTransactionType type,
                                                             EarningsPeriod period, YearMonth month, Pageable pageable) {
         PeriodRange.Range range = PeriodRange.of(period, month);
-        return walletFeedRepository.findFeed(driverId, type, range.since(), range.until(), pageable);
+        Page<WalletTransactionItem> feed = walletFeedRepository.findFeed(driverId, type, range.since(), range.until(), pageable);
+        Map<String, ProfileServiceClient.RiderSummaryItem> profiles = riderProfiles(feed.getContent());
+        return feed.map(item -> withRiderProfile(item, profiles));
+    }
+
+    private Map<String, ProfileServiceClient.RiderSummaryItem> riderProfiles(List<WalletTransactionItem> items) {
+        List<String> riderIds = items.stream()
+                .map(WalletTransactionItem::rider)
+                .filter(Objects::nonNull)
+                .map(WalletTransactionItem.Rider::riderId)
+                .distinct()
+                .toList();
+        return profileServiceClient.fetchRiderSummaries(riderIds);
+    }
+
+    /** A rider with no profile row, or a profile-service call that failed, leaves the id in place
+     * with blank display fields - the trip row still renders, just without a name. */
+    private static WalletTransactionItem withRiderProfile(WalletTransactionItem item,
+                                                            Map<String, ProfileServiceClient.RiderSummaryItem> profiles) {
+        if (item.rider() == null) {
+            return item;
+        }
+        ProfileServiceClient.RiderSummaryItem profile = profiles.get(item.rider().riderId());
+        if (profile == null) {
+            return item;
+        }
+        return item.withRider(new WalletTransactionItem.Rider(
+                item.rider().riderId(), profile.fullName(), profile.photoUrl()));
     }
 
     /** Dashboard's two earnings tiles - lifetimeNet isn't a stored column, it's derived here rather than on every read of the raw account row. */
