@@ -96,6 +96,7 @@ public class BookingService {
     private final LocationService locationService;
     private final MapsService mapsService;
     private final ChatService chatService;
+    private final RouteService routeService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
@@ -551,6 +552,7 @@ public class BookingService {
     public void releaseOnPaymentFailure(String bookingId) {
         Booking booking = getOrThrow(bookingId);
         routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
         booking.setStatus(BookingStatus.CANCELLED_RIDER);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Payment failed - seat released");
@@ -567,6 +569,7 @@ public class BookingService {
 
         boolean feeApplies = cancellationPolicy.isFeeApplicable(route.getDepartureTime(), Instant.now());
         routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
 
         booking.setStatus(BookingStatus.CANCELLED_RIDER);
         bookingRepository.save(booking);

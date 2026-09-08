@@ -157,6 +157,19 @@ public class RouteService {
         return route;
     }
 
+    /** Called after a cancellation frees up a seat - markFullIfExhausted has no symmetric
+     * counterpart, so without this a route that ever went FULL stayed excluded from search()
+     * forever, even once it had a bookable seat again. Also re-runs the same waitlist match a
+     * fresh publish gets, since a rider who asked to be notified shouldn't miss a seat opening up
+     * on an existing route just because it isn't brand new. */
+    @Transactional
+    public void reopenIfSeatsAvailable(String routePostId) {
+        if (routePostRepository.reopenIfSeatsAvailable(routePostId) == 0) {
+            return;
+        }
+        routePostRepository.findById(routePostId).ifPresent(this::notifyMatchingWaitlist);
+    }
+
     private void notifyMatchingWaitlist(RoutePost route) {
         double radiusKm = matchingProperties.getGeoToleranceMeters() / 1000.0;
         Instant earliest = route.getDepartureTime().minus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);

@@ -113,6 +113,15 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
     @Query("update RoutePost r set r.status = 'FULL' where r.id = :id and r.seatsAvailable = 0")
     int markFullIfExhausted(@Param("id") String id);
 
+    /** The other half of markFullIfExhausted - nothing previously reverted FULL back to PUBLISHED
+     * once a cancellation freed a seat back up, so a route that was ever FULL stayed permanently
+     * excluded from search() (which only ever matches status = 'PUBLISHED') even after it had
+     * bookable seats again. The status='FULL' guard means this only ever touches a route actually
+     * in that state - never resurrects a CANCELLED/COMPLETED/IN_PROGRESS route. */
+    @Modifying
+    @Query("update RoutePost r set r.status = 'PUBLISHED' where r.id = :id and r.status = 'FULL' and r.seatsAvailable > 0")
+    int reopenIfSeatsAvailable(@Param("id") String id);
+
     @Modifying
     @Query("update RoutePost r set r.firstBookingLockedAt = :now where r.id = :id and r.firstBookingLockedAt is null")
     int lockOnFirstBooking(@Param("id") String id, @Param("now") Instant now);

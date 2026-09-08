@@ -6,6 +6,7 @@ import org.coryd.common.enums.BookingStatus;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
+import org.coryd.trip.service.RouteService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,7 @@ public class SeatHoldExpiryJob {
 
     private final BookingRepository bookingRepository;
     private final RoutePostRepository routePostRepository;
+    private final RouteService routeService;
 
     @Scheduled(fixedDelay = 60_000)
     @Transactional
@@ -31,6 +33,7 @@ public class SeatHoldExpiryJob {
         List<Booking> expired = bookingRepository.findByStatusAndHoldExpiresAtBefore(BookingStatus.HELD, Instant.now());
         for (Booking booking : expired) {
             routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+            routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
             booking.setStatus(BookingStatus.CANCELLED_RIDER);
             bookingRepository.save(booking);
         }
