@@ -43,6 +43,7 @@ public class LocationService {
     private final RoutePostRepository routePostRepository;
     private final StringRedisTemplate redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
+    private final RouteDeviationService routeDeviationService;
 
     /** Dev/staging-only escape hatch for the 30-min-before-departure gate below - never true outside application-dev.yml. */
     @Value("${app.testing.bypass-time-gates:false}")
@@ -141,6 +142,7 @@ public class LocationService {
         LocationResponse response = new LocationResponse(true, lat, lng, now, null);
 
         messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/location", response);
+        routeDeviationService.checkAndHandleDeviation(routePostId, lat, lng);
         return response;
     }
 

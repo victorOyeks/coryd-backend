@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
  * Authenticates the STOMP CONNECT frame with the same JwtUtil plain REST calls use (the token
  * travels as a STOMP native header, not a query param, so it never ends up in a URL/access log)
  * and, on SUBSCRIBE, checks the caller is actually a party to the booking/route they're trying
- * to read live location updates or Trip Group Chat messages for.
+ * to read live location updates, Trip Group Chat messages, or route-update (reroute) events for.
  */
 @Slf4j
 @Component
@@ -37,6 +37,7 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
     private static final Pattern LOCATION_TOPIC = Pattern.compile("^/topic/bookings/([^/]+)/location$");
     private static final Pattern ROUTE_LOCATION_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/location$");
     private static final Pattern ROUTE_CHAT_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/chat$");
+    private static final Pattern ROUTE_UPDATE_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/route-update$");
     private static final Set<BookingStatus> NON_TERMINAL_BOOKING_STATUSES =
             Set.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
@@ -96,6 +97,12 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         Matcher chatMatcher = ROUTE_CHAT_TOPIC.matcher(destination);
         if (chatMatcher.matches()) {
             authorizeRouteSubscription(destination, chatMatcher.group(1), currentUserId(accessor));
+            return;
+        }
+
+        Matcher routeUpdateMatcher = ROUTE_UPDATE_TOPIC.matcher(destination);
+        if (routeUpdateMatcher.matches()) {
+            authorizeRouteSubscription(destination, routeUpdateMatcher.group(1), currentUserId(accessor));
         }
     }
 

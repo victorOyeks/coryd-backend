@@ -256,6 +256,15 @@ public class RouteService {
     public MultiStopRoutePreview getMultiStopRoutePreview(String routePostId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        return getMultiStopRoutePreview(routePostId, route.getOriginLat(), route.getOriginLng());
+    }
+
+    /** Same as the 1-arg overload, but starting from originLat/originLng instead of the route's
+     * originally-posted origin - RouteDeviationService uses this to reroute from the driver's
+     * live position once they've meaningfully left the plotted line. */
+    public MultiStopRoutePreview getMultiStopRoutePreview(String routePostId, double originLat, double originLng) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
         List<Booking> stops = bookingRepository.findByRoutePostId(routePostId).stream()
                 .filter(b -> MANIFEST_STOP_STATUSES.contains(b.getStatus()))
@@ -267,14 +276,14 @@ public class RouteService {
                 log.warn("Route {} has {} active pickups, over the {}-waypoint cap - falling back to a direct origin->destination preview",
                         routePostId, stops.size(), MAX_MULTI_STOP_WAYPOINTS);
             }
-            RoutePreview direct = mapsService.getRoutePreview(route.getOriginLat(), route.getOriginLng(),
+            RoutePreview direct = mapsService.getRoutePreview(originLat, originLng,
                     route.getDestinationLat(), route.getDestinationLng());
             return new MultiStopRoutePreview(direct.distanceKm(), direct.durationMinutes(), direct.overviewPolyline(), List.of());
         }
 
         List<double[]> waypointCoords = stops.stream().map(b -> new double[]{b.getPickupLat(), b.getPickupLng()}).toList();
         DirectionsMultiStopResult result = mapsService.getMultiStopRoutePreview(
-                route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(), waypointCoords);
+                originLat, originLng, route.getDestinationLat(), route.getDestinationLng(), waypointCoords);
 
         List<String> orderedBookingIds = result.waypointOrder().isEmpty()
                 ? stops.stream().map(BaseEntity::getId).toList()
