@@ -6,6 +6,7 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverProfileResponse;
+import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
@@ -56,5 +57,14 @@ public class DriverProfileController {
     @GetMapping("/{driverId}/verification-status")
     public ApiResponse<VerificationStatusResponse> verificationStatus(@PathVariable String driverId) {
         return ApiResponse.ok(verificationAggregationService.getStatus(driverId));
+    }
+
+    /** Public, rider-facing driver-profile lookup - a name/photo/verified-badge card, not the raw
+     * profile (see DriverProfileService.getSummary for why). Restores what used to sit at this
+     * exact path before the /internal/** refactor moved the raw-entity version there - this is a
+     * new, narrower replacement, not the same endpoint back verbatim. */
+    @GetMapping("/{driverId}")
+    public ApiResponse<DriverSummary> get(@PathVariable String driverId) {
+        return ApiResponse.ok(driverProfileService.getSummary(driverId));
     }
 }

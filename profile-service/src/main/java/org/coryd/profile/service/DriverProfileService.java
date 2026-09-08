@@ -39,6 +39,15 @@ public class DriverProfileService {
                 .toList();
     }
 
+    /** Public, rider-facing single-driver lookup (e.g. a driver-profile card reached from chat or
+     * the booking manifest) - deliberately the same safe-to-show-another-user projection as
+     * getBatch, not the raw DriverProfile get() returns. That entity carries dateOfBirth, email,
+     * governmentIdUrl and idNumber - fine for the driver's own /me screen or a service-to-service
+     * call, not for any authenticated rider who happens to know another driver's userId. */
+    public DriverSummary getSummary(String userId) {
+        return DriverSummary.from(get(userId));
+    }
+
     /** The driver's own Profile screen - the one place phone belongs alongside everything else, since DriverProfile itself never stores it. */
     public DriverProfileResponse getMine(String userId) {
         return toResponse(get(userId));
