@@ -7,6 +7,7 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
+import org.coryd.profile.dto.PendingVerificationItem;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
@@ -62,6 +63,14 @@ public class DriverProfileController {
     @GetMapping("/{driverId}/verification-status")
     public ApiResponse<VerificationStatusResponse> verificationStatus(@PathVariable String driverId) {
         return ApiResponse.ok(verificationAggregationService.getStatus(driverId));
+    }
+
+    /** Ops admin's review queue - every driver with at least one item still awaiting a decision.
+     * Without this, decide()/getStatus() above only work if ops already knows a driverId to look
+     * up - there was previously no way to discover one. */
+    @GetMapping("/verification/pending")
+    public ApiResponse<List<PendingVerificationItem>> pendingVerifications(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(verificationAggregationService.getPendingQueue(principal.getActiveRole()));
     }
 
     /** Public, rider-facing driver-profile lookup - a name/photo/verified-badge card, not the raw

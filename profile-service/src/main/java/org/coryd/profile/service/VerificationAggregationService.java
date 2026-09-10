@@ -12,6 +12,7 @@ import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.ItemDecision;
+import org.coryd.profile.dto.PendingVerificationItem;
 import org.coryd.profile.dto.ReviewableItem;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
@@ -30,8 +31,11 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 /** Combines every independently-reviewable driver item (identity, vehicle registration, documents) into one aggregate status - the single source of truth for both the driver-facing verification-status screen and the route-posting gate. Also the single place an ops admin decides any of those items, via decide() below - one call, keyed by driverId alone, instead of a separate endpoint (and a separate id to look up first) per item type. */
 @Slf4j
@@ -84,6 +88,46 @@ public class VerificationAggregationService {
 
         reevaluateAndPublish(driverId, request.reviewedBy());
         return getStatus(driverId);
+    }
+
+    /** Ops admin's review queue - decide() and getStatus() are both keyed by a driverId ops has to
+     * already know; this is how they discover one in the first place. Checked per item type rather
+     * than by overall status, since a driver with one item REJECTED and another still genuinely
+     * PENDING needs that second item to keep showing up here regardless of the (rejected)
+     * aggregate. Government ID/selfie also need a submission check on top of status = PENDING,
+     * since both default to PENDING before the driver has uploaded anything - unlike Vehicle/
+     * DriverDocument, which only exist as rows once actually submitted. */
+    public List<PendingVerificationItem> getPendingQueue(UserRole callerRole) {
+        if (callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("Only an ops admin can view the verification queue");
+        }
+
+        Map<String, List<ReviewableItem>> pendingByDriver = new LinkedHashMap<>();
+
+        for (DriverProfile profile : driverProfileRepository.findByGovernmentIdUrlIsNotNullAndGovernmentIdStatus(VerificationStatus.PENDING)) {
+            pendingByDriver.computeIfAbsent(profile.getUserId(), id -> new ArrayList<>()).add(ReviewableItem.GOVERNMENT_ID);
+        }
+        for (DriverProfile profile : driverProfileRepository.findBySelfieSubmittedAtIsNotNullAndSelfieStatus(VerificationStatus.PENDING)) {
+            pendingByDriver.computeIfAbsent(profile.getUserId(), id -> new ArrayList<>()).add(ReviewableItem.SELFIE);
+        }
+        for (Vehicle vehicle : vehicleRepository.findByVerificationStatus(VerificationStatus.PENDING)) {
+            pendingByDriver.computeIfAbsent(vehicle.getDriverId(), id -> new ArrayList<>()).add(ReviewableItem.VEHICLE);
+        }
+        for (DriverDocument document : driverDocumentRepository.findByStatus(VerificationStatus.PENDING)) {
+            ReviewableItem item = document.getDocumentType() == DocumentType.INSURANCE ? ReviewableItem.INSURANCE : ReviewableItem.ROADWORTHINESS_CERT;
+            pendingByDriver.computeIfAbsent(document.getDriverId(), id -> new ArrayList<>()).add(item);
+        }
+
+        if (pendingByDriver.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, String> legalNames = driverProfileRepository.findByUserIdIn(new ArrayList<>(pendingByDriver.keySet())).stream()
+                .collect(Collectors.toMap(DriverProfile::getUserId, DriverProfile::getLegalName));
+
+        return pendingByDriver.entrySet().stream()
+                .map(entry -> new PendingVerificationItem(entry.getKey(), legalNames.get(entry.getKey()), entry.getValue()))
+                .toList();
     }
 
     private void applyDecision(String driverId, ItemDecision decision) {
