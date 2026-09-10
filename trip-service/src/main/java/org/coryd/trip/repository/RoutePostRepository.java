@@ -16,9 +16,21 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     Page<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId, Pageable pageable);
 
-    /** Dashboard "Active Trip" card - candidates for the driver's current/next trip, soonest first. */
+    /** Dashboard "Active Trip" card (and RouteService.post()'s one-active-route-at-a-time guard) -
+     * candidates for the driver's current/next trip, soonest first. The departureTime filter only
+     * makes sense for PUBLISHED/FULL (excludes stale not-yet-expired routes) - an IN_PROGRESS route
+     * is active by definition regardless of how long ago it departed, so it must never be filtered
+     * out by this, or a trip still running past midnight (or several days, if it's stuck) would
+     * vanish from both the dashboard and the double-booking guard. */
+    @Query("""
+            select r from RoutePost r
+            where r.driverId = :driverId
+              and r.status in :statuses
+              and (r.status = 'IN_PROGRESS' or r.departureTime > :after)
+            order by r.departureTime asc
+            """)
     List<RoutePost> findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
-            String driverId, List<RouteStatus> statuses, Instant after);
+            @Param("driverId") String driverId, @Param("statuses") List<RouteStatus> statuses, @Param("after") Instant after);
 
     /** Dashboard "Trips this week" count - the routes to check bookings against. */
     List<RoutePost> findByDriverIdAndDepartureTimeBetween(String driverId, Instant start, Instant end);
