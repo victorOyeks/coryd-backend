@@ -130,6 +130,19 @@ public class ProfileServiceClient {
         }
     }
 
+    /** RouteService.post()'s reservation validation - unlike every other method here, this does
+     * NOT degrade on failure. Those are all display data (a blank name/plate is a fine fallback);
+     * this decides who a driver is allowed to reserve a seat for, so a profile-service hiccup must
+     * fail the request rather than silently return an empty (or worse, unfiltered) set. */
+    public List<String> fetchFavoritedBy(String driverId) {
+        FavoritedByResponse response = restClient.get()
+                .uri("/internal/drivers/{driverId}/favorited-by", driverId)
+                .retrieve()
+                .body(FavoritedByResponse.class);
+        List<RiderSummaryItem> items = response == null || response.data() == null ? List.of() : response.data();
+        return items.stream().map(RiderSummaryItem::userId).toList();
+    }
+
     /** Every emergency contact the rider has saved (Share Trip, SOS alert all of them, not just the primary). */
     public List<RiderContact> fetchRiderContacts(String riderId) {
         try {
@@ -185,6 +198,10 @@ public class ProfileServiceClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record RiderSummaryBatchResponse(List<RiderSummaryItem> data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record FavoritedByResponse(List<RiderSummaryItem> data) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -7,10 +7,12 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
+import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.service.DriverProfileService;
+import org.coryd.profile.service.FavoriteDriverService;
 import org.coryd.profile.service.VerificationAggregationService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +23,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/drivers")
 @RequiredArgsConstructor
@@ -28,6 +32,7 @@ public class DriverProfileController {
 
     private final DriverProfileService driverProfileService;
     private final VerificationAggregationService verificationAggregationService;
+    private final FavoriteDriverService favoriteDriverService;
 
     @GetMapping("/me")
     public ApiResponse<DriverProfileResponse> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
@@ -66,5 +71,12 @@ public class DriverProfileController {
     @GetMapping("/{driverId}")
     public ApiResponse<DriverSummary> get(@PathVariable String driverId) {
         return ApiResponse.ok(driverProfileService.getSummary(driverId));
+    }
+
+    /** The "reserve a seat for a favourite" picker on the route-posting screen - every rider who
+     * has favourited this driver, name/photo included. */
+    @GetMapping("/me/favorited-by")
+    public ApiResponse<List<RiderSummary>> favoritedBy(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(favoriteDriverService.listRidersWhoFavourited(principal.getUserId()));
     }
 }

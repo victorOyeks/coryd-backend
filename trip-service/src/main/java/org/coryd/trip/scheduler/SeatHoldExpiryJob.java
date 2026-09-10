@@ -15,8 +15,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * R-306 / Section 10.3: release HELD bookings whose payment never completed
- * within the hold window, so the seat goes back into inventory.
+ * R-306 / Section 10.3: release HELD bookings whose payment never completed within the hold
+ * window, so the seat goes back into inventory. Also sweeps RESERVED bookings (a driver-offered
+ * seat a favourite rider never responded to) the same way - same mechanics, same outcome, just a
+ * different status and a longer window (RouteService.RESERVATION_HOLD_MINUTES, 15 min, vs
+ * BookingService.SEAT_HOLD_MINUTES, 4 min) - not different enough to warrant a second job class.
  */
 @Slf4j
 @Component
@@ -30,7 +33,11 @@ public class SeatHoldExpiryJob {
     @Scheduled(fixedDelay = 60_000)
     @Transactional
     public void releaseExpiredHolds() {
-        List<Booking> expired = bookingRepository.findByStatusAndHoldExpiresAtBefore(BookingStatus.HELD, Instant.now());
+        release(bookingRepository.findByStatusAndHoldExpiresAtBefore(BookingStatus.HELD, Instant.now()), "hold");
+        release(bookingRepository.findByStatusAndHoldExpiresAtBefore(BookingStatus.RESERVED, Instant.now()), "reservation");
+    }
+
+    private void release(List<Booking> expired, String kind) {
         for (Booking booking : expired) {
             routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
             routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
@@ -38,7 +45,7 @@ public class SeatHoldExpiryJob {
             bookingRepository.save(booking);
         }
         if (!expired.isEmpty()) {
-            log.info("Released {} expired seat holds", expired.size());
+            log.info("Released {} expired {}(s)", expired.size(), kind);
         }
     }
 }

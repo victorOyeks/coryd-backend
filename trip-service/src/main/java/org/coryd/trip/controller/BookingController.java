@@ -6,6 +6,7 @@ import org.coryd.common.enums.TripHistoryStatus;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
@@ -139,6 +140,21 @@ public class BookingController {
     public ApiResponse<Void> releaseHold(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
         bookingService.releaseHold(bookingId, principal.getUserId());
         return ApiResponse.ok("Seat hold released", null);
+    }
+
+    /** A favourite rider accepting a driver-reserved seat - converts RESERVED into a normal HELD
+     * booking with a fresh payment window, pickup point supplied now since a reservation never had one. */
+    @PostMapping("/{bookingId}/reservations/accept")
+    public ApiResponse<Booking> acceptReservation(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                   @PathVariable String bookingId,
+                                                   @Valid @RequestBody AcceptReservationRequest request) {
+        return ApiResponse.ok(bookingService.acceptReservation(bookingId, principal.getUserId(), request));
+    }
+
+    @PostMapping("/{bookingId}/reservations/decline")
+    public ApiResponse<Void> declineReservation(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.declineReservation(bookingId, principal.getUserId());
+        return ApiResponse.ok("Reservation declined", null);
     }
 
     @PostMapping("/{bookingId}/en-route")

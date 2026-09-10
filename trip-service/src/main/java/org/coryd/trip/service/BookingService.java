@@ -24,6 +24,7 @@ import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.CancellationPolicy;
+import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
@@ -413,7 +414,8 @@ public class BookingService {
                 route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(),
                 route.getDepartureTime(),
                 booking.getSeatCount(), booking.getFareTotal(), booking.getFarePerSeatSnapshot(),
-                booking.getHoldExpiresAt(), SEAT_HOLD_MINUTES,
+                booking.getHoldExpiresAt(),
+                booking.getStatus() == BookingStatus.RESERVED ? RouteService.RESERVATION_HOLD_MINUTES : SEAT_HOLD_MINUTES,
                 route.getDriverId(),
                 driver == null ? booking.getDriverNameSnapshot() : driver.legalName(),
                 driverPhone,
@@ -580,6 +582,57 @@ public class BookingService {
         booking.setStatus(BookingStatus.CANCELLED_RIDER);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Rider backed out before paying - seat released");
+    }
+
+    /** A favourite rider taking the driver's offer - converts the reservation into a normal HELD
+     * booking with a fresh 4-minute payment window, exactly as if the rider had just booked it
+     * themselves. From here it's indistinguishable from any other HELD booking - same payment
+     * endpoint, same SeatHoldExpiryJob sweep if payment doesn't follow in time. pickup fields are
+     * required here because they never existed on the RESERVED row - the driver reserved the seat
+     * without knowing where this rider wants picking up. */
+    @Transactional
+    public Booking acceptReservation(String bookingId, String callerId, AcceptReservationRequest request) {
+        Booking booking = getOrThrow(bookingId);
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this reservation's rider can accept it");
+        }
+        if (booking.getStatus() != BookingStatus.RESERVED) {
+            throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
+        }
+        if (bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(callerId, ACTIVE_TRIP_STATUSES).isPresent()) {
+            throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before accepting this reservation");
+        }
+
+        booking.setStatus(BookingStatus.HELD);
+        booking.setHoldExpiresAt(Instant.now().plus(SEAT_HOLD_MINUTES, ChronoUnit.MINUTES));
+        booking.setPickupLabel(request.pickupLabel());
+        booking.setPickupLat(request.pickupLat());
+        booking.setPickupLng(request.pickupLng());
+        bookingRepository.save(booking);
+        recordHistory(bookingId, BookingStatus.HELD, "Reservation accepted - seat held pending payment");
+
+        return booking;
+    }
+
+    /** A favourite rider turning down the driver's offer - releases the seat immediately instead
+     * of making everyone wait out the full 15 minutes for a "no." Same no-fee, no-notification
+     * shape as releaseHold() - the driver already knows they made the offer, they don't need a
+     * second push telling them it was declined versus simply timing out. */
+    @Transactional
+    public void declineReservation(String bookingId, String callerId) {
+        Booking booking = getOrThrow(bookingId);
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this reservation's rider can decline it");
+        }
+        if (booking.getStatus() != BookingStatus.RESERVED) {
+            throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
+        }
+
+        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
+        booking.setStatus(BookingStatus.CANCELLED_RIDER);
+        bookingRepository.save(booking);
+        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Reservation declined - seat released");
     }
 
     @Transactional

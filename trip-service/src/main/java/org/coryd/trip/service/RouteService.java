@@ -14,6 +14,7 @@ import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.RoutePublishedEvent;
+import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
@@ -46,6 +47,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -63,6 +65,11 @@ import java.util.stream.IntStream;
 @Service
 @RequiredArgsConstructor
 public class RouteService {
+
+    /** How long a driver-initiated seat reservation waits for the favourited rider to respond -
+     * deliberately longer than BookingService.SEAT_HOLD_MINUTES (4), since this is "decide if you
+     * even want this seat," not "finish paying for a seat you already agreed to." */
+    public static final int RESERVATION_HOLD_MINUTES = 15;
 
     private static final int NEARBY_OPTIONS_LIMIT = 5;
     private static final double NEARBY_OPTIONS_RADIUS_MULTIPLIER = 3.0;
@@ -120,6 +127,28 @@ public class RouteService {
             }
         }
 
+        List<PostRouteRequest.ReservationRequest> reservations = request.reservations() == null ? List.of() : request.reservations();
+        if (!reservations.isEmpty()) {
+            long distinctRiders = reservations.stream().map(PostRouteRequest.ReservationRequest::riderId).distinct().count();
+            if (distinctRiders != reservations.size()) {
+                throw new BadRequestException("Each favourite can only be reserved a seat once per route");
+            }
+            int requestedSeats = reservations.stream().mapToInt(PostRouteRequest.ReservationRequest::seatCount).sum();
+            if (requestedSeats > request.seatCapacity()) {
+                throw new BadRequestException("Reserved seats (" + requestedSeats + ") can't exceed this route's seat capacity (" + request.seatCapacity() + ")");
+            }
+            // Never trust a client-claimed "this rider favourited me" list - check it against the
+            // real relationship. Deliberately fails the whole post rather than silently dropping
+            // an unverifiable reservation, since this is a service-to-service call that must not
+            // silently degrade (see ProfileServiceClient.fetchFavoritedBy's own note).
+            List<String> favoritedBy = profileServiceClient.fetchFavoritedBy(driverId);
+            for (PostRouteRequest.ReservationRequest reservation : reservations) {
+                if (!favoritedBy.contains(reservation.riderId())) {
+                    throw new BadRequestException("Rider " + reservation.riderId() + " hasn't favourited you - can't reserve a seat for them");
+                }
+            }
+        }
+
         RoutePost route = RoutePost.builder()
                 .driverId(driverId)
                 .vehicleId(request.vehicleId())
@@ -143,6 +172,20 @@ public class RouteService {
                 .farePerSeat(request.farePerSeat())
                 .build());
 
+        if (!reservations.isEmpty()) {
+            createReservations(route, reservations);
+            // createReservations() reduces seatsAvailable (and possibly flips status to FULL) via
+            // bulk @Modifying queries, which bypass the persistence context - refresh the in-memory
+            // fields before they're used below, both for the ROUTE_PUBLISHED event/waitlist match
+            // (so a waitlisted rider is never told about seats that were already reserved away) and
+            // for the route object returned to the driver who just posted it.
+            int reservedSeats = reservations.stream().mapToInt(PostRouteRequest.ReservationRequest::seatCount).sum();
+            route.setSeatsAvailable(route.getSeatsAvailable() - reservedSeats);
+            if (route.getSeatsAvailable() <= 0) {
+                route.setStatus(RouteStatus.FULL);
+            }
+        }
+
         kafkaTemplate.send(KafkaTopics.ROUTE_PUBLISHED, RoutePublishedEvent.builder()
                 .routePostId(route.getId())
                 .driverId(driverId)
@@ -155,6 +198,55 @@ public class RouteService {
         notifyMatchingWaitlist(route);
 
         return route;
+    }
+
+    /** Reserves a seat for each favourite the driver picked while posting this route - the same
+     * atomic holdSeats() call reserveSeats() uses, just triggered by the driver instead of the
+     * rider, and with a 15-minute window instead of the normal 4-minute one (RESERVED, not HELD -
+     * this rider hasn't even agreed to book yet, a materially different wait than "actively
+     * paying"). Always succeeds here since post()'s upfront capacity check already guaranteed
+     * these seats fit on a brand-new route nothing else could have booked into yet. */
+    private void createReservations(RoutePost route, List<PostRouteRequest.ReservationRequest> reservations) {
+        String driverName = profileServiceClient.fetchDriverName(route.getDriverId());
+        String vehiclePlate = profileServiceClient.fetchVehiclePlate(route.getVehicleId());
+        String routeSummary = route.getOriginLabel() + " -> " + route.getDestinationLabel();
+        Instant reservationExpiresAt = Instant.now().plus(RESERVATION_HOLD_MINUTES, ChronoUnit.MINUTES);
+
+        for (PostRouteRequest.ReservationRequest reservation : reservations) {
+            // Checked, not assumed - if this ever returns 0 despite the upfront sum check
+            // (a future refactor reordering things, say), failing loudly beats silently
+            // creating a RESERVED booking with no real seat behind it.
+            if (routePostRepository.holdSeats(route.getId(), reservation.seatCount()) == 0) {
+                throw new IllegalStateException("Failed to hold " + reservation.seatCount()
+                        + " seat(s) for reservation on route " + route.getId() + " despite upfront capacity check");
+            }
+
+            Booking booking = bookingRepository.save(Booking.builder()
+                    .routePostId(route.getId())
+                    .riderId(reservation.riderId())
+                    .seatCount(reservation.seatCount())
+                    .fareTotal(route.getFarePerSeat().multiply(BigDecimal.valueOf(reservation.seatCount())))
+                    .status(BookingStatus.RESERVED)
+                    .holdExpiresAt(reservationExpiresAt)
+                    .driverNameSnapshot(driverName)
+                    .vehiclePlateSnapshot(vehiclePlate)
+                    .routeSummarySnapshot(routeSummary)
+                    .farePerSeatSnapshot(route.getFarePerSeat())
+                    .build());
+
+            kafkaTemplate.send(KafkaTopics.SEAT_RESERVED, SeatReservedEvent.builder()
+                    .bookingId(booking.getId())
+                    .routePostId(route.getId())
+                    .riderId(reservation.riderId())
+                    .driverId(route.getDriverId())
+                    .driverName(driverName)
+                    .seatCount(reservation.seatCount())
+                    .fareTotal(booking.getFareTotal())
+                    .holdExpiresAt(reservationExpiresAt)
+                    .build());
+        }
+
+        routePostRepository.markFullIfExhausted(route.getId());
     }
 
     /** Called after a cancellation frees up a seat - markFullIfExhausted has no symmetric
@@ -428,7 +520,7 @@ public class RouteService {
 
     /** Anything not already a terminal state - HELD/CONFIRMED plus the trip-in-progress phases, all of which a driver-side route cancellation must still unwind and refund. */
     private static final List<BookingStatus> CANCELLABLE_BY_ROUTE_CANCELLATION = List.of(
-            BookingStatus.HELD, BookingStatus.CONFIRMED,
+            BookingStatus.RESERVED, BookingStatus.HELD, BookingStatus.CONFIRMED,
             BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
     public void cancel(String routePostId, String callerId) {

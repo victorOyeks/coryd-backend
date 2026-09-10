@@ -3,8 +3,10 @@ package org.coryd.profile.controller;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.profile.dto.DriverSummary;
+import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.service.DriverProfileService;
+import org.coryd.profile.service.FavoriteDriverService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,6 +22,7 @@ import java.util.List;
 public class InternalDriverController {
 
     private final DriverProfileService driverProfileService;
+    private final FavoriteDriverService favoriteDriverService;
 
     @GetMapping("/{userId}")
     public ApiResponse<DriverProfile> get(@PathVariable String userId) {
@@ -29,5 +32,12 @@ public class InternalDriverController {
     @GetMapping("/batch")
     public ApiResponse<List<DriverSummary>> batch(@RequestParam List<String> userIds) {
         return ApiResponse.ok(driverProfileService.getBatch(userIds));
+    }
+
+    /** trip-service's reserved-seats validation - never trust a client-claimed "this rider
+     * favourited me" list without checking it against the real relationship. */
+    @GetMapping("/{driverId}/favorited-by")
+    public ApiResponse<List<RiderSummary>> favoritedBy(@PathVariable String driverId) {
+        return ApiResponse.ok(favoriteDriverService.listRidersWhoFavourited(driverId));
     }
 }

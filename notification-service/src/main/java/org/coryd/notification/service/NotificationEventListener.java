@@ -16,6 +16,7 @@ import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
+import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.common.kafka.events.TripShareRequestedEvent;
@@ -126,6 +127,15 @@ public class NotificationEventListener {
     public void onNotifyMeMatched(NotifyMeMatchedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "A ride is available",
                 "A driver just posted a route matching your search.", "NOTIFY_ME_MATCHED", null);
+    }
+
+    @KafkaListener(topics = KafkaTopics.SEAT_RESERVED, groupId = KafkaConfig.GROUP_ID)
+    public void onSeatReserved(SeatReservedEvent event) {
+        String driverName = event.getDriverName() == null ? "Your favourite driver" : event.getDriverName();
+        dispatchService.sendPush(event.getRiderId(), "Your favourite driver reserved you a seat",
+                driverName + " just posted a new trip and held " + event.getSeatCount()
+                        + " seat(s) for you - accept within 15 minutes before it's released.",
+                "SEAT_RESERVED", event.getBookingId());
     }
 
     @KafkaListener(topics = KafkaTopics.DOCUMENT_EXPIRING, groupId = KafkaConfig.GROUP_ID)
