@@ -3,6 +3,7 @@ package org.coryd.profile.controller;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.entity.FavoriteDriver;
 import org.coryd.profile.service.FavoriteDriverService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,7 +24,7 @@ public class FavoriteDriverController {
     private final FavoriteDriverService favoriteDriverService;
 
     @GetMapping("/me/favorite-drivers")
-    public ApiResponse<List<FavoriteDriver>> list(@AuthenticationPrincipal CoRydUserDetails principal) {
+    public ApiResponse<List<DriverSummary>> list(@AuthenticationPrincipal CoRydUserDetails principal) {
         return ApiResponse.ok(favoriteDriverService.list(principal.getUserId()));
     }
 

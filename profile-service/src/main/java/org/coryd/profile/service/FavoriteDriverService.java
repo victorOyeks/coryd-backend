@@ -1,14 +1,20 @@
 package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.RiderSummary;
+import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.entity.FavoriteDriver;
+import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.FavoriteDriverRepository;
 import org.coryd.profile.repository.RiderProfileRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -16,9 +22,26 @@ public class FavoriteDriverService {
 
     private final FavoriteDriverRepository favoriteDriverRepository;
     private final RiderProfileRepository riderProfileRepository;
+    private final DriverProfileRepository driverProfileRepository;
 
-    public List<FavoriteDriver> list(String riderId) {
-        return favoriteDriverRepository.findByRiderIdOrderByCreatedAtDesc(riderId);
+    /** The rider's own Favourites list - enriched with name/photo (mirrors listRidersWhoFavourited
+     * below) so rendering it doesn't mean one profile lookup per favourite. Order is preserved from
+     * findByRiderIdOrderByCreatedAtDesc (most recently favourited first) - the batch IN lookup below
+     * doesn't guarantee that order on its own. */
+    public List<DriverSummary> list(String riderId) {
+        List<String> driverIds = favoriteDriverRepository.findByRiderIdOrderByCreatedAtDesc(riderId).stream()
+                .map(FavoriteDriver::getDriverId)
+                .toList();
+        if (driverIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, DriverProfile> profiles = driverProfileRepository.findByUserIdIn(driverIds).stream()
+                .collect(Collectors.toMap(DriverProfile::getUserId, profile -> profile));
+        return driverIds.stream()
+                .map(profiles::get)
+                .filter(Objects::nonNull)
+                .map(DriverSummary::from)
+                .toList();
     }
 
     /** Idempotent - favouriting a driver twice is a no-op, not an error the client has to guard against. */

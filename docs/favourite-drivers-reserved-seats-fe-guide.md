@@ -23,24 +23,18 @@ DELETE /profile/riders/me/favorite-drivers/{driverId}   → remove
 GET    /profile/riders/me/favorite-drivers              → the rider's own list
 ```
 
-`GET /profile/riders/me/favorite-drivers` response:
+`GET /profile/riders/me/favorite-drivers` response — already enriched with name/photo, most recently favourited first, no second lookup needed to render a Favourites list:
 
 ```json
 {
   "data": [
-    {
-      "id": "fd_1a2b3c",
-      "customId": "FAV-00042",
-      "createdAt": "2026-09-01T10:15:00Z",
-      "updatedAt": "2026-09-01T10:15:00Z",
-      "riderId": "usr_rider_1",
-      "driverId": "usr_driver_9"
-    }
+    { "userId": "usr_driver_9", "legalName": "Chidi Eze", "photoUrl": "https://...", "verificationStatus": "APPROVED" },
+    { "userId": "usr_driver_4", "legalName": "Femi Adeyemi", "photoUrl": null, "verificationStatus": "PENDING" }
   ]
 }
 ```
 
-This is a raw list — it only carries `driverId`, not the driver's name/photo. If you're rendering a "Favourites" list with driver cards, batch-resolve the ids the same way you already do for search results (`POST /profile/drivers/batch` or whatever summary lookup you're using today).
+Same `DriverSummary` shape you already get from `GET /drivers/{driverId}` — `userId` is the driver's id (use it for the `POST`/`DELETE` calls above and for navigating into their profile), `verificationStatus` is the identity-only badge signal, not the full six-item route-posting gate.
 
 ### Driver side
 
