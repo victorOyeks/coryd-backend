@@ -132,6 +132,15 @@ public class BookingController {
         return ApiResponse.ok("Booking cancelled", null);
     }
 
+    /** Rider backs out of the booking flow before paying - releases the seat immediately instead
+     * of leaving it held until SeatHoldExpiryJob's own timeout catches it. Only valid while the
+     * booking is still HELD; a CONFIRMED booking must go through /cancel instead. */
+    @PostMapping("/{bookingId}/release-hold")
+    public ApiResponse<Void> releaseHold(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        bookingService.releaseHold(bookingId, principal.getUserId());
+        return ApiResponse.ok("Seat hold released", null);
+    }
+
     @PostMapping("/{bookingId}/en-route")
     public ApiResponse<Void> enRoute(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
         bookingService.markEnRouteToPickup(bookingId, principal.getUserId());

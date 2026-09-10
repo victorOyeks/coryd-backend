@@ -558,6 +558,30 @@ public class BookingService {
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Payment failed - seat released");
     }
 
+    /** Rider backs out of the booking flow before paying - the same outcome SeatHoldExpiryJob
+     * reaches on its own once holdExpiresAt passes, just immediate instead of waiting up to 4
+     * minutes. Only ever touches a booking still HELD - once paid, this is the wrong endpoint
+     * (see cancelByRider, which applies the cancellation-fee window and notifies the driver a
+     * confirmed seat opened up). No fee, no BOOKING_CANCELLED event, no driver notification here -
+     * the driver was never aware this booking existed while it was only HELD, same as when a hold
+     * simply times out unpaid. */
+    @Transactional
+    public void releaseHold(String bookingId, String callerId) {
+        Booking booking = getOrThrow(bookingId);
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this booking's rider can release its hold");
+        }
+        if (booking.getStatus() != BookingStatus.HELD) {
+            throw new BadRequestException("This booking is no longer held - current status is " + booking.getStatus());
+        }
+
+        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
+        booking.setStatus(BookingStatus.CANCELLED_RIDER);
+        bookingRepository.save(booking);
+        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Rider backed out before paying - seat released");
+    }
+
     @Transactional
     public void cancelByRider(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
