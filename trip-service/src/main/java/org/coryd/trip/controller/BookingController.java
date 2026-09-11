@@ -57,6 +57,15 @@ public class BookingController {
         return ApiResponse.ok(bookingService.getActiveBookingForRider(riderId));
     }
 
+    /** Home screen's "your favourite driver reserved you a seat" banner - lets the app find an
+     * unanswered reservation without already knowing its bookingId (the push notification carries
+     * one, but this covers a rider who missed it or didn't tap it). Self-scoped, unlike /active
+     * above, since this is new code and every other self-service endpoint added since favours it. */
+    @GetMapping("/riders/me/reserved-seat")
+    public ApiResponse<Optional<BookingDetailsResponse>> reservedSeat(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(bookingService.getReservedSeatForRider(principal.getUserId()));
+    }
+
     /** Trip History screen - status is omitted entirely for the "All" tab. */
     @GetMapping("/riders/{riderId}/history")
     public ApiResponse<PagedResponse<TripHistoryItem>> history(@PathVariable String riderId,

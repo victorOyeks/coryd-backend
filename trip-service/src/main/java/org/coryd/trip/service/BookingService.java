@@ -122,6 +122,16 @@ public class BookingService {
                 .map(booking -> getBookingDetails(booking.getId()));
     }
 
+    /** The RESERVED counterpart to getActiveBookingForRider() above - lets the app proactively show
+     * "your favourite driver reserved you a seat" on Home for a rider who missed the push (or didn't
+     * tap it), without already knowing a bookingId. Deliberately a separate call rather than folding
+     * RESERVED into ACTIVE_TRIP_STATUSES - that list is the one-active-trip-at-a-time guard, and an
+     * unanswered reservation offer must never count as a trip the rider is already "on". */
+    public Optional<BookingDetailsResponse> getReservedSeatForRider(String riderId) {
+        return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, List.of(BookingStatus.RESERVED))
+                .map(booking -> getBookingDetails(booking.getId()));
+    }
+
     /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route, empty if they have none posted. Returns everything trip-service has on it (route + full booking list), not just the card's headline count, so the client can also build a tap-through detail view from this one call. */
     public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId) {
         List<RoutePost> candidates = routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
