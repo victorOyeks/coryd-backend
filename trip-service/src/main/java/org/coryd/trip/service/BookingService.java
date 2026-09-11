@@ -480,6 +480,9 @@ public class BookingService {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
+        if (bookingRepository.findFirstByRiderIdAndRoutePostIdAndStatus(request.riderId(), routePostId, BookingStatus.RESERVED).isPresent()) {
+            throw new BadRequestException("Your favourite driver already reserved you a seat on this route - accept or decline that reservation instead of booking a fresh one");
+        }
         if (bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(request.riderId(), ACTIVE_TRIP_STATUSES).isPresent()) {
             throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before booking another");
         }

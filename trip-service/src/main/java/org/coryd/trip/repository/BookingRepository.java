@@ -25,6 +25,12 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
     /** Powers the Home screen's "Go back to your current trip" banner. */
     Optional<Booking> findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(String riderId, List<BookingStatus> statuses);
 
+    /** reserveSeats()'s same-route duplicate-claim guard - a rider with an unanswered RESERVED
+     * booking on this exact route must resolve it via accept/decline, not book a second, fresh seat
+     * on the same route out from under it (ACTIVE_TRIP_STATUSES doesn't cover this - RESERVED is
+     * deliberately excluded from that list so an unanswered offer never blocks booking elsewhere). */
+    Optional<Booking> findFirstByRiderIdAndRoutePostIdAndStatus(String riderId, String routePostId, BookingStatus status);
+
     /** Trip History screen - search matches the "origin -> destination" snapshot, so it works without joining route_posts. */
     @Query("""
             select b from Booking b
