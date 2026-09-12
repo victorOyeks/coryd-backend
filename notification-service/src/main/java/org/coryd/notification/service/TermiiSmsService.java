@@ -31,7 +31,10 @@ public class TermiiSmsService {
     }
 
     public boolean send(String toPhone, String message) {
-        return dispatch(toPhone, message, "generic");
+        // "generic" is Termii's promotional route - it never reaches a number registered on
+        // Nigeria's DND list, and Termii still marks it "SENT" even when the telco silently drops
+        // it. OTPs/transactional messages need "dnd", which bypasses that block.
+        return dispatch(toPhone, message, "dnd");
     }
 
     public boolean sendWhatsapp(String toPhone, String message) {
