@@ -16,13 +16,16 @@ import java.util.Map;
 public class TermiiSmsService {
 
     private final RestClient restClient;
+    private final boolean enabled;
     private final String apiKey;
     private final String senderId;
 
     public TermiiSmsService(@Value("${termii.base-url}") String baseUrl,
+                             @Value("${termii.enabled:false}") boolean enabled,
                              @Value("${termii.api-key}") String apiKey,
                              @Value("${termii.sender-id}") String senderId) {
         this.restClient = RestClient.create(baseUrl);
+        this.enabled = enabled;
         this.apiKey = apiKey;
         this.senderId = senderId;
     }
@@ -36,6 +39,10 @@ public class TermiiSmsService {
     }
 
     private boolean dispatch(String toPhone, String message, String channel) {
+        if (!enabled) {
+            log.info("termii.enabled=false - not sending {} to {}: {}", channel, toPhone, message);
+            return true;
+        }
         try {
             restClient.post()
                     .uri("/api/sms/send")

@@ -44,6 +44,7 @@ jwt:
 
 termii:
   base-url: https://api.ng.termii.com
+  enabled: ${TERMII_ENABLED:false}
   api-key: ${TERMII_API_KEY:placeholder}
   sender-id: ${TERMII_SENDER_ID:CoRyd}
 
