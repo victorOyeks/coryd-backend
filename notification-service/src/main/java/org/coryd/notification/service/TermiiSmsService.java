@@ -39,8 +39,9 @@ public class TermiiSmsService {
     }
 
     private boolean dispatch(String toPhone, String message, String channel) {
+        String normalizedPhone = toInternationalFormat(toPhone);
         if (!enabled) {
-            log.info("termii.enabled=false - not sending {} to {}: {}", channel, toPhone, message);
+            log.info("termii.enabled=false - not sending {} to {}: {}", channel, normalizedPhone, message);
             return true;
         }
         try {
@@ -48,7 +49,7 @@ public class TermiiSmsService {
                     .uri("/api/sms/send")
                     .body(Map.of(
                             "api_key", apiKey,
-                            "to", toPhone,
+                            "to", normalizedPhone,
                             "from", senderId,
                             "sms", message,
                             "type", "plain",
@@ -58,8 +59,20 @@ public class TermiiSmsService {
                     .toBodilessEntity();
             return true;
         } catch (Exception e) {
-            log.error("Failed to send {} message to {}: {}", channel, toPhone, e.getMessage());
+            log.error("Failed to send {} message to {}: {}", channel, normalizedPhone, e.getMessage());
             return false;
         }
+    }
+
+    /** Every phone number in this codebase is stored/passed around in local Nigerian format
+     * (0803...) - Termii rejects that outright and needs international format with no leading
+     * zero and no "+" (234803...). Converted only here, right before the API call, so nothing
+     * else (storage, login, lookups) has to change format. */
+    private static String toInternationalFormat(String phone) {
+        String digits = phone.replaceAll("[^0-9]", "");
+        if (digits.startsWith("0") && digits.length() == 11) {
+            return "234" + digits.substring(1);
+        }
+        return digits;
     }
 }
