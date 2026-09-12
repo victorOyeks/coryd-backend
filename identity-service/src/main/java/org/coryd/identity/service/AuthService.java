@@ -43,6 +43,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -72,14 +73,19 @@ public class AuthService {
         if (role == UserRole.OPS_ADMIN) {
             throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
         }
-        if (userRepository.existsByPhone(request.phone())) {
+
+        Optional<User> existing = userRepository.findByPhone(request.phone());
+        if (existing.isPresent() && existing.get().getPhoneVerifiedAt() != null) {
             throw new BadRequestException("An account with this phone number already exists - please log in");
         }
 
-        userRepository.save(User.builder()
-                .phone(request.phone())
-                .roles(new HashSet<>(Set.of(role)))
-                .build());
+        // Either a new phone, or a signup that was abandoned before OTP verification - nothing
+        // real exists on that account yet (no verified phone, no password), so it's safe to
+        // reuse the row and resend an OTP rather than leaving the phone permanently stuck.
+        User user = existing.orElseGet(() -> User.builder().phone(request.phone()).build());
+        user.setRoles(new HashSet<>(Set.of(role)));
+        userRepository.save(user);
+
         issueOtp(request.phone(), OtpChannel.SMS, OtpPurpose.SIGNUP);
     }
 
