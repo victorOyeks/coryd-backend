@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.PaymentMethod;
 import org.coryd.common.enums.PaymentPurpose;
 import org.coryd.common.enums.PayoutStatus;
+import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -39,41 +41,62 @@ public class PaymentService {
         return method == PaymentMethod.WALLET ? payFromWallet(request) : payViaPaystack(request);
     }
 
-    /** Receipt screen's payment method/status - every confirmed booking has exactly one of these. */
+    /** Receipt/Pay Now screen's payment method/status. */
     public PaymentSummaryResponse getByBooking(String bookingId) {
-        PaymentTransaction transaction = paymentTransactionRepository.findByBookingId(bookingId)
+        PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("No payment found for this booking"));
         return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus());
     }
 
+    /** Reuses the same PaymentTransaction/FareHold row across retries instead of inserting a new
+     * pair each time initiate() is called for the same booking - a rider re-tapping Pay (or the
+     * client retrying after a slow/failed status check, as actually happened in production)
+     * previously left multiple PaymentTransaction/FareHold rows per bookingId with no DB
+     * constraint to stop it, which broke every findByBookingId-style read (getByBooking(),
+     * EarningsService's onTripCompleted()/refund()) with a NonUniqueResultException the moment a
+     * second row existed. Only a PAID booking is rejected outright - a still-PENDING or FAILED
+     * attempt just gets superseded, so an abandoned or declined checkout never permanently blocks
+     * paying for that booking. */
     private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
-        String reference = UUID.randomUUID().toString();
+        Optional<PaymentTransaction> existing = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId());
+        if (existing.isPresent() && existing.get().getStatus() == PayoutStatus.PAID) {
+            throw new BadRequestException("This booking has already been paid for");
+        }
 
+        String reference = UUID.randomUUID().toString();
         PaymentGatewayClient.GatewayInitResult result =
                 gatewayClient.initiate(reference, request.amount(), request.riderEmail(), request.callbackUrl());
 
-        PaymentTransaction transaction = paymentTransactionRepository.save(PaymentTransaction.builder()
-                .bookingId(request.bookingId())
-                .riderId(request.riderId())
-                .amount(request.amount())
-                .gatewayReference(result.gatewayReference())
-                .status(PayoutStatus.PENDING)
-                .paymentMethod(PaymentMethod.PAYSTACK)
-                .purpose(PaymentPurpose.BOOKING_PAYMENT)
-                .build());
+        PaymentTransaction transaction = existing.orElseGet(PaymentTransaction::new);
+        transaction.setBookingId(request.bookingId());
+        transaction.setRiderId(request.riderId());
+        transaction.setAmount(request.amount());
+        transaction.setGatewayReference(result.gatewayReference());
+        transaction.setStatus(PayoutStatus.PENDING);
+        transaction.setPaymentMethod(PaymentMethod.PAYSTACK);
+        transaction.setPurpose(PaymentPurpose.BOOKING_PAYMENT);
+        paymentTransactionRepository.save(transaction);
 
-        fareHoldRepository.save(FareHold.builder()
-                .paymentTransactionId(transaction.getId())
-                .bookingId(request.bookingId())
-                .driverId(request.driverId())
-                .amount(request.amount())
-                .build());
+        if (fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId()).isEmpty()) {
+            fareHoldRepository.save(FareHold.builder()
+                    .paymentTransactionId(transaction.getId())
+                    .bookingId(request.bookingId())
+                    .driverId(request.driverId())
+                    .amount(request.amount())
+                    .build());
+        }
 
         return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
     }
 
     /** No gateway involved at all - the fare is debited from the rider's wallet synchronously, so the booking confirms immediately instead of waiting on a webhook. */
     private InitiatePaymentResponse payFromWallet(InitiatePaymentRequest request) {
+        paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId())
+                .filter(t -> t.getStatus() == PayoutStatus.PAID)
+                .ifPresent(t -> {
+                    throw new BadRequestException("This booking has already been paid for");
+                });
+
         String reference = UUID.randomUUID().toString();
         walletService.debitForBooking(request.riderId(), request.bookingId(), request.amount(), reference);
 

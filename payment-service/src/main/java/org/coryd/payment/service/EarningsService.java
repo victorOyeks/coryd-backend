@@ -63,7 +63,7 @@ public class EarningsService {
     @Transactional
     public void onTripCompleted(TripCompletedEvent event) {
         String bookingId = event.getBookingId();
-        FareHold hold = fareHoldRepository.findByBookingId(bookingId).orElse(null);
+        FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
         if (hold == null || hold.isReleased() || hold.isRefunded()) {
             log.warn("No releasable fare hold for booking {}", bookingId);
             return;
@@ -160,14 +160,14 @@ public class EarningsService {
 
     @Transactional
     public void refund(String bookingId, String reason) {
-        FareHold hold = fareHoldRepository.findByBookingId(bookingId).orElse(null);
+        FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
         if (hold == null || hold.isReleased() || hold.isRefunded()) {
             return;
         }
         hold.setRefunded(true);
         fareHoldRepository.save(hold);
 
-        paymentTransactionRepository.findByBookingId(bookingId).ifPresent(transaction -> {
+        paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).ifPresent(transaction -> {
             // We fully own the wallet ledger, so a wallet-paid booking gets its money back
             // immediately. A Paystack-paid booking that never actually succeeded (still PENDING,
             // or FAILED) has nothing to refund - only PAID has real money on Paystack's side to
