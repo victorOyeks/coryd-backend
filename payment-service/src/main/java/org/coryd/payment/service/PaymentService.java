@@ -46,15 +46,8 @@ public class PaymentService {
         return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus());
     }
 
-    /** Upserts the PaymentTransaction/FareHold pair keyed on the DB-level booking_id unique
-     * constraint (006-payment-fare-hold-booking-unique.sql), instead of a plain insert or an
-     * application-level check-then-insert - the latter is still racy (two near-simultaneous
-     * initiate() calls for the same booking could both pass a "does a row exist yet" check before
-     * either commits). The database, not this method, is what actually guarantees at most one row
-     * per booking now; upsertByBookingId()'s WHERE clause makes the conflict-update a no-op once
-     * the row is already PAID, which is how affected==0 is distinguished from a normal
-     * reused/updated retry without a second read. The upfront check below is just a fast, friendly
-     * rejection for the common case - not the enforcement mechanism. */
+    /** Upserts on the booking_id unique index instead of a plain insert - the DB, not this method,
+     * guarantees at most one row per booking. affected==0 means already PAID. */
     private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
         rejectIfAlreadyPaid(request.bookingId());
 
@@ -79,13 +72,10 @@ public class PaymentService {
         return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
     }
 
-    /** No gateway involved at all - the fare is debited from the rider's wallet synchronously, so
-     * the booking confirms immediately instead of waiting on a webhook. Note this only closes the
-     * PaymentTransaction/FareHold duplication - WalletService.debitForBooking() itself still has no
-     * guard against being called twice for the same booking, so a true concurrent double-tap here
-     * (not the sequential retry this whole fix targets) could still debit the wallet twice before
-     * either upsert below runs; affected==0 in that case means exactly that already happened, and
-     * is surfaced loudly rather than swallowed. */
+    /** No gateway involved - the fare is debited from the wallet synchronously, so the booking
+     * confirms immediately instead of waiting on a webhook. debitForBooking() itself isn't yet
+     * idempotent, so affected==0 here would mean a concurrent double-tap already debited twice -
+     * surfaced loudly rather than swallowed. */
     private InitiatePaymentResponse payFromWallet(InitiatePaymentRequest request) {
         rejectIfAlreadyPaid(request.bookingId());
 

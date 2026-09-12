@@ -13,29 +13,15 @@ import java.util.Optional;
 public interface PaymentTransactionRepository extends JpaRepository<PaymentTransaction, String> {
     Optional<PaymentTransaction> findByGatewayReference(String gatewayReference);
 
-    /** "First ... OrderBy" rather than a plain findByBookingId - even after the unique index added
-     * in 006-payment-fare-hold-booking-unique.sql, a bare single-result query would still throw
-     * NonUniqueResultException against any pre-existing duplicate the migration's cleanup step
-     * missed, or on a service instance still running the old code during a rolling deploy. This
-     * always returns the most recent row instead of ever risking that crash. */
+    /** Most-recent row, not a single-result findByBookingId - avoids NonUniqueResultException against any leftover duplicate. */
     Optional<PaymentTransaction> findFirstByBookingIdOrderByCreatedAtDesc(String bookingId);
 
     List<PaymentTransaction> findByBookingIdIn(List<String> bookingIds);
 
-    /** Atomic upsert keyed on the booking_id unique index - a rider retrying payment (double-tap,
-     * or a client retry after a flaky status check) reuses the same row instead of racing a
-     * separate findFirst-then-insert-or-update against a concurrent call for the same booking.
-     * The WHERE clause after DO UPDATE makes the conflict-update a no-op (0 rows affected) once the
-     * existing row is already PAID, so a caller can tell "already paid" apart from "reused/updated"
-     * purely from the return value, without a second read.
-     *
-     * The `where booking_id is not null` right after `on conflict (booking_id)` is required, not
-     * optional decoration - payment_transactions_booking_id_unique (006-payment-fare-hold-booking-
-     * unique.sql) is a *partial* index (booking_id is nullable, for wallet top-ups), and Postgres can
-     * only infer a partial unique index for ON CONFLICT if the same predicate is repeated here.
-     * Omitting it fails every call with "no unique or exclusion constraint matching the ON CONFLICT
-     * specification" (SQLSTATE 42P10) even though the index genuinely exists - this call site never
-     * passes a null bookingId anyway, so the predicate is always true in practice. */
+    /** Upsert on the booking_id unique index so a payment retry updates the same row instead of
+     * racing a check-then-insert. "where booking_id is not null" repeats the partial index's own
+     * predicate (required for Postgres to infer it in ON CONFLICT); "where status <> 'PAID'" makes
+     * the update a no-op (affected == 0) once the booking's already paid. */
     @Modifying
     @Query(value = """
             insert into payment.payment_transactions

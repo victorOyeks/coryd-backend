@@ -11,19 +11,12 @@ import java.util.List;
 import java.util.Optional;
 
 public interface FareHoldRepository extends JpaRepository<FareHold, String> {
-    /** "First ... OrderBy" rather than a plain findByBookingId - even after the unique index added
-     * in 006-payment-fare-hold-booking-unique.sql, a bare single-result query would still throw
-     * NonUniqueResultException against any pre-existing duplicate the migration's cleanup step
-     * missed, or on a service instance still running the old code during a rolling deploy. This
-     * always returns the most recent row instead of ever risking that crash. */
+    /** Most-recent row, not a single-result findByBookingId - avoids NonUniqueResultException against any leftover duplicate. */
     Optional<FareHold> findFirstByBookingIdOrderByCreatedAtDesc(String bookingId);
 
     List<FareHold> findByBookingIdIn(List<String> bookingIds);
 
-    /** Native "insert if absent" for the same reason WalletRepository.insertIfAbsent exists - a
-     * PaymentTransaction upsert already made the payment_transactions row idempotent per booking;
-     * this makes its FareHold pair idempotent too. A retry never needs to change amount/driverId,
-     * so ON CONFLICT DO NOTHING (not DO UPDATE) is enough - the first attempt's row stands. */
+    /** Same idea as WalletRepository.insertIfAbsent - a retry never changes amount/driverId, so DO NOTHING is enough. */
     @Modifying
     @Query(value = "insert into payment.fare_holds (id, payment_transaction_id, booking_id, driver_id, amount, released, refunded, created_at, updated_at) "
             + "values (:id, :paymentTransactionId, :bookingId, :driverId, :amount, false, false, now(), now()) "
