@@ -40,7 +40,7 @@ public class NotificationEventListener {
         String message = event.getPurpose() == OtpPurpose.PASSWORD_RESET
                 ? "Your CoRyd password reset code is " + event.getCode() + ". If you didn't request this, ignore this message."
                 : "Your CoRyd verification code is " + event.getCode();
-        dispatchService.sendOtp(event.getPhone(), message, "OTP_ISSUED", event.getChannel());
+        dispatchService.sendOtp(event.getPhone(), message, event.getCode(), "OTP_ISSUED", event.getChannel());
     }
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CONFIRMED, groupId = KafkaConfig.GROUP_ID)

@@ -41,6 +41,33 @@ public class TermiiSmsService {
         return dispatch(toPhone, message, "whatsapp");
     }
 
+    /** Separate endpoint from send()/sendWhatsapp() - Termii's voice OTP API takes a bare numeric
+     * code (it generates and reads out its own script), not a full message, and needs no sender ID
+     * since it's a phone call, not a text with a displayed "from" name. Stopgap while the DND route
+     * is pending Termii's approval - a code read aloud isn't blocked by the SMS DND registry. */
+    public boolean sendVoiceOtp(String toPhone, String code) {
+        String normalizedPhone = toInternationalFormat(toPhone);
+        if (!enabled) {
+            log.info("termii.enabled=false - not placing voice OTP call to {}", normalizedPhone);
+            return true;
+        }
+        try {
+            restClient.post()
+                    .uri("/api/sms/otp/send/voice")
+                    .body(Map.of(
+                            "api_key", apiKey,
+                            "phone_number", normalizedPhone,
+                            "code", code
+                    ))
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to place voice OTP call to {}: {}", normalizedPhone, e.getMessage());
+            return false;
+        }
+    }
+
     private boolean dispatch(String toPhone, String message, String channel) {
         String normalizedPhone = toInternationalFormat(toPhone);
         if (!enabled) {

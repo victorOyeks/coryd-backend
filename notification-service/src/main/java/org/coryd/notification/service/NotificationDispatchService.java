@@ -37,16 +37,24 @@ public class NotificationDispatchService {
                 .build());
     }
 
+    /** code is the bare OTP digits, needed separately from message since the voice channel reads
+     * out its own script around the code rather than speaking a pre-built SMS-style sentence. */
     @Async
     @Transactional
-    public void sendOtp(String phone, String message, String eventType, OtpChannel channel) {
-        boolean isWhatsapp = channel == OtpChannel.WHATSAPP;
-        boolean delivered = isWhatsapp
-                ? termiiSmsService.sendWhatsapp(phone, message)
-                : termiiSmsService.send(phone, message);
+    public void sendOtp(String phone, String message, String code, String eventType, OtpChannel channel) {
+        boolean delivered = switch (channel) {
+            case WHATSAPP -> termiiSmsService.sendWhatsapp(phone, message);
+            case VOICE -> termiiSmsService.sendVoiceOtp(phone, code);
+            case SMS -> termiiSmsService.send(phone, message);
+        };
+        NotificationChannel loggedChannel = switch (channel) {
+            case WHATSAPP -> NotificationChannel.WHATSAPP;
+            case VOICE -> NotificationChannel.VOICE;
+            case SMS -> NotificationChannel.SMS;
+        };
         notificationLogRepository.save(NotificationLog.builder()
                 .recipientPhone(phone)
-                .channel(isWhatsapp ? NotificationChannel.WHATSAPP : NotificationChannel.SMS)
+                .channel(loggedChannel)
                 .eventType(eventType)
                 .delivered(delivered)
                 .build());
