@@ -12,7 +12,6 @@ import org.coryd.common.kafka.events.PaymentSucceededEvent;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
-import org.coryd.payment.entity.FareHold;
 import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.repository.FareHoldRepository;
@@ -22,7 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -48,76 +46,67 @@ public class PaymentService {
         return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus());
     }
 
-    /** Reuses the same PaymentTransaction/FareHold row across retries instead of inserting a new
-     * pair each time initiate() is called for the same booking - a rider re-tapping Pay (or the
-     * client retrying after a slow/failed status check, as actually happened in production)
-     * previously left multiple PaymentTransaction/FareHold rows per bookingId with no DB
-     * constraint to stop it, which broke every findByBookingId-style read (getByBooking(),
-     * EarningsService's onTripCompleted()/refund()) with a NonUniqueResultException the moment a
-     * second row existed. Only a PAID booking is rejected outright - a still-PENDING or FAILED
-     * attempt just gets superseded, so an abandoned or declined checkout never permanently blocks
-     * paying for that booking. */
+    /** Upserts the PaymentTransaction/FareHold pair keyed on the DB-level booking_id unique
+     * constraint (006-payment-fare-hold-booking-unique.sql), instead of a plain insert or an
+     * application-level check-then-insert - the latter is still racy (two near-simultaneous
+     * initiate() calls for the same booking could both pass a "does a row exist yet" check before
+     * either commits). The database, not this method, is what actually guarantees at most one row
+     * per booking now; upsertByBookingId()'s WHERE clause makes the conflict-update a no-op once
+     * the row is already PAID, which is how affected==0 is distinguished from a normal
+     * reused/updated retry without a second read. The upfront check below is just a fast, friendly
+     * rejection for the common case - not the enforcement mechanism. */
     private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
-        Optional<PaymentTransaction> existing = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId());
-        if (existing.isPresent() && existing.get().getStatus() == PayoutStatus.PAID) {
-            throw new BadRequestException("This booking has already been paid for");
-        }
+        rejectIfAlreadyPaid(request.bookingId());
 
         String reference = UUID.randomUUID().toString();
         PaymentGatewayClient.GatewayInitResult result =
                 gatewayClient.initiate(reference, request.amount(), request.riderEmail(), request.callbackUrl());
 
-        PaymentTransaction transaction = existing.orElseGet(PaymentTransaction::new);
-        transaction.setBookingId(request.bookingId());
-        transaction.setRiderId(request.riderId());
-        transaction.setAmount(request.amount());
-        transaction.setGatewayReference(result.gatewayReference());
-        transaction.setStatus(PayoutStatus.PENDING);
-        transaction.setPaymentMethod(PaymentMethod.PAYSTACK);
-        transaction.setPurpose(PaymentPurpose.BOOKING_PAYMENT);
-        paymentTransactionRepository.save(transaction);
-
-        if (fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId()).isEmpty()) {
-            fareHoldRepository.save(FareHold.builder()
-                    .paymentTransactionId(transaction.getId())
-                    .bookingId(request.bookingId())
-                    .driverId(request.driverId())
-                    .amount(request.amount())
-                    .build());
+        int affected = paymentTransactionRepository.upsertByBookingId(
+                UUID.randomUUID().toString(), request.bookingId(), request.riderId(), request.amount(),
+                result.gatewayReference(), PayoutStatus.PENDING.name(), PaymentMethod.PAYSTACK.name(),
+                PaymentPurpose.BOOKING_PAYMENT.name());
+        if (affected == 0) {
+            throw new BadRequestException("This booking has already been paid for");
         }
+
+        PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId())
+                .orElseThrow(() -> new IllegalStateException("Upsert succeeded but no transaction found for booking " + request.bookingId()));
+
+        fareHoldRepository.insertIfAbsent(UUID.randomUUID().toString(), transaction.getId(),
+                request.bookingId(), request.driverId(), request.amount());
 
         return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
     }
 
-    /** No gateway involved at all - the fare is debited from the rider's wallet synchronously, so the booking confirms immediately instead of waiting on a webhook. */
+    /** No gateway involved at all - the fare is debited from the rider's wallet synchronously, so
+     * the booking confirms immediately instead of waiting on a webhook. Note this only closes the
+     * PaymentTransaction/FareHold duplication - WalletService.debitForBooking() itself still has no
+     * guard against being called twice for the same booking, so a true concurrent double-tap here
+     * (not the sequential retry this whole fix targets) could still debit the wallet twice before
+     * either upsert below runs; affected==0 in that case means exactly that already happened, and
+     * is surfaced loudly rather than swallowed. */
     private InitiatePaymentResponse payFromWallet(InitiatePaymentRequest request) {
-        paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId())
-                .filter(t -> t.getStatus() == PayoutStatus.PAID)
-                .ifPresent(t -> {
-                    throw new BadRequestException("This booking has already been paid for");
-                });
+        rejectIfAlreadyPaid(request.bookingId());
 
         String reference = UUID.randomUUID().toString();
         walletService.debitForBooking(request.riderId(), request.bookingId(), request.amount(), reference);
 
-        PaymentTransaction transaction = paymentTransactionRepository.save(PaymentTransaction.builder()
-                .bookingId(request.bookingId())
-                .riderId(request.riderId())
-                .amount(request.amount())
-                .gatewayReference(reference)
-                .status(PayoutStatus.PAID)
-                .paymentMethod(PaymentMethod.WALLET)
-                .purpose(PaymentPurpose.BOOKING_PAYMENT)
-                .build());
+        int affected = paymentTransactionRepository.upsertByBookingId(
+                UUID.randomUUID().toString(), request.bookingId(), request.riderId(), request.amount(),
+                reference, PayoutStatus.PAID.name(), PaymentMethod.WALLET.name(), PaymentPurpose.BOOKING_PAYMENT.name());
+        if (affected == 0) {
+            throw new IllegalStateException("Wallet was debited for booking " + request.bookingId()
+                    + " but a payment transaction for it was already PAID - likely a concurrent duplicate debit");
+        }
+
+        PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(request.bookingId())
+                .orElseThrow(() -> new IllegalStateException("Upsert succeeded but no transaction found for booking " + request.bookingId()));
 
         // Same FareHold as the Paystack path - EarningsService's commission/refund logic
         // doesn't need to know which payment method funded it.
-        fareHoldRepository.save(FareHold.builder()
-                .paymentTransactionId(transaction.getId())
-                .bookingId(request.bookingId())
-                .driverId(request.driverId())
-                .amount(request.amount())
-                .build());
+        fareHoldRepository.insertIfAbsent(UUID.randomUUID().toString(), transaction.getId(),
+                request.bookingId(), request.driverId(), request.amount());
 
         kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
                 .bookingId(transaction.getBookingId())
@@ -127,6 +116,14 @@ public class PaymentService {
                 .build());
 
         return new InitiatePaymentResponse(null, reference, PayoutStatus.PAID);
+    }
+
+    private void rejectIfAlreadyPaid(String bookingId) {
+        paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId)
+                .filter(t -> t.getStatus() == PayoutStatus.PAID)
+                .ifPresent(t -> {
+                    throw new BadRequestException("This booking has already been paid for");
+                });
     }
 
     @Transactional
