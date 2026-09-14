@@ -53,7 +53,7 @@ class ReportEmailBuilderTest {
 
     @Test
     void handlesAnEmptyPeriodWithoutBreaking() {
-        ReportRange range = ReportRange.previousDay(LocalDate.of(2026, 9, 14), LAGOS);
+        ReportRange range = ReportRange.completedBefore(ReportPeriod.DAILY, LocalDate.of(2026, 9, 14), LAGOS);
         ReportData data = new ReportData(ReportPeriod.DAILY, range,
                 TripStats.EMPTY, PaymentStats.EMPTY, IdentityStats.EMPTY, ProfileStats.EMPTY,
                 TripStats.EMPTY, PaymentStats.EMPTY, List.of(), List.of());
@@ -66,9 +66,9 @@ class ReportEmailBuilderTest {
     private ReportData sample(ReportPeriod period) {
         LocalDate today = LocalDate.of(2026, 9, 14);
         ReportRange range = switch (period) {
-            case DAILY -> ReportRange.previousDay(today, LAGOS);
-            case WEEKLY -> ReportRange.previousWeek(today, LAGOS);
-            case MONTHLY -> ReportRange.previousMonth(today, LAGOS);
+            case DAILY -> ReportRange.completedBefore(ReportPeriod.DAILY, today, LAGOS);
+            case WEEKLY -> ReportRange.completedBefore(ReportPeriod.WEEKLY, today, LAGOS);
+            case MONTHLY -> ReportRange.completedBefore(ReportPeriod.MONTHLY, today, LAGOS);
         };
 
         TripStats trip = new TripStats(34, 29, 3, 136, 41, 97, 88, 6, 2, 1, 97, 62, 24,

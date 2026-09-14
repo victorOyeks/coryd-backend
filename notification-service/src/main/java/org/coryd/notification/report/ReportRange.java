@@ -1,5 +1,6 @@
 package org.coryd.notification.report;
 
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -19,30 +20,35 @@ public record ReportRange(LocalDate startDate, LocalDate endDate, Instant from, 
                 endDate.plusDays(1).atStartOfDay(zone).toInstant());
     }
 
-    public static ReportRange previousDay(LocalDate today, ZoneId zone) {
-        LocalDate day = today.minusDays(1);
-        return of(day, day, zone);
+    /** The period containing the anchor date - what a manual trigger reports on. */
+    public static ReportRange containing(ReportPeriod period, LocalDate anchor, ZoneId zone) {
+        return switch (period) {
+            case DAILY -> of(anchor, anchor, zone);
+            case WEEKLY -> {
+                LocalDate monday = anchor.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+                yield of(monday, monday.plusDays(6), zone);
+            }
+            case MONTHLY -> of(anchor.withDayOfMonth(1), anchor.with(TemporalAdjusters.lastDayOfMonth()), zone);
+        };
     }
 
-    public static ReportRange previousWeek(LocalDate today, ZoneId zone) {
-        LocalDate lastMonday = today.with(TemporalAdjusters.previous(java.time.DayOfWeek.MONDAY));
-        return of(lastMonday, lastMonday.plusDays(6), zone);
-    }
-
-    public static ReportRange previousMonth(LocalDate today, ZoneId zone) {
-        LocalDate firstOfLastMonth = today.withDayOfMonth(1).minusMonths(1);
-        return of(firstOfLastMonth, firstOfLastMonth.with(TemporalAdjusters.lastDayOfMonth()), zone);
+    /** The most recently completed period - what the scheduled jobs report on. */
+    public static ReportRange completedBefore(ReportPeriod period, LocalDate today, ZoneId zone) {
+        LocalDate anchor = switch (period) {
+            case DAILY -> today.minusDays(1);
+            case WEEKLY -> today.minusWeeks(1);
+            case MONTHLY -> today.withDayOfMonth(1).minusMonths(1);
+        };
+        return containing(period, anchor, zone);
     }
 
     /** The equivalent window immediately before this one, for the period-on-period deltas. */
     public ReportRange preceding(ReportPeriod period, ZoneId zone) {
-        return switch (period) {
-            case DAILY -> of(startDate.minusDays(1), endDate.minusDays(1), zone);
-            case WEEKLY -> of(startDate.minusWeeks(1), endDate.minusWeeks(1), zone);
-            case MONTHLY -> {
-                LocalDate start = startDate.minusMonths(1);
-                yield of(start, start.with(TemporalAdjusters.lastDayOfMonth()), zone);
-            }
+        LocalDate anchor = switch (period) {
+            case DAILY -> startDate.minusDays(1);
+            case WEEKLY -> startDate.minusWeeks(1);
+            case MONTHLY -> startDate.minusMonths(1);
         };
+        return containing(period, anchor, zone);
     }
 }

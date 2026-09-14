@@ -2,6 +2,8 @@ package org.coryd.notification.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.UserRole;
+import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.notification.client.PlatformStatsClient;
 import org.coryd.notification.report.ReportData;
 import org.coryd.notification.report.ReportPeriod;
@@ -38,28 +40,58 @@ public class ReportService {
     @Value("${report.recipients:}")
     private List<String> recipients;
 
+    /** Scheduled path - the most recently completed period. */
     public void sendReport(ReportPeriod period) {
         ZoneId zone = ZoneId.of(timezone);
-        LocalDate today = LocalDate.now(zone);
-        ReportRange range = switch (period) {
-            case DAILY -> ReportRange.previousDay(today, zone);
-            case WEEKLY -> ReportRange.previousWeek(today, zone);
-            case MONTHLY -> ReportRange.previousMonth(today, zone);
-        };
+        send(period, ReportRange.completedBefore(period, LocalDate.now(zone), zone), zone, cleanRecipients());
+    }
 
-        List<String> to = cleanRecipients();
+    /**
+     * Manual trigger. anchor is any date inside the period to report on, defaulting to today,
+     * so a report can be fired for the current day, week or month before it has finished.
+     */
+    public void sendReportFor(ReportPeriod period, LocalDate anchor, UserRole callerRole, List<String> overrideTo) {
+        requireOpsAdmin(callerRole);
+        ZoneId zone = ZoneId.of(timezone);
+        List<String> to = overrideTo == null || overrideTo.isEmpty() ? cleanRecipients() : clean(overrideTo);
+        send(period, ReportRange.containing(period, anchorOrToday(anchor, zone), zone), zone, to);
+    }
+
+    /** Renders the report without sending it, so a trigger can be eyeballed without spending send quota. */
+    public String renderReportFor(ReportPeriod period, LocalDate anchor, UserRole callerRole) {
+        requireOpsAdmin(callerRole);
+        ZoneId zone = ZoneId.of(timezone);
+        ReportRange range = ReportRange.containing(period, anchorOrToday(anchor, zone), zone);
+        return emailBuilder.build(collect(period, range, zone));
+    }
+
+    private void send(ReportPeriod period, ReportRange range, ZoneId zone, List<String> to) {
         ReportData data = collect(period, range, zone);
         boolean sent = emailService.sendHtml(to, emailBuilder.subject(data), emailBuilder.build(data));
         log.info("{} report for {}..{} {} to {} recipient(s)",
                 period, range.startDate(), range.endDate(), sent ? "sent" : "NOT sent", to.size());
     }
 
+    private LocalDate anchorOrToday(LocalDate anchor, ZoneId zone) {
+        return anchor == null ? LocalDate.now(zone) : anchor;
+    }
+
+    private static void requireOpsAdmin(UserRole callerRole) {
+        if (callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("Only an ops admin can trigger reports");
+        }
+    }
+
     /** Tolerates spaces and a trailing comma - one blank entry would otherwise fail the whole send. */
     private List<String> cleanRecipients() {
-        if (recipients == null) {
+        return clean(recipients);
+    }
+
+    private static List<String> clean(List<String> addresses) {
+        if (addresses == null) {
             return List.of();
         }
-        return recipients.stream()
+        return addresses.stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(address -> !address.isEmpty())

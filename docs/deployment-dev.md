@@ -88,6 +88,28 @@ Fill in at minimum:
 - `PAYSTACK_SECRET_KEY` — test key to start
 - `TERMII_API_KEY` / `TERMII_SENDER_ID`
 - `REPORT_ENABLED` / `REPORT_TIMEZONE` / `REPORT_RECIPIENTS` / `REPORT_LOGO_URL` — ops reports emailed at 06:00 Africa/Lagos (daily), Mon 06:05 (weekly), 1st 06:10 (monthly). `REPORT_RECIPIENTS` is comma-separated.
+
+
+### Firing a report on demand
+
+OPS_ADMIN token required. `date` is any day inside the period to report on; omit it for the
+current day/week/month, so a report can be fired before the period has finished.
+
+```bash
+# send now, for today / this week / this month
+curl -X POST "$GATEWAY/notification/admin/reports/DAILY"   -H "Authorization: Bearer $OPS_TOKEN"
+curl -X POST "$GATEWAY/notification/admin/reports/WEEKLY"  -H "Authorization: Bearer $OPS_TOKEN"
+curl -X POST "$GATEWAY/notification/admin/reports/MONTHLY" -H "Authorization: Bearer $OPS_TOKEN"
+
+# re-send a specific past period
+curl -X POST "$GATEWAY/notification/admin/reports/DAILY?date=2026-09-13" -H "Authorization: Bearer $OPS_TOKEN"
+
+# send to one address instead of REPORT_RECIPIENTS
+curl -X POST "$GATEWAY/notification/admin/reports/DAILY?to=victor.oyeks@coryd.ng" -H "Authorization: Bearer $OPS_TOKEN"
+
+# render in the browser without sending (costs no email quota)
+curl "$GATEWAY/notification/admin/reports/WEEKLY/preview?date=2026-09-13" -H "Authorization: Bearer $OPS_TOKEN" > report.html
+```
 - `GOOGLE_MAPS_API_KEY`
 - `FIREBASE_CREDENTIALS_PATH` — push notifications; see [docs/firebase-fcm.md](firebase-fcm.md) for getting the service-account JSON onto the VPS. Optional to start — if left pointing at a file that doesn't exist yet, `notification-service` still starts fine and just skips push delivery (in-app/DB notifications are unaffected).
 
