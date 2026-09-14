@@ -16,5 +16,5 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @ConfigurationProperties(prefix = "commission")
 public class CommissionProperties {
-    private java.math.BigDecimal percentage = new java.math.BigDecimal("0.10");
+    private java.math.BigDecimal percentage = new java.math.BigDecimal("0.05");
 }

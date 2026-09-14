@@ -36,8 +36,8 @@ public class EarningsController {
     private final CommissionProperties commissionProperties;
 
     /** So the client computes gross/commission/net from the real configured rate instead of hardcoding it.
-     * commission.percentage is stored as a fraction (0.15) since that's what EarningsService multiplies
-     * fares by directly - scaled to a plain percentage number (15) here so the FE doesn't have to. */
+     * commission.percentage is stored as a fraction (0.05) since that's what EarningsService multiplies
+     * fares by directly - scaled to a plain percentage number (5) here so the FE doesn't have to. */
     @GetMapping("/commission-rate")
     public ApiResponse<CommissionRate> commissionRate() {
         return ApiResponse.ok(new CommissionRate(commissionProperties.getPercentage().multiply(BigDecimal.valueOf(100))));
