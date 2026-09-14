@@ -37,9 +37,12 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.OTP_ISSUED, groupId = KafkaConfig.GROUP_ID)
     public void onOtpIssued(OtpIssuedEvent event) {
+        // Must match Termii's approved message format exactly (business name, expiry, no-share
+        // warning) or the DND route can block/flag it - see the "Your CoRyd verification code is
+        // 002929. It expires in 5 minutes. Do not share this code with anyone." sample they approved.
         String message = event.getPurpose() == OtpPurpose.PASSWORD_RESET
-                ? "Your CoRyd password reset code is " + event.getCode() + ". If you didn't request this, ignore this message."
-                : "Your CoRyd verification code is " + event.getCode();
+                ? "Your CoRyd password reset code is " + event.getCode() + ". It expires in 5 minutes. Do not share this code with anyone."
+                : "Your CoRyd verification code is " + event.getCode() + ". It expires in 5 minutes. Do not share this code with anyone.";
         dispatchService.sendOtp(event.getPhone(), message, event.getCode(), "OTP_ISSUED", event.getChannel());
     }
 
