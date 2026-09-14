@@ -75,15 +75,23 @@ public class AuthService {
         }
 
         Optional<User> existing = userRepository.findByPhone(request.phone());
-        if (existing.isPresent() && existing.get().getPhoneVerifiedAt() != null) {
+        boolean fullyOnboarded = existing.isPresent()
+                && existing.get().getPhoneVerifiedAt() != null
+                && existing.get().getPasswordHash() != null;
+        if (fullyOnboarded) {
             throw new BadRequestException("An account with this phone number already exists - please log in");
         }
 
-        // Either a new phone, or a signup that was abandoned before OTP verification - nothing
-        // real exists on that account yet (no verified phone, no password), so it's safe to
-        // reuse the row and resend an OTP rather than leaving the phone permanently stuck.
+        // Either a new phone, or a signup abandoned before completing onboarding - never verified,
+        // or verified but no password ever set (verifyOtp() already hands out a token, so a stuck
+        // user could have added a second role via /auth/roles/add before abandoning; only a
+        // never-verified row is safe to reset roles on, an already-verified one just gains this one).
         User user = existing.orElseGet(() -> User.builder().phone(request.phone()).build());
-        user.setRoles(new HashSet<>(Set.of(role)));
+        if (user.getPhoneVerifiedAt() == null) {
+            user.setRoles(new HashSet<>(Set.of(role)));
+        } else {
+            user.getRoles().add(role);
+        }
         userRepository.save(user);
 
         issueOtp(request.phone(), OtpChannel.SMS, OtpPurpose.SIGNUP);
