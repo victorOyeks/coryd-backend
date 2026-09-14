@@ -229,12 +229,16 @@ public class VerificationAggregationService {
         String vehicleId = vehicle == null ? null : vehicle.getId();
         String email = profile == null ? null : profile.getEmail();
 
-        if (overall == VerificationStatus.APPROVED && profile != null && profile.getVerifiedSince() == null) {
+        // verifiedSince is a one-way flag (never reset once set), so "still null" is exactly
+        // "this is the first time ever" - a document-expiry-driven re-approval later must not
+        // re-fire the "You're verified!" welcome push every time a renewed doc gets re-approved.
+        boolean isFirstApproval = overall == VerificationStatus.APPROVED && profile != null && profile.getVerifiedSince() == null;
+        if (isFirstApproval) {
             profile.setVerifiedSince(Instant.now());
             driverProfileRepository.save(profile);
         }
 
-        if (overall == VerificationStatus.APPROVED) {
+        if (isFirstApproval) {
             logKafkaResult(driverId, KafkaTopics.DRIVER_APPROVED,
                     kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
                             .driverId(driverId)
