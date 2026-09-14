@@ -1,7 +1,11 @@
 --liquibase formatted sql
 
 --changeset coryd:022-payment-fare-hold-booking-id-unique
+--validCheckSum: 9:65f94b8c3cf0254eae45962be61e1908
 -- At-most-one PaymentTransaction/FareHold per booking, enforced at the DB level.
+-- validCheckSum covers the pre-d734fe1 body: comments in this changeset were trimmed after
+-- it had already run on dev, and the checksum spans comments too. Never edit an applied
+-- changeset - add a new one instead.
 
 -- Existing duplicates predate the constraint - keep only the most recent row per booking.
 UPDATE payment.payment_transactions t
