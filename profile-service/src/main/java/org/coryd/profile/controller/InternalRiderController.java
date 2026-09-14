@@ -2,6 +2,7 @@ package org.coryd.profile.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.profile.dto.BillingContactResponse;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.entity.EmergencyContact;
 import org.coryd.profile.service.EmergencyContactService;
@@ -23,6 +24,11 @@ public class InternalRiderController {
 
     private final RiderProfileService riderProfileService;
     private final EmergencyContactService emergencyContactService;
+
+    @GetMapping("/{userId}/billing-contact")
+    public ApiResponse<BillingContactResponse> billingContact(@PathVariable String userId) {
+        return ApiResponse.ok(riderProfileService.getBillingContact(userId));
+    }
 
     @GetMapping("/batch")
     public ApiResponse<List<RiderSummary>> batch(@RequestParam List<String> userIds) {

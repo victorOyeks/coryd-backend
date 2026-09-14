@@ -52,6 +52,29 @@ public class ProfileServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    /** Email/phone for the Paystack checkout. Degrades to empty rather than blocking a payment. */
+    public BillingContact fetchBillingContact(String riderId) {
+        try {
+            BillingContactView view = restClient.get()
+                    .uri("/internal/riders/{riderId}/billing-contact", riderId)
+                    .retrieve()
+                    .body(BillingContactView.class);
+            return view == null || view.data() == null ? BillingContact.EMPTY : view.data();
+        } catch (Exception e) {
+            log.warn("Could not fetch billing contact for rider {}: {}", riderId, e.getMessage());
+            return BillingContact.EMPTY;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record BillingContactView(BillingContact data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record BillingContact(String email, String phone) {
+        public static final BillingContact EMPTY = new BillingContact(null, null);
+    }
+
     public record RiderSummaryItem(String userId, String fullName, String photoUrl) {
     }
 

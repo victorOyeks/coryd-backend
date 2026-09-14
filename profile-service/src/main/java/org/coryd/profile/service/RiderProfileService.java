@@ -5,6 +5,7 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RiderProfileCreatedEvent;
 import org.coryd.profile.client.IdentityServiceClient;
+import org.coryd.profile.dto.BillingContactResponse;
 import org.coryd.profile.dto.RiderProfileResponse;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
@@ -28,6 +29,15 @@ public class RiderProfileService {
     public RiderProfile get(String userId) {
         return riderProfileRepository.findByUserId(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Rider profile not found"));
+    }
+
+    /** What payment-service puts on the Paystack checkout. Tolerates a missing profile - a rider can pay before ever saving one. */
+    @Transactional(readOnly = true)
+    public BillingContactResponse getBillingContact(String userId) {
+        String email = riderProfileRepository.findByUserId(userId)
+                .map(RiderProfile::getEmail)
+                .orElse(null);
+        return new BillingContactResponse(email, identityServiceClient.fetchPhone(userId));
     }
 
     /** Batch lookup for trip-service's Trip Receipt screen - one call per receipt, not one per passenger. */

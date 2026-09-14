@@ -41,7 +41,7 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         Map<String, Object> body = new HashMap<>(Map.of(
                 "reference", reference,
                 "amount", amountInKobo,
-                "email", riderEmail == null ? "rider@coryd.ng" : riderEmail
+                "email", riderEmail
         ));
         if (callbackUrl != null && !callbackUrl.isBlank()) {
             body.put("callback_url", callbackUrl);
