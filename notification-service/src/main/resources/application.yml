@@ -64,6 +64,25 @@ mail:
   from-address: ${MAIL_FROM_ADDRESS:no-reply@coryd.ng}
   from-name: ${MAIL_FROM_NAME:CoRyd}
 
+services:
+  trip:
+    url: ${TRIP_SERVICE_URL:http://localhost:9103/trip}
+  payment:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:9104/payment}
+  identity:
+    url: ${IDENTITY_SERVICE_URL:http://localhost:9101/identity}
+  profile:
+    url: ${PROFILE_SERVICE_URL:http://localhost:9102/profile}
+  internal:
+    api-key: ${INTERNAL_API_KEY}
+
+# Ops reports. All three fire at 06:00 in report.timezone; recipients is comma-separated.
+report:
+  enabled: ${REPORT_ENABLED:true}
+  timezone: ${REPORT_TIMEZONE:Africa/Lagos}
+  recipients: ${REPORT_RECIPIENTS:hello@coryd.ng}
+  logo-url: ${REPORT_LOGO_URL:}
+
 firebase:
   credentials-path: ${FIREBASE_CREDENTIALS_PATH:firebase-service-account.json}
 

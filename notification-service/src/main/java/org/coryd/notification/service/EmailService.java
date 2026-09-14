@@ -2,9 +2,14 @@ package org.coryd.notification.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.mail.internet.MimeMessage;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
+
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Thin wrapper over Spring Mail (plain SMTP). Kept behind a single method so
@@ -37,6 +42,27 @@ public class EmailService {
             return true;
         } catch (Exception e) {
             log.error("Failed to send email to {}: {}", to, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Same contract as send(), but the body is HTML - used by the ops reports. */
+    public boolean sendHtml(List<String> recipients, String subject, String html) {
+        if (recipients == null || recipients.isEmpty()) {
+            log.warn("No recipients configured for \"{}\" - not sending", subject);
+            return false;
+        }
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
+            helper.setFrom(fromAddress, fromName);
+            helper.setTo(recipients.toArray(String[]::new));
+            helper.setSubject(subject);
+            helper.setText(html, true);
+            mailSender.send(message);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to send HTML email \"{}\": {}", subject, e.getMessage());
             return false;
         }
     }

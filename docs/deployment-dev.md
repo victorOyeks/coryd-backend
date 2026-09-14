@@ -87,6 +87,7 @@ Fill in at minimum:
 - `JWT_SECRET` — generate one: `openssl rand -base64 48`
 - `PAYSTACK_SECRET_KEY` — test key to start
 - `TERMII_API_KEY` / `TERMII_SENDER_ID`
+- `REPORT_ENABLED` / `REPORT_TIMEZONE` / `REPORT_RECIPIENTS` / `REPORT_LOGO_URL` — ops reports emailed at 06:00 Africa/Lagos (daily), Mon 06:05 (weekly), 1st 06:10 (monthly). `REPORT_RECIPIENTS` is comma-separated.
 - `GOOGLE_MAPS_API_KEY`
 - `FIREBASE_CREDENTIALS_PATH` — push notifications; see [docs/firebase-fcm.md](firebase-fcm.md) for getting the service-account JSON onto the VPS. Optional to start — if left pointing at a file that doesn't exist yet, `notification-service` still starts fine and just skips push delivery (in-app/DB notifications are unaffected).
 

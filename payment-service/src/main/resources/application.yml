@@ -54,7 +54,7 @@ services:
     api-key: ${INTERNAL_API_KEY}
 
 commission:
-  percentage: ${COMMISSION_PERCENTAGE:0.10}
+  percentage: ${COMMISSION_PERCENTAGE:0.05}
 
 # Destructive test-only endpoints (see org.coryd.payment.dev). Off unless explicitly enabled.
 coryd:

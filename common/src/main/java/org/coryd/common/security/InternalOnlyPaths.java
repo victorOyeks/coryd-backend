@@ -19,6 +19,9 @@ public final class InternalOnlyPaths {
 
     public static final String[] IDENTITY_SERVICE = {"/internal/**"};
 
+    /** Platform stats read by notification-service's report jobs. */
+    public static final String[] TRIP_SERVICE = {"/internal/**"};
+
     /** Also covers the dev-only reset tooling (/internal/dev/**), called by trip-service - only reachable when coryd.dev-tools.enabled is true. */
     public static final String[] PAYMENT_SERVICE = {"/internal/**"};
 }
