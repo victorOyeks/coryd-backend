@@ -55,7 +55,7 @@ public class AuthService {
 
     private static final int OTP_TTL_MINUTES = 5;
     private static final int REFRESH_TOKEN_TTL_DAYS = 30;
-    private static final String FIXED_DEV_OTP = "000333";
+    private static final String DEV_BYPASS_OTP = "000333";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
@@ -95,7 +95,7 @@ public class AuthService {
     }
 
     private void issueOtp(String phone, OtpChannel channel, OtpPurpose purpose) {
-        String code = isDevOrTest() ? FIXED_DEV_OTP : String.format("%06d", RANDOM.nextInt(1_000_000));
+        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
         otpCodeRepository.save(OtpCode.builder()
                 .phone(phone)
                 .code(code)
@@ -110,7 +110,6 @@ public class AuthService {
                 .build());
     }
 
-    /** dev/test get a fixed OTP so testers never have to check an inbox. Never enabled otherwise. */
     private boolean isDevOrTest() {
         for (String profile : environment.getActiveProfiles()) {
             if ("dev".equalsIgnoreCase(profile) || "test".equalsIgnoreCase(profile)) {
@@ -118,6 +117,12 @@ public class AuthService {
             }
         }
         return false;
+    }
+
+    /** The real, randomly-generated code always works. In dev/test only, 000333 also works - lets
+     * testers without access to the phone complete the flow, without disabling real OTP delivery. */
+    private boolean codeMatches(OtpCode otp, String enteredCode) {
+        return otp.getCode().equals(enteredCode) || (isDevOrTest() && DEV_BYPASS_OTP.equals(enteredCode));
     }
 
     @Transactional
@@ -128,7 +133,7 @@ public class AuthService {
         if (otp.getExpiresAt().isBefore(Instant.now())) {
             throw new BadRequestException("OTP has expired");
         }
-        if (!otp.getCode().equals(request.code())) {
+        if (!codeMatches(otp, request.code())) {
             throw new BadRequestException("Incorrect OTP");
         }
 
@@ -203,7 +208,7 @@ public class AuthService {
         if (otp.getExpiresAt().isBefore(Instant.now())) {
             throw new BadRequestException("OTP has expired");
         }
-        if (!otp.getCode().equals(request.code())) {
+        if (!codeMatches(otp, request.code())) {
             throw new BadRequestException("Incorrect OTP");
         }
         otp.setUsed(true);
