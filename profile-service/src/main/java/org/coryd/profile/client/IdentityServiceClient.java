@@ -39,6 +39,26 @@ public class IdentityServiceClient {
         }
     }
 
+    /**
+     * Mirrors the display name onto the identity User so it can ride in the JWT and the auth
+     * response - signup only captures a phone, so identity has no name of its own. Best-effort:
+     * a failure here must not fail the profile save.
+     */
+    public void syncFullName(String userId, String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return;
+        }
+        try {
+            restClient.put()
+                    .uri("/internal/users/{userId}/full-name", userId)
+                    .body(java.util.Map.of("fullName", fullName))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (Exception e) {
+            log.warn("Could not sync full name for user {}: {}", userId, e.getMessage());
+        }
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record UserContactView(Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)

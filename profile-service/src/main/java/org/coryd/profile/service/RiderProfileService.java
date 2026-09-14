@@ -59,6 +59,7 @@ public class RiderProfileService {
         profile.setEmergencyContactPhone(request.emergencyContactPhone());
 
         RiderProfile saved = riderProfileRepository.save(profile);
+        identityServiceClient.syncFullName(userId, saved.getFullName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.RIDER_PROFILE_CREATED, RiderProfileCreatedEvent.builder().riderId(userId).build());
         }

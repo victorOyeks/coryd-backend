@@ -85,6 +85,7 @@ public class DriverProfileService {
         }
 
         DriverProfile saved = driverProfileRepository.save(profile);
+        identityServiceClient.syncFullName(userId, saved.getLegalName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
         }
