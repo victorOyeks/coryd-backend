@@ -31,6 +31,7 @@ public class WalletService {
     private final WalletTransactionRepository walletTransactionRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final PaymentGatewayClient gatewayClient;
+    private final CheckoutEmailResolver checkoutEmailResolver;
 
     @Transactional
     public Wallet getOrCreateWallet(String userId) {
@@ -65,7 +66,8 @@ public class WalletService {
     @Transactional
     public InitiatePaymentResponse initiateTopUp(String userId, BigDecimal amount, String email, String callbackUrl) {
         String reference = UUID.randomUUID().toString();
-        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(reference, amount, email, callbackUrl);
+        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(
+                reference, amount, checkoutEmailResolver.resolve(userId, email), callbackUrl);
 
         paymentTransactionRepository.save(PaymentTransaction.builder()
                 .riderId(userId)

@@ -36,6 +36,10 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
 
     @Override
     public GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl) {
+        if (riderEmail == null || riderEmail.isBlank()) {
+            // Map.of would NPE here; Paystack rejects the call anyway, so fail with something readable.
+            throw new BadRequestException("A billing email is required to start a payment");
+        }
         long amountInKobo = amount.movePointRight(2).longValueExact();
 
         Map<String, Object> body = new HashMap<>(Map.of(

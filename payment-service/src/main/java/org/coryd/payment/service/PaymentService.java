@@ -9,7 +9,6 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.PaymentSucceededEvent;
-import org.coryd.payment.client.ProfileServiceClient;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
@@ -28,14 +27,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PaymentService {
 
-    private static final String PLACEHOLDER_EMAIL_DOMAIN = "@coryd.ng";
-
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final FareHoldRepository fareHoldRepository;
     private final PaymentGatewayClient gatewayClient;
     private final WalletService walletService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
-    private final ProfileServiceClient profileServiceClient;
+    private final CheckoutEmailResolver checkoutEmailResolver;
 
     @Transactional
     public InitiatePaymentResponse initiate(InitiatePaymentRequest request) {
@@ -50,30 +47,6 @@ public class PaymentService {
         return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus());
     }
 
-    /**
-     * Paystack requires an email on /transaction/initialize, so this never returns null. Prefers the
-     * rider's own address; failing that, a stable per-rider placeholder built from their phone, which
-     * keeps Paystack's customer records one-per-rider instead of collapsing everyone into one inbox.
-     */
-    private String checkoutEmail(InitiatePaymentRequest request) {
-        ProfileServiceClient.BillingContact contact = profileServiceClient.fetchBillingContact(request.riderId());
-
-        if (isPresent(contact.email())) {
-            return contact.email().trim();
-        }
-        if (isPresent(request.riderEmail())) {
-            return request.riderEmail().trim();
-        }
-
-        String phoneDigits = contact.phone() == null ? null : contact.phone().replaceAll("[^0-9]", "");
-        String localPart = isPresent(phoneDigits) ? phoneDigits : request.riderId();
-        return localPart + PLACEHOLDER_EMAIL_DOMAIN;
-    }
-
-    private static boolean isPresent(String value) {
-        return value != null && !value.isBlank();
-    }
-
     /** Upserts on the booking_id unique index instead of a plain insert - the DB, not this method,
      * guarantees at most one row per booking. affected==0 means already PAID. */
     private InitiatePaymentResponse payViaPaystack(InitiatePaymentRequest request) {
@@ -81,7 +54,7 @@ public class PaymentService {
 
         String reference = UUID.randomUUID().toString();
         PaymentGatewayClient.GatewayInitResult result =
-                gatewayClient.initiate(reference, request.amount(), checkoutEmail(request), request.callbackUrl());
+                gatewayClient.initiate(reference, request.amount(), checkoutEmailResolver.resolve(request.riderId(), request.riderEmail()), request.callbackUrl());
 
         int affected = paymentTransactionRepository.upsertByBookingId(
                 UUID.randomUUID().toString(), request.bookingId(), request.riderId(), request.amount(),
