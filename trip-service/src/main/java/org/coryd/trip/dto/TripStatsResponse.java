@@ -17,6 +17,8 @@ public record TripStatsResponse(
         long seatsBooked,
         long distinctRiders,
         long repeatRiders,
+        long driversOperatingUnverified,
+        long graceExpiringSoon,
         List<TopRouteItem> topRoutes
 ) {
     public record TopRouteItem(String origin, String destination, long seats, BigDecimal grossFare) {

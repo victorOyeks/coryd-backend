@@ -17,7 +17,9 @@ import org.coryd.common.kafka.events.RoutePublishedEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.ProfileServiceClient;
+import org.coryd.trip.config.DriverVerificationPolicy;
 import org.coryd.trip.config.MatchingProperties;
+import org.coryd.trip.dto.DriverPostingEligibilityResponse;
 import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.GeoPin;
@@ -48,6 +50,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -97,6 +100,7 @@ public class RouteService {
     private final ProfileServiceClient profileServiceClient;
     private final MapsService mapsService;
     private final MatchingProperties matchingProperties;
+    private final DriverVerificationPolicy verificationPolicy;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ChatService chatService;
 
@@ -105,12 +109,7 @@ public class RouteService {
         if (!callerId.equals(driverId)) {
             throw new UnauthorizedException("Only this driver can post their own route");
         }
-        boolean approved = driverVerificationCacheRepository.findById(driverId)
-                .map(DriverVerificationCache::isApproved)
-                .orElse(false);
-        if (!approved) {
-            throw new BadRequestException("Driver/vehicle is not yet verified - cannot post a route (D-104)");
-        }
+        requirePostingEligibility(driverId);
 
         boolean hasActiveTrip = !routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
                 driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS), startOfToday()).isEmpty();
@@ -424,7 +423,7 @@ public class RouteService {
                     route.getDriverId(),
                     driver == null ? null : driver.legalName(),
                     driver == null ? null : driver.photoUrl(),
-                    driver != null && driver.verificationStatus() == VerificationStatus.APPROVED,
+                    isFullyVerified(route.getDriverId()),
                     vehicle == null ? null : vehicle.make(),
                     vehicle == null ? null : vehicle.model(),
                     vehicle == null ? null : vehicle.plateNumber(),
@@ -516,6 +515,70 @@ public class RouteService {
         route.setStatus(RouteStatus.IN_PROGRESS);
         route.setStartedAt(Instant.now());
         routePostRepository.save(route);
+    }
+
+    /**
+     * D-104's gate, relaxed while there is no ops dashboard to approve anyone. An approved driver
+     * always passes; an unverified one starts their grace window on this call and is blocked only
+     * once it runs out.
+     */
+    private void requirePostingEligibility(String driverId) {
+        DriverVerificationCache cache = driverVerificationCacheRepository.findById(driverId)
+                .orElseGet(() -> new DriverVerificationCache(driverId, false));
+        if (cache.isApproved() || verificationPolicy.neverEnforces()) {
+            return;
+        }
+        if (verificationPolicy.blocksUnverified()) {
+            throw new BadRequestException("Driver/vehicle is not yet verified - cannot post a route (D-104)");
+        }
+
+        Instant now = Instant.now();
+        if (cache.getFirstRouteAt() == null) {
+            cache.setFirstRouteAt(now);
+            driverVerificationCacheRepository.save(cache);
+            return;
+        }
+        if (verificationPolicy.graceExpired(cache.getFirstRouteAt(), now)) {
+            throw new BadRequestException(
+                    "Your document upload window has closed - upload and get your vehicle documents approved to post routes again");
+        }
+    }
+
+    /** Drives the driver app's "upload your documents" prompt and its countdown. */
+    @Transactional(readOnly = true)
+    public DriverPostingEligibilityResponse postingEligibility(String driverId) {
+        DriverVerificationCache cache = driverVerificationCacheRepository.findById(driverId).orElse(null);
+        boolean approved = cache != null && cache.isApproved();
+        Instant firstRouteAt = cache == null ? null : cache.getFirstRouteAt();
+        Instant deadline = verificationPolicy.deadlineFrom(firstRouteAt);
+
+        boolean canPost = approved
+                || verificationPolicy.neverEnforces()
+                || (!verificationPolicy.blocksUnverified() && !verificationPolicy.graceExpired(firstRouteAt, Instant.now()));
+
+        Integer daysRemaining = deadline == null || approved ? null
+                : (int) Math.max(0, Duration.between(Instant.now(), deadline).toDays());
+
+        return new DriverPostingEligibilityResponse(
+                canPost,
+                approved,
+                verificationPolicy.getEnforcement().name(),
+                verificationPolicy.getGracePeriodDays(),
+                firstRouteAt,
+                approved ? null : deadline,
+                daysRemaining);
+    }
+
+
+    /**
+     * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
+     * DriverSummary.verificationStatus, which is identity-only (government ID + selfie) and would
+     * show a green tick on a driver operating under the document grace window.
+     */
+    private boolean isFullyVerified(String driverId) {
+        return driverVerificationCacheRepository.findById(driverId)
+                .map(DriverVerificationCache::isApproved)
+                .orElse(false);
     }
 
     /** Anything not already a terminal state - HELD/CONFIRMED plus the trip-in-progress phases, all of which a driver-side route cancellation must still unwind and refund. */

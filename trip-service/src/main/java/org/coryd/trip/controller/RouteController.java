@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.trip.dto.DriverPostingEligibilityResponse;
 import org.coryd.trip.dto.MultiStopRoutePreview;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
@@ -37,6 +38,13 @@ import java.util.Optional;
 public class RouteController {
 
     private final RouteService routeService;
+
+    /** Whether this driver may post routes, and how long they have left to upload documents. Always self-scoped. */
+    @GetMapping("/drivers/me/posting-eligibility")
+    public ApiResponse<DriverPostingEligibilityResponse> postingEligibility(
+            @AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(routeService.postingEligibility(principal.getUserId()));
+    }
 
     @PostMapping("/drivers/{driverId}")
     public ApiResponse<RoutePost> post(@AuthenticationPrincipal CoRydUserDetails principal,

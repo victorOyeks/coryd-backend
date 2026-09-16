@@ -198,6 +198,15 @@ public class VerificationAggregationService {
         }
     }
 
+    /** Rejection reasons are personal - a driver sees only their own, ops sees any. */
+    @Transactional(readOnly = true)
+    public VerificationStatusResponse getStatusFor(String driverId, String callerId, UserRole callerRole) {
+        if (!driverId.equals(callerId) && callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("You can only view your own verification status");
+        }
+        return getStatus(driverId);
+    }
+
     /** Driver app's onboarding checklist - which steps the driver has actually done, distinct from getStatus()'s approval view (a submitted-but-pending-review item reads "done" here, since it's ops's turn next, not the driver's). */
     public DriverOnboardingStatusResponse getOnboardingStatus(String driverId) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);

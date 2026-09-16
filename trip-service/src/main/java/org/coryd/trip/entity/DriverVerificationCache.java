@@ -4,6 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+
+import java.time.Instant;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -28,4 +30,12 @@ public class DriverVerificationCache {
 
     @Column(nullable = false)
     private boolean approved;
+
+    /** First successful route post while unverified - the start of the grace window. */
+    private Instant firstRouteAt;
+
+    public DriverVerificationCache(String driverId, boolean approved) {
+        this.driverId = driverId;
+        this.approved = approved;
+    }
 }

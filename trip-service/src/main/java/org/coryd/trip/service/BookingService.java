@@ -40,6 +40,7 @@ import org.coryd.trip.dto.SharedTripResponse;
 import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.dto.TripReceiptResponse;
 import org.coryd.trip.entity.Booking;
+import org.coryd.trip.entity.DriverVerificationCache;
 import org.coryd.trip.entity.BookingStatusHistory;
 import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
@@ -48,6 +49,7 @@ import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.BookingStatusHistoryRepository;
 import org.coryd.trip.repository.IssueReportRepository;
+import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SosIncidentRepository;
@@ -88,9 +90,21 @@ public class BookingService {
     private final BookingStatusHistoryRepository historyRepository;
     private final RoutePostRepository routePostRepository;
     private final RatingRepository ratingRepository;
+    private final DriverVerificationCacheRepository driverVerificationCacheRepository;
     private final SosIncidentRepository sosIncidentRepository;
     private final IssueReportRepository issueReportRepository;
     private final CancellationPolicy cancellationPolicy;
+    /**
+     * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
+     * DriverSummary.verificationStatus, which is identity-only (government ID + selfie) and would
+     * show a green tick on a driver operating under the document grace window.
+     */
+    private boolean isFullyVerified(String driverId) {
+        return driverVerificationCacheRepository.findById(driverId)
+                .map(DriverVerificationCache::isApproved)
+                .orElse(false);
+    }
+
     private final ProfileServiceClient profileServiceClient;
     private final IdentityServiceClient identityServiceClient;
     private final ShareTokenService shareTokenService;
@@ -396,7 +410,7 @@ public class BookingService {
                 booking.getStatus(),
                 driver == null ? booking.getDriverNameSnapshot() : driver.legalName(),
                 driver == null ? null : driver.photoUrl(),
-                driver != null && driver.verificationStatus() == VerificationStatus.APPROVED,
+                isFullyVerified(route.getDriverId()),
                 vehicle == null ? null : vehicle.make(),
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
@@ -430,7 +444,7 @@ public class BookingService {
                 driver == null ? booking.getDriverNameSnapshot() : driver.legalName(),
                 driverPhone,
                 driver == null ? null : driver.photoUrl(),
-                driver != null && driver.verificationStatus() == VerificationStatus.APPROVED,
+                isFullyVerified(route.getDriverId()),
                 vehicle == null ? null : vehicle.make(),
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),

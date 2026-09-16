@@ -37,6 +37,11 @@ public interface PlatformStatsRepository extends Repository<Booking, String> {
         long getRepeatRiders();
     }
 
+    interface UnverifiedDriverCounts {
+        long getOperatingUnverified();
+        long getGraceExpiringSoon();
+    }
+
     interface TopRouteRow {
         String getOriginLabel();
         String getDestinationLabel();
@@ -92,6 +97,17 @@ public interface PlatformStatsRepository extends Repository<Booking, String> {
             ) per_rider
             """, nativeQuery = true)
     RiderCounts riderCounts(@Param("from") Instant from, @Param("to") Instant to);
+
+    /** Drivers who have posted at least one route without being approved, and how many of those are near their deadline. */
+    @Query(value = """
+            select
+                count(*) filter (where approved = false and first_route_at is not null)  as operatingUnverified,
+                count(*) filter (where approved = false and first_route_at is not null
+                                   and first_route_at + make_interval(days => :graceDays) < now() + interval '7 days'
+                                   and first_route_at + make_interval(days => :graceDays) > now()) as graceExpiringSoon
+            from trip.driver_verification_cache
+            """, nativeQuery = true)
+    UnverifiedDriverCounts unverifiedDriverCounts(@Param("graceDays") int graceDays);
 
     @Query(value = """
             select

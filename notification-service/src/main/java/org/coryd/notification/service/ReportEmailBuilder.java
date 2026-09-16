@@ -232,7 +232,9 @@ public class ReportEmailBuilder {
         openSection(html, "Growth");
         row(html, "New riders", format(data.identity().newRiders()), INK, false);
         row(html, "New drivers", format(data.identity().newDrivers()), INK, false);
-        row(html, "Awaiting vehicle approval", format(data.profile().awaitingApproval()), "#B57D0A", true);
+        row(html, "Awaiting vehicle approval", format(data.profile().awaitingApproval()), "#B57D0A", false);
+        row(html, "Operating without approved documents",
+                format(data.trip().driversOperatingUnverified()), "#B57D0A", true);
         closeSection(html);
     }
 
@@ -314,6 +316,12 @@ public class ReportEmailBuilder {
                 age = " &mdash; oldest " + days + (days == 1 ? " day" : " days");
             }
             items.add(pending + " driver" + (pending == 1 ? "" : "s") + " waiting on vehicle approval" + age);
+        }
+
+        if (data.trip().graceExpiringSoon() > 0) {
+            items.add(data.trip().graceExpiringSoon() + " driver"
+                    + (data.trip().graceExpiringSoon() == 1 ? "'s" : "s'")
+                    + " document window closes within 7 days &mdash; they stop being able to post routes");
         }
 
         long idleDrivers = data.profile().approvedDrivers() - data.trip().activeDrivers();

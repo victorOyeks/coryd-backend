@@ -124,10 +124,12 @@ public class PlatformStatsClient {
             long seatsBooked,
             long distinctRiders,
             long repeatRiders,
+            long driversOperatingUnverified,
+            long graceExpiringSoon,
             List<TopRoute> topRoutes) {
 
         public static final TripStats EMPTY =
-                new TripStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of());
+                new TripStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of());
 
         public List<TopRoute> topRoutes() {
             return topRoutes == null ? List.of() : topRoutes;

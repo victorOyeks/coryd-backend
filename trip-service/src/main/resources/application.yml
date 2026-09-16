@@ -75,6 +75,13 @@ matching:
   geo-tolerance-meters: 4000
   min-fare-reports: 5
 
+# Unverified drivers may post routes for grace-period-days after their first one. Flip to STRICT
+# once ops can approve drivers; OFF disables the gate entirely.
+driver:
+  verification:
+    enforcement: ${DRIVER_VERIFICATION_ENFORCEMENT:GRACE}
+    grace-period-days: ${DRIVER_VERIFICATION_GRACE_DAYS:30}
+
 cancellation:
   free-cancellation-window-hours: 2
   late-fee-percentage: 0.50

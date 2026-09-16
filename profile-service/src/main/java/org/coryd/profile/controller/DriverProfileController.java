@@ -61,8 +61,10 @@ public class DriverProfileController {
     }
 
     @GetMapping("/{driverId}/verification-status")
-    public ApiResponse<VerificationStatusResponse> verificationStatus(@PathVariable String driverId) {
-        return ApiResponse.ok(verificationAggregationService.getStatus(driverId));
+    public ApiResponse<VerificationStatusResponse> verificationStatus(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                       @PathVariable String driverId) {
+        return ApiResponse.ok(verificationAggregationService.getStatusFor(
+                driverId, principal.getUserId(), principal.getActiveRole()));
     }
 
     /** Ops admin's review queue - every driver with at least one item still awaiting a decision.

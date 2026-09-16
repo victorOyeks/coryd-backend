@@ -2,6 +2,7 @@ package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.trip.dto.TripStatsResponse;
+import org.coryd.trip.config.DriverVerificationPolicy;
 import org.coryd.trip.repository.PlatformStatsRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,12 +18,15 @@ public class PlatformStatsService {
     private static final int TOP_ROUTE_LIMIT = 5;
 
     private final PlatformStatsRepository platformStatsRepository;
+    private final DriverVerificationPolicy verificationPolicy;
 
     @Transactional(readOnly = true)
     public TripStatsResponse statsFor(Instant from, Instant to) {
         PlatformStatsRepository.RouteCounts routes = platformStatsRepository.routeCounts(from, to);
         PlatformStatsRepository.BookingCounts bookings = platformStatsRepository.bookingCounts(from, to);
         PlatformStatsRepository.RiderCounts riders = platformStatsRepository.riderCounts(from, to);
+        PlatformStatsRepository.UnverifiedDriverCounts unverified =
+                platformStatsRepository.unverifiedDriverCounts(verificationPolicy.getGracePeriodDays());
 
         List<TripStatsResponse.TopRouteItem> topRoutes = platformStatsRepository.topRoutes(from, to, TOP_ROUTE_LIMIT)
                 .stream()
@@ -47,6 +51,8 @@ public class PlatformStatsService {
                 zeroIfNull(bookings.getSeatsBooked()),
                 riders.getDistinctRiders(),
                 riders.getRepeatRiders(),
+                unverified.getOperatingUnverified(),
+                unverified.getGraceExpiringSoon(),
                 topRoutes);
     }
 
