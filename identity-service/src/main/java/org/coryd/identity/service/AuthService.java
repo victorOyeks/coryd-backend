@@ -12,6 +12,7 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.security.JwtUtil;
+import org.coryd.common.util.PhoneNumbers;
 import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
@@ -74,7 +75,8 @@ public class AuthService {
             throw new BadRequestException("OPS_ADMIN cannot be self-assigned");
         }
 
-        Optional<User> existing = userRepository.findByPhone(request.phone());
+        String phone = PhoneNumbers.normalize(request.phone());
+        Optional<User> existing = userRepository.findByPhone(phone);
         boolean fullyOnboarded = existing.isPresent()
                 && existing.get().getPhoneVerifiedAt() != null
                 && existing.get().getPasswordHash() != null;
@@ -86,7 +88,7 @@ public class AuthService {
         // or verified but no password ever set (verifyOtp() already hands out a token, so a stuck
         // user could have added a second role via /auth/roles/add before abandoning; only a
         // never-verified row is safe to reset roles on, an already-verified one just gains this one).
-        User user = existing.orElseGet(() -> User.builder().phone(request.phone()).build());
+        User user = existing.orElseGet(() -> User.builder().phone(phone).build());
         if (user.getPhoneVerifiedAt() == null) {
             user.setRoles(new HashSet<>(Set.of(role)));
         } else {
@@ -94,12 +96,12 @@ public class AuthService {
         }
         userRepository.save(user);
 
-        issueOtp(request.phone(), OtpChannel.SMS, OtpPurpose.SIGNUP);
+        issueOtp(phone, OtpChannel.SMS, OtpPurpose.SIGNUP);
     }
 
     @Transactional
     public void resendOtp(ResendOtpRequest request) {
-        issueOtp(request.phone(), request.channelOrDefault(), OtpPurpose.SIGNUP);
+        issueOtp(PhoneNumbers.normalize(request.phone()), request.channelOrDefault(), OtpPurpose.SIGNUP);
     }
 
     private void issueOtp(String phone, OtpChannel channel, OtpPurpose purpose) {
@@ -135,7 +137,7 @@ public class AuthService {
 
     @Transactional
     public AuthResponse verifyOtp(VerifyOtpRequest request) {
-        OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(request.phone(), OtpPurpose.SIGNUP)
+        OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(PhoneNumbers.normalize(request.phone()), OtpPurpose.SIGNUP)
                 .orElseThrow(() -> new BadRequestException("No pending OTP for this phone number"));
 
         if (otp.getExpiresAt().isBefore(Instant.now())) {
@@ -148,7 +150,7 @@ public class AuthService {
         otp.setUsed(true);
         otpCodeRepository.save(otp);
 
-        User user = userRepository.findByPhone(request.phone())
+        User user = userRepository.findByPhone(PhoneNumbers.normalize(request.phone()))
                 .orElseThrow(() -> new ResourceNotFoundException("No account for this phone number"));
 
         if (user.getPhoneVerifiedAt() == null) {
@@ -198,8 +200,9 @@ public class AuthService {
     /** Logged-out counterpart to changePassword - no current password to check, an OTP proves phone ownership instead. Silent no-op for an unregistered phone so the response never reveals whether an account exists. */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
-        if (userRepository.existsByPhone(request.phone())) {
-            issueOtp(request.phone(), OtpChannel.SMS, OtpPurpose.PASSWORD_RESET);
+        String phone = PhoneNumbers.normalize(request.phone());
+        if (userRepository.existsByPhone(phone)) {
+            issueOtp(phone, OtpChannel.SMS, OtpPurpose.PASSWORD_RESET);
         }
     }
 
@@ -210,7 +213,7 @@ public class AuthService {
         }
 
         OtpCode otp = otpCodeRepository.findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(
-                        request.phone(), OtpPurpose.PASSWORD_RESET)
+                        PhoneNumbers.normalize(request.phone()), OtpPurpose.PASSWORD_RESET)
                 .orElseThrow(() -> new BadRequestException("No pending password reset for this phone number"));
 
         if (otp.getExpiresAt().isBefore(Instant.now())) {
@@ -222,7 +225,7 @@ public class AuthService {
         otp.setUsed(true);
         otpCodeRepository.save(otp);
 
-        User user = userRepository.findByPhone(request.phone())
+        User user = userRepository.findByPhone(PhoneNumbers.normalize(request.phone()))
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
 
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
@@ -246,7 +249,7 @@ public class AuthService {
     public AuthResponse login(LoginRequest request) {
         UserRole activeRole = request.roleOrDefault();
 
-        User user = userRepository.findByPhone(request.phone())
+        User user = userRepository.findByPhone(PhoneNumbers.normalize(request.phone()))
                 .orElseThrow(() -> new BadRequestException("Incorrect phone number or password"));
 
         if (user.getPasswordHash() == null) {

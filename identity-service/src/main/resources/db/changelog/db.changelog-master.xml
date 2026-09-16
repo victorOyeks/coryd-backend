@@ -16,5 +16,6 @@
     <include file="db/changelog/005-phone-verified.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/006-forgot-password.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/007-backfill-user-full-name.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/008-normalize-user-phone.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
