@@ -12,6 +12,7 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.security.JwtUtil;
+import org.coryd.common.util.Names;
 import org.coryd.common.util.PhoneNumbers;
 import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
@@ -350,7 +351,9 @@ public class AuthService {
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
         long expiresIn = jwtUtil.getExpirationMs() / 1000;
         long refreshExpiresIn = Duration.ofDays(REFRESH_TOKEN_TTL_DAYS).getSeconds();
-        return new AuthResponse(user.getId(), user.getFullName(), user.getPhone(), activeRole.name(), roleNames,
+        // fullName carries only the first name - the key stays for the clients already bound to
+        // it, the JWT claim keeps the full name for service-to-service use.
+        return new AuthResponse(user.getId(), Names.firstName(user.getFullName()), user.getPhone(), activeRole.name(), roleNames,
                 accessToken, expiresIn, refreshTokenValue, refreshExpiresIn);
     }
 }
