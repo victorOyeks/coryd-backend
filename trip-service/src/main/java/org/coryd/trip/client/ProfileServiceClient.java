@@ -176,6 +176,33 @@ public class ProfileServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    /** Route-posting prerequisites. Throws rather than degrading - allowing a post because
+     * profile-service blinked would let an unidentified driver carry passengers. */
+    public DriverOnboarding fetchOnboarding(String driverId) {
+        DriverOnboardingView view = restClient.get()
+                .uri("/internal/drivers/{driverId}/onboarding-status", driverId)
+                .retrieve()
+                .body(DriverOnboardingView.class);
+        if (view == null || view.data() == null) {
+            throw new IllegalStateException("Empty onboarding status for driver " + driverId);
+        }
+        return view.data();
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record DriverOnboardingView(DriverOnboarding data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record DriverOnboarding(boolean profileSubmitted, boolean governmentIdSubmitted,
+                                   boolean selfieSubmitted, boolean vehicleSubmitted,
+                                   boolean documentsSubmitted) {
+
+        public boolean identitySubmitted() {
+            return governmentIdSubmitted && selfieSubmitted;
+        }
+    }
+
     public record DriverSummaryItem(String userId, String legalName, String photoUrl, VerificationStatus verificationStatus) {
     }
 

@@ -2,11 +2,13 @@ package org.coryd.profile.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.service.DriverProfileService;
 import org.coryd.profile.service.FavoriteDriverService;
+import org.coryd.profile.service.VerificationAggregationService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,10 +25,17 @@ public class InternalDriverController {
 
     private final DriverProfileService driverProfileService;
     private final FavoriteDriverService favoriteDriverService;
+    private final VerificationAggregationService verificationAggregationService;
 
     @GetMapping("/{userId}")
     public ApiResponse<DriverProfile> get(@PathVariable String userId) {
         return ApiResponse.ok(driverProfileService.get(userId));
+    }
+
+    /** trip-service's route-posting prerequisites - submission state, not approval. */
+    @GetMapping("/{userId}/onboarding-status")
+    public ApiResponse<DriverOnboardingStatusResponse> onboardingStatus(@PathVariable String userId) {
+        return ApiResponse.ok(verificationAggregationService.getOnboardingStatus(userId));
     }
 
     @GetMapping("/batch")

@@ -518,9 +518,10 @@ public class RouteService {
     }
 
     /**
-     * D-104's gate, relaxed while there is no ops dashboard to approve anyone. An approved driver
-     * always passes; an unverified one starts their grace window on this call and is blocked only
-     * once it runs out.
+     * D-104's gate, relaxed while there is no ops dashboard to approve anyone. Identity and vehicle
+     * details must be on file before the first route - they identify who is carrying passengers, and
+     * needing only submission rather than approval keeps them enforceable with no ops in the loop.
+     * Insurance and roadworthiness are what the grace window actually defers.
      */
     private void requirePostingEligibility(String driverId) {
         DriverVerificationCache cache = driverVerificationCacheRepository.findById(driverId)
@@ -532,6 +533,8 @@ public class RouteService {
             throw new BadRequestException("Driver/vehicle is not yet verified - cannot post a route (D-104)");
         }
 
+        requirePrerequisites(cache);
+
         Instant now = Instant.now();
         if (cache.getFirstRouteAt() == null) {
             cache.setFirstRouteAt(now);
@@ -540,11 +543,27 @@ public class RouteService {
         }
         if (verificationPolicy.graceExpired(cache.getFirstRouteAt(), now)) {
             throw new BadRequestException(
-                    "Your document upload window has closed - upload and get your vehicle documents approved to post routes again");
+                    "Your document upload window has closed - upload your insurance and roadworthiness certificate to post routes again");
         }
     }
 
-    /** Drives the driver app's "upload your documents" prompt and its countdown. */
+    /** Checked once per driver, then cached - identity and vehicle details cannot be un-submitted. */
+    private void requirePrerequisites(DriverVerificationCache cache) {
+        if (cache.getPrerequisitesMetAt() != null) {
+            return;
+        }
+        ProfileServiceClient.DriverOnboarding onboarding = profileServiceClient.fetchOnboarding(cache.getDriverId());
+        if (!onboarding.identitySubmitted()) {
+            throw new BadRequestException("Upload your government ID and selfie before posting a route");
+        }
+        if (!onboarding.vehicleSubmitted()) {
+            throw new BadRequestException("Register your vehicle - make, model, colour and plate number - before posting a route");
+        }
+        cache.setPrerequisitesMetAt(Instant.now());
+        driverVerificationCacheRepository.save(cache);
+    }
+
+    /** Drives the driver app's onboarding gate and its document countdown. */
     @Transactional(readOnly = true)
     public DriverPostingEligibilityResponse postingEligibility(String driverId) {
         DriverVerificationCache cache = driverVerificationCacheRepository.findById(driverId).orElse(null);
@@ -552,23 +571,50 @@ public class RouteService {
         Instant firstRouteAt = cache == null ? null : cache.getFirstRouteAt();
         Instant deadline = verificationPolicy.deadlineFrom(firstRouteAt);
 
-        boolean canPost = approved
-                || verificationPolicy.neverEnforces()
-                || (!verificationPolicy.blocksUnverified() && !verificationPolicy.graceExpired(firstRouteAt, Instant.now()));
+        boolean identitySubmitted = approved;
+        boolean vehicleRegistered = approved;
+        if (!approved && cache != null && cache.getPrerequisitesMetAt() != null) {
+            identitySubmitted = true;
+            vehicleRegistered = true;
+        } else if (!approved) {
+            try {
+                ProfileServiceClient.DriverOnboarding onboarding = profileServiceClient.fetchOnboarding(driverId);
+                identitySubmitted = onboarding.identitySubmitted();
+                vehicleRegistered = onboarding.vehicleSubmitted();
+            } catch (Exception e) {
+                log.warn("Could not read onboarding state for driver {}: {}", driverId, e.getMessage());
+            }
+        }
+
+        boolean graceOver = verificationPolicy.graceExpired(firstRouteAt, Instant.now());
+        String blockedReason = null;
+        if (!approved && !verificationPolicy.neverEnforces()) {
+            if (verificationPolicy.blocksUnverified()) {
+                blockedReason = "AWAITING_APPROVAL";
+            } else if (!identitySubmitted) {
+                blockedReason = "IDENTITY_REQUIRED";
+            } else if (!vehicleRegistered) {
+                blockedReason = "VEHICLE_REQUIRED";
+            } else if (graceOver) {
+                blockedReason = "DOCUMENTS_OVERDUE";
+            }
+        }
 
         Integer daysRemaining = deadline == null || approved ? null
                 : (int) Math.max(0, Duration.between(Instant.now(), deadline).toDays());
 
         return new DriverPostingEligibilityResponse(
-                canPost,
+                blockedReason == null,
                 approved,
+                identitySubmitted,
+                vehicleRegistered,
+                blockedReason,
                 verificationPolicy.getEnforcement().name(),
                 verificationPolicy.getGracePeriodDays(),
                 firstRouteAt,
                 approved ? null : deadline,
                 daysRemaining);
     }
-
 
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not

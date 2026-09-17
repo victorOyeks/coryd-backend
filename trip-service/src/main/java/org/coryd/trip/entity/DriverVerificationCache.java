@@ -34,6 +34,9 @@ public class DriverVerificationCache {
     /** First successful route post while unverified - the start of the grace window. */
     private Instant firstRouteAt;
 
+    /** When identity and vehicle details were first confirmed submitted - neither can be undone. */
+    private Instant prerequisitesMetAt;
+
     public DriverVerificationCache(String driverId, boolean approved) {
         this.driverId = driverId;
         this.approved = approved;

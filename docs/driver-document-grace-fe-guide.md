@@ -10,13 +10,23 @@ bottom — the deadline behaviour is the part that will surprise you.
 
 ## The one idea you need before anything else
 
-**A new driver can post routes straight away, but only for a limited window.**
+**A new driver can post routes as soon as we know who they are and what they drive — but their
+insurance and roadworthiness certificate can wait.**
 
-Previously a driver was blocked from posting until ops approved six separate items (government ID,
-selfie, vehicle, insurance, roadworthiness). There is no ops dashboard yet, so in practice *no real
-driver could ever post a route*.
+Previously a driver was blocked until ops *approved* five separate items. There is no ops dashboard
+yet, so in practice *no real driver could ever post a route*.
 
-That gate is now relaxed, not removed:
+The gate is now split in two:
+
+| Required before the first route | Deferred to the grace window |
+|---|---|
+| Government ID **uploaded** | Insurance certificate |
+| Selfie **uploaded** | Roadworthiness certificate |
+| Vehicle registered — make, model, colour, plate number | |
+
+Note **uploaded, not approved** — nothing needs ops in the loop, so these are enforceable today.
+
+For the deferred documents:
 
 - A driver posts their **first route** → a **30-day countdown starts at that moment**
 - During those 30 days they operate normally
@@ -42,6 +52,9 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
   "data": {
     "canPostRoutes": true,
     "documentsApproved": false,
+    "identitySubmitted": true,
+    "vehicleRegistered": true,
+    "blockedReason": null,
     "enforcement": "GRACE",
     "gracePeriodDays": 30,
     "firstRouteAt": "2026-09-16T08:12:44Z",
@@ -54,7 +67,10 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
 | Field | Meaning |
 |---|---|
 | `canPostRoutes` | Whether posting will succeed right now. **Drive the Post Route button off this.** |
-| `documentsApproved` | Fully approved on all six items. When `true`, ignore everything else here. |
+| `documentsApproved` | Fully approved on all five items. When `true`, ignore everything else here. |
+| `identitySubmitted` | Government ID **and** selfie uploaded |
+| `vehicleRegistered` | A vehicle with make, model, colour and plate number is on file |
+| `blockedReason` | Why posting is blocked, or `null`. See the table below |
 | `enforcement` | `GRACE`, `STRICT` or `OFF` — server policy, may change without an app release |
 | `gracePeriodDays` | Window length in days |
 | `firstRouteAt` | When the countdown started. `null` if they have never posted — the clock hasn't started |
@@ -63,14 +79,26 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
 
 It's self-scoped — there is no `{driverId}` variant, and a driver can only ever see their own.
 
-### The four states to design for
+### `blockedReason` values
+
+| Value | Meaning | Send them to |
+|---|---|---|
+| `null` | Not blocked | — |
+| `IDENTITY_REQUIRED` | No government ID and/or selfie on file | ID + selfie upload |
+| `VEHICLE_REQUIRED` | Identity done, no vehicle registered | Add vehicle (make, model, colour, plate) |
+| `DOCUMENTS_OVERDUE` | Grace window closed | Insurance + roadworthiness upload |
+| `AWAITING_APPROVAL` | Server is in `STRICT` mode — ops must approve | "Under review" screen |
+
+### The states to design for
 
 | State | Looks like | UI |
 |---|---|---|
 | **Approved** | `documentsApproved: true` | Nothing. No prompt, no banner. |
-| **Not started** | `canPostRoutes: true`, `firstRouteAt: null` | Post Route enabled. Soft "complete your profile" nudge at most. |
+| **Needs identity** | `canPostRoutes: false`, `IDENTITY_REQUIRED` | Blocking onboarding screen. This is the new-driver path. |
+| **Needs vehicle** | `canPostRoutes: false`, `VEHICLE_REQUIRED` | Blocking "add your vehicle" screen. |
+| **Clock not started** | `canPostRoutes: true`, `firstRouteAt: null` | Post Route enabled. No countdown yet. |
 | **In grace** | `canPostRoutes: true`, `daysRemaining: 21` | Post Route enabled + countdown prompt. |
-| **Expired** | `canPostRoutes: false`, `daysRemaining: 0` | Post Route disabled, hard blocking screen. |
+| **Expired** | `canPostRoutes: false`, `DOCUMENTS_OVERDUE` | Post Route disabled, hard blocking screen. |
 
 ---
 
@@ -135,11 +163,13 @@ GET /profile/drivers/{driverId}/verification-status     ← authenticated
 
 ## Error handling on Post Route
 
-`POST /trip/routes/drivers/{driverId}` can now fail with **400** and this message:
+`POST /trip/routes/drivers/{driverId}` can now fail with **400** and one of these:
 
 ```
-Your document upload window has closed - upload and get your vehicle
-documents approved to post routes again
+Upload your government ID and selfie before posting a route
+Register your vehicle - make, model, colour and plate number - before posting a route
+Your document upload window has closed - upload your insurance and
+roadworthiness certificate to post routes again
 ```
 
 Treat it as a **state refresh trigger**, not a generic error toast: re-fetch
@@ -155,7 +185,7 @@ eligibility refresh.
 ## Rider side: the "verified driver" badge
 
 `driverVerified` on booking details, trip receipts and search results now means **fully approved on
-all six items** — it is `false` for every driver operating under grace.
+all five items** — it is `false` for every driver operating under grace.
 
 Previously it reflected government ID + selfie only, which would have put a green "verified" tick on
 a driver who had uploaded no vehicle papers at all. That would have been actively misleading once
@@ -172,6 +202,7 @@ Expect `driverVerified: false` to be **common** now, not exceptional. Design for
 ## Checklist before you ship
 
 - [ ] Post Route button state comes from `canPostRoutes`, never from a local guess
+- [ ] `blockedReason` routes to the right screen — identity, vehicle, or documents
 - [ ] `gracePeriodDays` and `uploadDeadline` are read from the API — 30 is not hardcoded
 - [ ] `firstRouteAt: null` is handled (clock not started — don't show "0 days left")
 - [ ] `daysRemaining: null` is handled (approved, or not started)
