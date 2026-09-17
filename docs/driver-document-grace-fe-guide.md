@@ -24,11 +24,18 @@ The gate is now split in two:
 
 | Required before the first route | Deferred to the grace window |
 |---|---|
-| Government ID **uploaded** | Insurance certificate |
-| Selfie **uploaded** | Roadworthiness certificate |
-| Vehicle registered — make, model, colour, plate number | |
+| Government ID | Insurance certificate |
+| Selfie | Roadworthiness certificate |
+| Vehicle — make, model, year, colour, plate number | |
 
-Note **uploaded, not approved** — nothing needs ops in the loop, so these are enforceable today.
+**How strict "required" is depends on server config**, reported to you as `prerequisiteLevel`:
+
+- **`SUBMITTED`** (current) — uploaded/registered is enough. No ops involvement, so a driver can
+  finish onboarding and post in one session.
+- **`APPROVED`** — an ops admin must have approved each one first. The driver waits.
+
+Read `prerequisiteLevel` from the API and let `blockedReason` drive the screen; don't hardcode
+either behaviour.
 
 For the deferred documents:
 
@@ -56,9 +63,10 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
   "data": {
     "canPostRoutes": true,
     "documentsApproved": false,
-    "identitySubmitted": true,
-    "vehicleRegistered": true,
+    "identityOk": true,
+    "vehicleOk": true,
     "blockedReason": null,
+    "prerequisiteLevel": "SUBMITTED",
     "enforcement": "GRACE",
     "gracePeriodDays": 30,
     "firstRouteAt": "2026-09-16T08:12:44Z",
@@ -72,8 +80,9 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
 |---|---|
 | `canPostRoutes` | Whether posting will succeed right now. **Drive the Post Route button off this.** |
 | `documentsApproved` | Fully approved on all five items. When `true`, ignore everything else here. |
-| `identitySubmitted` | Government ID **and** selfie uploaded |
-| `vehicleRegistered` | A vehicle with make, model, colour and plate number is on file |
+| `identityOk` | Government ID and selfie meet the current `prerequisiteLevel` |
+| `vehicleOk` | Vehicle meets the current `prerequisiteLevel` |
+| `prerequisiteLevel` | `SUBMITTED` or `APPROVED` — what "required" currently means |
 | `blockedReason` | Why posting is blocked, or `null`. See the table below |
 | `enforcement` | `GRACE`, `STRICT` or `OFF` — server policy, may change without an app release |
 | `gracePeriodDays` | Window length in days |
@@ -90,6 +99,8 @@ It's self-scoped — there is no `{driverId}` variant, and a driver can only eve
 | `null` | Not blocked | — |
 | `IDENTITY_REQUIRED` | No government ID and/or selfie on file | ID + selfie upload |
 | `VEHICLE_REQUIRED` | Identity done, no vehicle registered | Add vehicle (make, model, colour, plate) |
+| `IDENTITY_PENDING_APPROVAL` | Uploaded, awaiting ops review *(APPROVED level only)* | "Under review" screen — nothing for them to do |
+| `VEHICLE_PENDING_APPROVAL` | Registered, awaiting ops review *(APPROVED level only)* | "Under review" screen |
 | `DOCUMENTS_OVERDUE` | Grace window closed | Insurance + roadworthiness upload |
 | `AWAITING_APPROVAL` | Server is in `STRICT` mode — ops must approve | "Under review" screen |
 
@@ -100,6 +111,7 @@ It's self-scoped — there is no `{driverId}` variant, and a driver can only eve
 | **Approved** | `documentsApproved: true` | Nothing. No prompt, no banner. |
 | **Needs identity** | `canPostRoutes: false`, `IDENTITY_REQUIRED` | Blocking onboarding screen. This is the new-driver path. |
 | **Needs vehicle** | `canPostRoutes: false`, `VEHICLE_REQUIRED` | Blocking "add your vehicle" screen. |
+| **Awaiting review** | `canPostRoutes: false`, `*_PENDING_APPROVAL` | "We're reviewing your details" — no action button, they just wait |
 | **Clock not started** | `canPostRoutes: true`, `firstRouteAt: null` | Post Route enabled. No countdown yet. |
 | **In grace** | `canPostRoutes: true`, `daysRemaining: 21` | Post Route enabled + countdown prompt. |
 | **Expired** | `canPostRoutes: false`, `DOCUMENTS_OVERDUE` | Post Route disabled, hard blocking screen. |
@@ -201,6 +213,8 @@ GET /profile/drivers/{driverId}/verification-status     ← authenticated
 ```
 Upload your government ID and selfie before posting a route
 Register your vehicle - make, model, colour and plate number - before posting a route
+Your government ID and selfie are still being reviewed - you can post routes once they are approved
+Your vehicle is still being reviewed - you can post routes once it is approved
 Your document upload window has closed - upload your insurance and
 roadworthiness certificate to post routes again
 ```
@@ -235,7 +249,8 @@ Expect `driverVerified: false` to be **common** now, not exceptional. Design for
 ## Checklist before you ship
 
 - [ ] Post Route button state comes from `canPostRoutes`, never from a local guess
-- [ ] `blockedReason` routes to the right screen — identity, vehicle, or documents
+- [ ] `blockedReason` routes to the right screen — including the two `*_PENDING_APPROVAL` states
+- [ ] An "awaiting review" screen exists with no action button
 - [ ] Identity and vehicle are collected during onboarding, not on first Post Route tap
 - [ ] The blocking gate has no skip; only the insurance/roadworthiness nudge is dismissible
 - [ ] `gracePeriodDays` and `uploadDeadline` are read from the API — 30 is not hardcoded

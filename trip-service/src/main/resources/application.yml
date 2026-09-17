@@ -81,6 +81,8 @@ driver:
   verification:
     enforcement: ${DRIVER_VERIFICATION_ENFORCEMENT:GRACE}
     grace-period-days: ${DRIVER_VERIFICATION_GRACE_DAYS:30}
+    # SUBMITTED until ops can review drivers; APPROVED blocks every unreviewed driver.
+    prerequisite-level: ${DRIVER_PREREQUISITE_LEVEL:SUBMITTED}
 
 cancellation:
   free-cancellation-window-hours: 2

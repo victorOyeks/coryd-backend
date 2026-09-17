@@ -15,6 +15,7 @@ import org.coryd.profile.dto.ItemDecision;
 import org.coryd.profile.dto.PendingVerificationItem;
 import org.coryd.profile.dto.ReviewableItem;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
+import org.coryd.profile.dto.DriverPrerequisiteStatus;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.entity.DriverDocument;
 import org.coryd.profile.entity.DriverProfile;
@@ -196,6 +197,30 @@ public class VerificationAggregationService {
         } catch (Exception e) {
             log.warn("Could not delete verification asset {} from Cloudinary, leaving it orphaned: {}", publicId, e.getMessage());
         }
+    }
+
+    /**
+     * Route-posting prerequisites. Identity and vehicle only - insurance and roadworthiness are
+     * what the grace window defers. Reported as both submitted and approved so trip-service can
+     * enforce either level without a second call.
+     */
+    @Transactional(readOnly = true)
+    public DriverPrerequisiteStatus getPrerequisiteStatus(String driverId) {
+        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
+        Vehicle vehicle = primaryVehicle(driverId);
+
+        boolean identitySubmitted = profile != null
+                && profile.getGovernmentIdUrl() != null
+                && profile.getSelfieSubmittedAt() != null;
+        boolean identityApproved = profile != null
+                && profile.getGovernmentIdStatus() == VerificationStatus.APPROVED
+                && profile.getSelfieStatus() == VerificationStatus.APPROVED;
+
+        return new DriverPrerequisiteStatus(
+                identitySubmitted,
+                vehicle != null,
+                identityApproved,
+                vehicle != null && vehicle.getVerificationStatus() == VerificationStatus.APPROVED);
     }
 
     /** Rejection reasons are personal - a driver sees only their own, ops sees any. */

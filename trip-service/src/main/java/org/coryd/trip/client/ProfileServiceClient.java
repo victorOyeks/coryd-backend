@@ -180,7 +180,7 @@ public class ProfileServiceClient {
      * profile-service blinked would let an unidentified driver carry passengers. */
     public DriverOnboarding fetchOnboarding(String driverId) {
         DriverOnboardingView view = restClient.get()
-                .uri("/internal/drivers/{driverId}/onboarding-status", driverId)
+                .uri("/internal/drivers/{driverId}/posting-prerequisites", driverId)
                 .retrieve()
                 .body(DriverOnboardingView.class);
         if (view == null || view.data() == null) {
@@ -194,12 +194,15 @@ public class ProfileServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record DriverOnboarding(boolean profileSubmitted, boolean governmentIdSubmitted,
-                                   boolean selfieSubmitted, boolean vehicleSubmitted,
-                                   boolean documentsSubmitted) {
+    public record DriverOnboarding(boolean identitySubmitted, boolean vehicleSubmitted,
+                                   boolean identityApproved, boolean vehicleApproved) {
 
-        public boolean identitySubmitted() {
-            return governmentIdSubmitted && selfieSubmitted;
+        public boolean identityMeets(boolean requireApproved) {
+            return requireApproved ? identityApproved : identitySubmitted;
+        }
+
+        public boolean vehicleMeets(boolean requireApproved) {
+            return requireApproved ? vehicleApproved : vehicleSubmitted;
         }
     }
 

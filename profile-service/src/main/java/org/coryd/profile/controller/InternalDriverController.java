@@ -3,6 +3,7 @@ package org.coryd.profile.controller;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
+import org.coryd.profile.dto.DriverPrerequisiteStatus;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.entity.DriverProfile;
@@ -32,7 +33,13 @@ public class InternalDriverController {
         return ApiResponse.ok(driverProfileService.get(userId));
     }
 
-    /** trip-service's route-posting prerequisites - submission state, not approval. */
+    /** trip-service's route-posting gate - identity and vehicle, both submitted and approved. */
+    @GetMapping("/{userId}/posting-prerequisites")
+    public ApiResponse<DriverPrerequisiteStatus> postingPrerequisites(@PathVariable String userId) {
+        return ApiResponse.ok(verificationAggregationService.getPrerequisiteStatus(userId));
+    }
+
+    /** Driver app's onboarding checklist - submission state, not approval. */
     @GetMapping("/{userId}/onboarding-status")
     public ApiResponse<DriverOnboardingStatusResponse> onboardingStatus(@PathVariable String userId) {
         return ApiResponse.ok(verificationAggregationService.getOnboardingStatus(userId));

@@ -5,9 +5,10 @@ import java.time.Instant;
 public record DriverPostingEligibilityResponse(
         boolean canPostRoutes,
         boolean documentsApproved,
-        boolean identitySubmitted,
-        boolean vehicleRegistered,
+        boolean identityOk,
+        boolean vehicleOk,
         String blockedReason,
+        String prerequisiteLevel,
         String enforcement,
         int gracePeriodDays,
         Instant firstRouteAt,

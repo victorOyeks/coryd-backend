@@ -547,20 +547,32 @@ public class RouteService {
         }
     }
 
-    /** Checked once per driver, then cached - identity and vehicle details cannot be un-submitted. */
+    /**
+     * Only cached at SUBMITTED level - an upload cannot be undone, but an approval can be revoked,
+     * so at APPROVED level profile-service is asked on every post.
+     */
     private void requirePrerequisites(DriverVerificationCache cache) {
-        if (cache.getPrerequisitesMetAt() != null) {
+        boolean requireApproved = verificationPolicy.requiresApprovedPrerequisites();
+        if (!requireApproved && cache.getPrerequisitesMetAt() != null) {
             return;
         }
+
         ProfileServiceClient.DriverOnboarding onboarding = profileServiceClient.fetchOnboarding(cache.getDriverId());
-        if (!onboarding.identitySubmitted()) {
-            throw new BadRequestException("Upload your government ID and selfie before posting a route");
+        if (!onboarding.identityMeets(requireApproved)) {
+            throw new BadRequestException(requireApproved
+                    ? "Your government ID and selfie are still being reviewed - you can post routes once they are approved"
+                    : "Upload your government ID and selfie before posting a route");
         }
-        if (!onboarding.vehicleSubmitted()) {
-            throw new BadRequestException("Register your vehicle - make, model, colour and plate number - before posting a route");
+        if (!onboarding.vehicleMeets(requireApproved)) {
+            throw new BadRequestException(requireApproved
+                    ? "Your vehicle is still being reviewed - you can post routes once it is approved"
+                    : "Register your vehicle - make, model, colour and plate number - before posting a route");
         }
-        cache.setPrerequisitesMetAt(Instant.now());
-        driverVerificationCacheRepository.save(cache);
+
+        if (cache.getPrerequisitesMetAt() == null) {
+            cache.setPrerequisitesMetAt(Instant.now());
+            driverVerificationCacheRepository.save(cache);
+        }
     }
 
     /** Drives the driver app's onboarding gate and its document countdown. */
@@ -571,18 +583,19 @@ public class RouteService {
         Instant firstRouteAt = cache == null ? null : cache.getFirstRouteAt();
         Instant deadline = verificationPolicy.deadlineFrom(firstRouteAt);
 
-        boolean identitySubmitted = approved;
-        boolean vehicleRegistered = approved;
-        if (!approved && cache != null && cache.getPrerequisitesMetAt() != null) {
-            identitySubmitted = true;
-            vehicleRegistered = true;
+        boolean requireApproved = verificationPolicy.requiresApprovedPrerequisites();
+        boolean identityOk = approved;
+        boolean vehicleOk = approved;
+        if (!approved && !requireApproved && cache != null && cache.getPrerequisitesMetAt() != null) {
+            identityOk = true;
+            vehicleOk = true;
         } else if (!approved) {
             try {
                 ProfileServiceClient.DriverOnboarding onboarding = profileServiceClient.fetchOnboarding(driverId);
-                identitySubmitted = onboarding.identitySubmitted();
-                vehicleRegistered = onboarding.vehicleSubmitted();
+                identityOk = onboarding.identityMeets(requireApproved);
+                vehicleOk = onboarding.vehicleMeets(requireApproved);
             } catch (Exception e) {
-                log.warn("Could not read onboarding state for driver {}: {}", driverId, e.getMessage());
+                log.warn("Could not read prerequisites for driver {}: {}", driverId, e.getMessage());
             }
         }
 
@@ -591,10 +604,10 @@ public class RouteService {
         if (!approved && !verificationPolicy.neverEnforces()) {
             if (verificationPolicy.blocksUnverified()) {
                 blockedReason = "AWAITING_APPROVAL";
-            } else if (!identitySubmitted) {
-                blockedReason = "IDENTITY_REQUIRED";
-            } else if (!vehicleRegistered) {
-                blockedReason = "VEHICLE_REQUIRED";
+            } else if (!identityOk) {
+                blockedReason = requireApproved ? "IDENTITY_PENDING_APPROVAL" : "IDENTITY_REQUIRED";
+            } else if (!vehicleOk) {
+                blockedReason = requireApproved ? "VEHICLE_PENDING_APPROVAL" : "VEHICLE_REQUIRED";
             } else if (graceOver) {
                 blockedReason = "DOCUMENTS_OVERDUE";
             }
@@ -606,9 +619,10 @@ public class RouteService {
         return new DriverPostingEligibilityResponse(
                 blockedReason == null,
                 approved,
-                identitySubmitted,
-                vehicleRegistered,
+                identityOk,
+                vehicleOk,
                 blockedReason,
+                verificationPolicy.getPrerequisiteLevel().name(),
                 verificationPolicy.getEnforcement().name(),
                 verificationPolicy.getGracePeriodDays(),
                 firstRouteAt,

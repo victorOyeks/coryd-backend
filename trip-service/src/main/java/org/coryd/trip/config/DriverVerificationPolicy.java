@@ -28,11 +28,24 @@ public class DriverVerificationPolicy {
         OFF
     }
 
+    /** Whether identity and vehicle must merely be on file, or actually approved by ops. */
+    public enum PrerequisiteLevel {
+        /** Uploaded/registered is enough. Works with no ops dashboard. */
+        SUBMITTED,
+        /** Ops must have approved them. Requires someone reviewing, or no driver can ever post. */
+        APPROVED
+    }
+
     private Enforcement enforcement = Enforcement.GRACE;
+    private PrerequisiteLevel prerequisiteLevel = PrerequisiteLevel.SUBMITTED;
     private int gracePeriodDays = 30;
 
     public boolean blocksUnverified() {
         return enforcement == Enforcement.STRICT;
+    }
+
+    public boolean requiresApprovedPrerequisites() {
+        return prerequisiteLevel == PrerequisiteLevel.APPROVED;
     }
 
     public boolean neverEnforces() {
