@@ -2,9 +2,13 @@
 
 Base path `/trip` · port `9103` · profile endpoints under `/profile` · port `9102`
 
-This covers the new "skip document upload for now" flow: a driver signs up, starts posting routes
-immediately, and gets nudged to upload their vehicle documents before a deadline. Read it top to
-bottom — the deadline behaviour is the part that will surprise you.
+This covers driver onboarding and the new "upload your papers later" flow: a driver tells us who
+they are and what they drive, starts posting routes that same session, and gets nudged to upload
+their insurance and roadworthiness certificate before a deadline.
+
+**If you built against an earlier draft of this guide, two things changed:** a new driver can no
+longer post before completing identity and vehicle steps, and the eligibility response now carries
+a `blockedReason`. Read it top to bottom.
 
 ---
 
@@ -102,27 +106,56 @@ It's self-scoped — there is no `{driverId}` variant, and a driver can only eve
 
 ---
 
+## First-run order for a new driver
+
+There are two distinct mechanisms and they need different UI. Don't collapse them into one "upload
+documents" screen.
+
+**1. Blocking gate — identity and vehicle.** A brand-new driver cannot post at all until these are
+done. `canPostRoutes` is `false` and `blockedReason` is `IDENTITY_REQUIRED` or `VEHICLE_REQUIRED`.
+This is a required onboarding step, not a prompt — no skip, no "remind me later".
+
+```
+Driver signs up / adds DRIVER role
+  → GET posting-eligibility
+  → IDENTITY_REQUIRED  → government ID + selfie upload   (blocking)
+  → VEHICLE_REQUIRED   → add vehicle: make, model, colour, plate  (blocking)
+  → canPostRoutes: true → Post Route unlocked, clock not yet started
+```
+
+**2. Deferrable nudge — insurance and roadworthiness.** Once posting is unlocked, these can wait.
+This is where "skip and set up later" belongs, and where the countdown applies.
+
+Order matters: ask for identity and vehicle **during onboarding**, before the driver ever reaches an
+empty Post Route screen. A driver who taps Post and only then discovers they must upload an ID will
+mostly abandon.
+
+---
+
 ## Prompt cadence
 
 Deliberately **your call, client-side** — the backend gives you state and a deadline, not a schedule.
 Store "last dismissed" locally.
 
+This section is about the **deferrable** documents only — insurance and roadworthiness. The identity
+and vehicle steps are a blocking gate and are never "prompted".
+
 Suggested cadence:
 
-- On entering driver mode, if `daysRemaining <= gracePeriodDays` and not dismissed in the last 7 days
+- On entering driver mode, if `daysRemaining` is set and not dismissed in the last 7 days
 - Escalate to **daily** when `daysRemaining <= 7`
-- Make it **non-dismissible** when `canPostRoutes` is `false`
+- Make it **non-dismissible** when `blockedReason` is `DOCUMENTS_OVERDUE`
 
-Keep the copy about the deadline, not about compliance:
+Name the actual documents — "your documents" makes drivers hunt for what's missing:
 
-> **21 days to upload your documents**
-> Upload your vehicle papers to keep posting routes after 16 October.
+> **21 days to upload your insurance and roadworthiness certificate**
+> Upload both to keep posting routes after 16 October.
 > *[Upload now]* *[Remind me later]*
 
 And when it expires:
 
-> **Upload your documents to post routes**
-> Your 30-day window has closed. Once your vehicle papers are approved you can post routes again.
+> **Upload your insurance and roadworthiness certificate**
+> Your 30-day window has closed. Upload both to start posting routes again.
 > *[Upload now]*
 
 ---
@@ -203,6 +236,8 @@ Expect `driverVerified: false` to be **common** now, not exceptional. Design for
 
 - [ ] Post Route button state comes from `canPostRoutes`, never from a local guess
 - [ ] `blockedReason` routes to the right screen — identity, vehicle, or documents
+- [ ] Identity and vehicle are collected during onboarding, not on first Post Route tap
+- [ ] The blocking gate has no skip; only the insurance/roadworthiness nudge is dismissible
 - [ ] `gracePeriodDays` and `uploadDeadline` are read from the API — 30 is not hardcoded
 - [ ] `firstRouteAt: null` is handled (clock not started — don't show "0 days left")
 - [ ] `daysRemaining: null` is handled (approved, or not started)
