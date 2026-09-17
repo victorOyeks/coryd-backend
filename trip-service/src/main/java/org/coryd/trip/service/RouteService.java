@@ -136,11 +136,7 @@ public class RouteService {
             if (requestedSeats > request.seatCapacity()) {
                 throw new BadRequestException("Reserved seats (" + requestedSeats + ") can't exceed this route's seat capacity (" + request.seatCapacity() + ")");
             }
-            // Never trust a client-claimed "this rider favourited me" list - check it against the
-            // real relationship. Deliberately fails the whole post rather than silently dropping
-            // an unverifiable reservation, since this is a service-to-service call that must not
-            // silently degrade (see ProfileServiceClient.fetchFavoritedBy's own note).
-            List<String> favoritedBy = profileServiceClient.fetchFavoritedBy(driverId);
+             List<String> favoritedBy = profileServiceClient.fetchFavoritedBy(driverId);
             for (PostRouteRequest.ReservationRequest reservation : reservations) {
                 if (!favoritedBy.contains(reservation.riderId())) {
                     throw new BadRequestException("Rider " + reservation.riderId() + " hasn't favourited you - can't reserve a seat for them");
