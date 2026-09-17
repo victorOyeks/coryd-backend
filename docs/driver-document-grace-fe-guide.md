@@ -2,13 +2,18 @@
 
 Base path `/trip` · port `9103` · profile endpoints under `/profile` · port `9102`
 
-This covers driver onboarding and the new "upload your papers later" flow: a driver tells us who
-they are and what they drive, starts posting routes that same session, and gets nudged to upload
-their insurance and roadworthiness certificate before a deadline.
+This covers driver onboarding and the "upload your papers later" flow: a driver tells us who they
+are and what they drive, waits for that to be approved, then starts posting routes — and is nudged
+to upload their insurance and roadworthiness certificate before a deadline.
 
-**If you built against an earlier draft of this guide, two things changed:** a new driver can no
-longer post before completing identity and vehicle steps, and the eligibility response now carries
-a `blockedReason`. Read it top to bottom.
+**If you built against an earlier draft, three things changed:**
+
+1. A driver can no longer post before completing the identity and vehicle steps
+2. Those steps must now be **approved by ops**, not just submitted — so onboarding ends in a
+   waiting state, and `IDENTITY_PENDING_APPROVAL` / `VEHICLE_PENDING_APPROVAL` need a real screen
+3. The eligibility response carries `blockedReason` and `prerequisiteLevel`
+
+Read it top to bottom.
 
 ---
 
