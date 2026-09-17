@@ -37,7 +37,7 @@ public class DriverVerificationPolicy {
     }
 
     private Enforcement enforcement = Enforcement.GRACE;
-    private PrerequisiteLevel prerequisiteLevel = PrerequisiteLevel.SUBMITTED;
+    private PrerequisiteLevel prerequisiteLevel = PrerequisiteLevel.APPROVED;
     private int gracePeriodDays = 30;
 
     public boolean blocksUnverified() {

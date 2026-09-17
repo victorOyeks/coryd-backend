@@ -81,8 +81,9 @@ driver:
   verification:
     enforcement: ${DRIVER_VERIFICATION_ENFORCEMENT:GRACE}
     grace-period-days: ${DRIVER_VERIFICATION_GRACE_DAYS:30}
-    # SUBMITTED until ops can review drivers; APPROVED blocks every unreviewed driver.
-    prerequisite-level: ${DRIVER_PREREQUISITE_LEVEL:SUBMITTED}
+    # APPROVED: ops must approve ID, selfie and vehicle before a driver can post. Requires
+    # someone actually reviewing - SUBMITTED drops the bar to "uploaded" if that stalls.
+    prerequisite-level: ${DRIVER_PREREQUISITE_LEVEL:APPROVED}
 
 cancellation:
   free-cancellation-window-hours: 2

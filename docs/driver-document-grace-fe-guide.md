@@ -28,14 +28,17 @@ The gate is now split in two:
 | Selfie | Roadworthiness certificate |
 | Vehicle — make, model, year, colour, plate number | |
 
-**How strict "required" is depends on server config**, reported to you as `prerequisiteLevel`:
+**These must be approved by ops, not merely uploaded.** A driver who submits everything still
+cannot post until a human reviews it — so the onboarding flow ends in a waiting state, not in a
+Post Route screen.
 
-- **`SUBMITTED`** (current) — uploaded/registered is enough. No ops involvement, so a driver can
-  finish onboarding and post in one session.
-- **`APPROVED`** — an ops admin must have approved each one first. The driver waits.
+The strictness is server config, reported as `prerequisiteLevel`:
+
+- **`APPROVED`** (current default) — ops must approve ID, selfie and vehicle first
+- **`SUBMITTED`** — uploaded/registered is enough, no ops in the loop
 
 Read `prerequisiteLevel` from the API and let `blockedReason` drive the screen; don't hardcode
-either behaviour.
+either behaviour, because this can change without an app release.
 
 For the deferred documents:
 
@@ -66,7 +69,7 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
     "identityOk": true,
     "vehicleOk": true,
     "blockedReason": null,
-    "prerequisiteLevel": "SUBMITTED",
+    "prerequisiteLevel": "APPROVED",
     "enforcement": "GRACE",
     "gracePeriodDays": 30,
     "firstRouteAt": "2026-09-16T08:12:44Z",
@@ -123,17 +126,23 @@ It's self-scoped — there is no `{driverId}` variant, and a driver can only eve
 There are two distinct mechanisms and they need different UI. Don't collapse them into one "upload
 documents" screen.
 
-**1. Blocking gate — identity and vehicle.** A brand-new driver cannot post at all until these are
-done. `canPostRoutes` is `false` and `blockedReason` is `IDENTITY_REQUIRED` or `VEHICLE_REQUIRED`.
-This is a required onboarding step, not a prompt — no skip, no "remind me later".
+**1. Blocking gate — identity and vehicle.** A brand-new driver cannot post until these are
+uploaded **and approved**. No skip, no "remind me later".
 
 ```
 Driver signs up / adds DRIVER role
   → GET posting-eligibility
-  → IDENTITY_REQUIRED  → government ID + selfie upload   (blocking)
-  → VEHICLE_REQUIRED   → add vehicle: make, model, colour, plate  (blocking)
-  → canPostRoutes: true → Post Route unlocked, clock not yet started
+  → IDENTITY_REQUIRED          → government ID + selfie upload        (blocking)
+  → VEHICLE_REQUIRED           → add vehicle: make, model, colour, plate (blocking)
+  → IDENTITY_PENDING_APPROVAL  → "we're reviewing" — nothing to do    (blocking)
+  → VEHICLE_PENDING_APPROVAL   → "we're reviewing" — nothing to do    (blocking)
+  → canPostRoutes: true        → Post Route unlocked, clock not yet started
 ```
+
+**Expect drivers to sit in `*_PENDING_APPROVAL` for hours or days.** That screen is not an edge
+case — every single driver passes through it. Give it real design: what's been submitted, what's
+still under review, and a support contact. Do not show a retry or re-upload button; there is
+nothing for them to fix.
 
 **2. Deferrable nudge — insurance and roadworthiness.** Once posting is unlocked, these can wait.
 This is where "skip and set up later" belongs, and where the countdown applies.
@@ -271,3 +280,55 @@ Expect `driverVerified: false` to be **common** now, not exceptional. Design for
   isn't approved**, including ones mid-grace. That needs a comms plan, not just a config flip.
 - Drivers operating without approved documents, and those whose window closes within 7 days, now
   appear in the daily ops report.
+
+---
+
+## Approving a driver (ops, until the dashboard exists)
+
+`DRIVER_PREREQUISITE_LEVEL=APPROVED` means **no driver can post until someone approves them**.
+There is no ops UI yet, so approvals are API calls made with an `OPS_ADMIN` token.
+
+**1. Find who's waiting**
+
+```bash
+curl "$GATEWAY/profile/drivers/pending-verification" \
+  -H "Authorization: Bearer $OPS_TOKEN"
+```
+
+**2. Review one driver**
+
+```bash
+curl "$GATEWAY/profile/drivers/{driverId}/verification-status" \
+  -H "Authorization: Bearer $OPS_TOKEN"
+```
+
+Returns the ID and selfie images, the vehicle fields and both photos, and every item's status.
+
+**3. Decide — all items in one call**
+
+```bash
+curl -X PATCH "$GATEWAY/profile/drivers/{driverId}/verification" \
+  -H "Authorization: Bearer $OPS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "decisions": [
+      { "item": "GOVERNMENT_ID", "status": "APPROVED" },
+      { "item": "SELFIE",        "status": "APPROVED" },
+      { "item": "VEHICLE",       "status": "REJECTED", "rejectionReason": "Plate number not legible" }
+    ],
+    "reviewedBy": "victor@coryd.ng"
+  }'
+```
+
+Approving `GOVERNMENT_ID`, `SELFIE` and `VEHICLE` unblocks posting. `INSURANCE` and
+`ROADWORTHINESS_CERT` can wait for the grace window, but all five must be approved before the
+driver counts as fully verified and riders see the verified badge.
+
+### You need an OPS_ADMIN account in production
+
+`OPS_ADMIN` cannot be self-assigned — `AuthService` blocks it on signup and on `roles/add`. The
+seeded ops admin (`08000000003`) only exists under the `dev` and `test` profiles.
+
+**Before running `APPROVED` in production you must create one**, by inserting the `OPS_ADMIN` role
+directly for a chosen user. Without it, nobody can approve anyone and every driver is blocked
+permanently.
