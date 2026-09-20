@@ -7,7 +7,9 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.BiometricPreferenceRequest;
 import org.coryd.identity.dto.ChangePasswordRequest;
+import org.coryd.identity.dto.DeviceResponse;
 import org.coryd.identity.dto.ForgotPasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.OnboardingStatusResponse;
@@ -21,16 +23,24 @@ import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.service.AuthService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
+
+    /** The app sends its device id on every authenticated call; these endpoints are the ones that read it. */
+    private static final String DEVICE_ID_HEADER = "X-Device-Id";
 
     private final AuthService authService;
 
@@ -120,5 +130,39 @@ public class AuthController {
     @GetMapping("/me")
     public ApiResponse<UserContactResponse> me(@AuthenticationPrincipal CoRydUserDetails principal) {
         return ApiResponse.ok(authService.getMyContact(principal.getUserId()));
+    }
+
+    /**
+     * Where the user is signed in. The device making the request is flagged {@code current} so the
+     * app can label it and warn before it signs itself out.
+     *
+     * <p>Sent as a header rather than a body because this is a GET, and the app already has the id
+     * to hand on every call.
+     */
+    @GetMapping("/devices")
+    public ApiResponse<List<DeviceResponse>> devices(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                      @RequestHeader(value = DEVICE_ID_HEADER, required = false) String deviceId) {
+        return ApiResponse.ok(authService.listDevices(principal.getUserId(), deviceId));
+    }
+
+    /** Signs one device out and kills every refresh token bound to it - the answer to a lost or stolen phone. */
+    @DeleteMapping("/devices/{deviceId}")
+    public ApiResponse<Void> revokeDevice(@AuthenticationPrincipal CoRydUserDetails principal,
+                                           @PathVariable String deviceId) {
+        authService.revokeDevice(principal.getUserId(), deviceId);
+        return ApiResponse.ok("Device signed out", null);
+    }
+
+    /**
+     * Records that the user enabled or disabled fingerprint sign-in on a device.
+     *
+     * <p>Bookkeeping for the devices screen only. No fingerprint reaches this service - the
+     * platform does not expose one - so this call authenticates nothing and unlocks nothing.
+     */
+    @PostMapping("/devices/biometric")
+    public ApiResponse<Void> setBiometricPreference(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                     @Valid @RequestBody BiometricPreferenceRequest request) {
+        authService.setBiometricPreference(principal.getUserId(), request);
+        return ApiResponse.ok("Preference saved", null);
     }
 }

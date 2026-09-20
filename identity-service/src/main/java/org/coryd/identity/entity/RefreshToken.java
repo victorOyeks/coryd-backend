@@ -42,4 +42,36 @@ public class RefreshToken extends BaseEntity {
     @Builder.Default
     @Column(nullable = false)
     private boolean revoked = false;
+
+    /**
+     * The device this token may be presented from. Null on tokens issued before device binding
+     * existed, and on clients that still do not send one - those keep working unbound, which is
+     * what lets this ship without logging everybody out.
+     *
+     * <p>Binding matters far more now than it used to. A refresh token behind a fingerprint is no
+     * longer just a session: it is the sign-in credential, valid for thirty days. Unbound, a copy
+     * lifted off one handset works from anywhere in the world.
+     */
+    @Column(length = 100)
+    private String deviceId;
+
+    /**
+     * Every token descended from one sign-in shares a family id. Rotation issues a new token in
+     * the same family, so presenting an already-spent token identifies the whole lineage to
+     * revoke - see AuthService.refresh().
+     */
+    @Column(length = 36)
+    private String familyId;
+
+    /** When this token was spent by a rotation. Distinguishes an ordinary rotation from a deliberate revoke, both of which set {@code revoked}. */
+    @Column
+    private Instant rotatedAt;
+
+    /**
+     * The token handed out in exchange for this one. Kept so a client that never received the
+     * rotation response - a dropped connection at the wrong moment - can be given the same
+     * replacement again instead of being signed out.
+     */
+    @Column(length = 512)
+    private String replacedBy;
 }

@@ -17,7 +17,10 @@ import org.coryd.common.util.PhoneNumbers;
 import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
 import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.BiometricPreferenceRequest;
 import org.coryd.identity.dto.ChangePasswordRequest;
+import org.coryd.identity.dto.DeviceInfo;
+import org.coryd.identity.dto.DeviceResponse;
 import org.coryd.identity.dto.ForgotPasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
 import org.coryd.identity.dto.OnboardingStatusResponse;
@@ -31,8 +34,10 @@ import org.coryd.identity.dto.VerifyOtpRequest;
 import org.coryd.identity.entity.OtpCode;
 import org.coryd.identity.entity.RefreshToken;
 import org.coryd.identity.entity.User;
+import org.coryd.identity.entity.UserDevice;
 import org.coryd.identity.repository.OtpCodeRepository;
 import org.coryd.identity.repository.RefreshTokenRepository;
+import org.coryd.identity.repository.UserDeviceRepository;
 import org.coryd.identity.repository.UserRepository;
 import org.springframework.core.env.Environment;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -45,6 +50,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -59,10 +65,19 @@ public class AuthService {
     private static final int REFRESH_TOKEN_TTL_DAYS = 30;
     private static final String DEV_BYPASS_OTP = "000333";
     private static final SecureRandom RANDOM = new SecureRandom();
+    /**
+     * How long after a rotation the spent token is still accepted as a retry rather than treated
+     * as a replay. Long enough to cover a request whose response was lost and is retried on the
+     * next screen tap; short enough that a token lifted from a device is almost certainly outside
+     * it by the time anyone uses it.
+     */
+    private static final Duration REFRESH_REPLAY_GRACE = Duration.ofSeconds(60);
 
     private final UserRepository userRepository;
     private final OtpCodeRepository otpCodeRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final UserDeviceRepository userDeviceRepository;
+    private final TokenFamilyRevoker tokenFamilyRevoker;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final Environment environment;
@@ -161,7 +176,7 @@ public class AuthService {
 
         UserRole role = user.getRoles().iterator().next();
 
-        return issueTokens(user, role);
+        return issueTokens(user, role, request.device());
     }
 
     @Transactional
@@ -263,7 +278,7 @@ public class AuthService {
             throw new RoleNotHeldException("You don't have a " + activeRole + " account - please sign up first", user.getRoles());
         }
 
-        return issueTokens(user, activeRole);
+        return issueTokens(user, activeRole, request.device());
     }
 
     /** In-app "switch to Driver mode" (or vice versa) for the first time: attach the role to the already-authenticated account, no OTP needed. */
@@ -283,7 +298,8 @@ public class AuthService {
         user.getRoles().add(role);
         userRepository.save(user);
 
-        return issueTokens(user, role);
+        // Same handset, new role - keep the binding rather than handing back an unbound session.
+        return issueTokens(user, role, registerDeviceId(user.getId(), request.deviceId()), null);
     }
 
     /** In-app mode toggle for a role already held - re-scopes the session without granting anything new, so no OPS_ADMIN guard is needed here. */
@@ -297,7 +313,7 @@ public class AuthService {
             throw new BadRequestException("You don't have a " + role + " account - add it first");
         }
 
-        return issueTokens(user, role);
+        return issueTokens(user, role, registerDeviceId(user.getId(), request.deviceId()), null);
     }
 
     public OnboardingStatusResponse onboardingStatus(CoRydUserDetails principal, String bearerToken) {
@@ -319,25 +335,173 @@ public class AuthService {
         return new UserContactResponse(user.getId(), user.getFullName(), user.getPhone());
     }
 
+    /**
+     * Exchanges a refresh token for a new session, rotating the token as it goes.
+     *
+     * <p>Rotation is what makes a stolen token detectable, but naive rotation has a failure mode
+     * that matters a great deal more once a fingerprint is sitting in front of this call. The old
+     * implementation revoked the presented token before the replacement had reached the client, so
+     * a response lost in transit - an ordinary event on a mobile connection - destroyed the only
+     * credential the app had. The user saw themselves signed out for no reason; with biometrics
+     * enabled they would read the same event as "my fingerprint stopped working", and would have
+     * no way to know the network was at fault.
+     *
+     * <p>So a spent token is not simply an error. Within {@link #REFRESH_REPLAY_GRACE} of being
+     * rotated it is treated as that lost response and handed the same replacement again, which is
+     * safe because the replacement is unchanged and still bound to the same device. Outside that
+     * window it is treated as what it more likely is - a token someone else kept a copy of - and
+     * the entire family descended from that sign-in is revoked. Both the thief and the real user
+     * are signed out, which is the correct outcome: it is the only signal available that the
+     * lineage is compromised, and a forced re-login is a far smaller cost than a silent
+     * co-existing session.
+     */
     @Transactional
     public AuthResponse refresh(RefreshTokenRequest request) {
-        RefreshToken existing = refreshTokenRepository.findByTokenAndRevokedFalse(request.refreshToken())
+        RefreshToken existing = refreshTokenRepository.findByToken(request.refreshToken())
                 .orElseThrow(() -> new BadRequestException("Invalid or expired refresh token"));
 
+        if (existing.isRevoked()) {
+            return handleSpentToken(existing, request.deviceId());
+        }
         if (existing.getExpiresAt().isBefore(Instant.now())) {
             throw new BadRequestException("Refresh token has expired");
         }
-
-        existing.setRevoked(true);
-        refreshTokenRepository.save(existing);
+        requireMatchingDevice(existing, request.deviceId());
 
         User user = userRepository.findById(existing.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account no longer exists"));
 
-        return issueTokens(user, existing.getActiveRole());
+        AuthResponse response = issueTokens(user, existing.getActiveRole(), existing.getDeviceId(), existing.getFamilyId());
+
+        existing.setRevoked(true);
+        existing.setRotatedAt(Instant.now());
+        existing.setReplacedBy(response.refreshToken());
+        refreshTokenRepository.save(existing);
+
+        touchDevice(existing.getUserId(), existing.getDeviceId());
+        return response;
     }
 
-    private AuthResponse issueTokens(User user, UserRole activeRole) {
+    /**
+     * A token that has already been spent. Either the client never got the rotation response, or
+     * someone is replaying a copy - the gap since rotation is the only thing that separates them,
+     * so it is what decides.
+     */
+    private AuthResponse handleSpentToken(RefreshToken spent, String presentedDeviceId) {
+        boolean withinGrace = spent.getRotatedAt() != null
+                && spent.getRotatedAt().isAfter(Instant.now().minus(REFRESH_REPLAY_GRACE));
+
+        if (withinGrace && spent.getReplacedBy() != null) {
+            RefreshToken replacement = refreshTokenRepository.findByTokenAndRevokedFalse(spent.getReplacedBy())
+                    .orElse(null);
+            if (replacement != null && replacement.getExpiresAt().isAfter(Instant.now())) {
+                requireMatchingDevice(replacement, presentedDeviceId);
+                User user = userRepository.findById(replacement.getUserId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Account no longer exists"));
+                log.info("Refresh retried within grace window for user {} - re-issuing the same replacement token", user.getId());
+                touchDevice(replacement.getUserId(), replacement.getDeviceId());
+                // Same refresh token back, a fresh access token alongside it. Idempotent, so a
+                // client that retries after a dropped response lands exactly where it would have.
+                return issueAccessTokenFor(user, replacement);
+            }
+        }
+
+        log.warn("Refresh token reuse detected for user {} (device {}) - revoking the whole token family",
+                spent.getUserId(), spent.getDeviceId());
+        tokenFamilyRevoker.revokeFamily(spent.getFamilyId());
+        throw new BadRequestException("This session is no longer valid - please sign in again");
+    }
+
+    /**
+     * Binding is only enforced for tokens that carry a device, so sessions predating this - and
+     * clients that never send one - keep working. But once a token IS bound, a request that omits
+     * the device is refused rather than waved through: treating "absent" as "matches" would make
+     * the binding worth nothing to anyone holding a stolen token.
+     */
+    private void requireMatchingDevice(RefreshToken token, String presentedDeviceId) {
+        if (token.getDeviceId() == null) {
+            return;
+        }
+        if (!token.getDeviceId().equals(presentedDeviceId)) {
+            log.warn("Refresh token presented from device {} but was issued to {} (user {}) - revoking the family",
+                    presentedDeviceId, token.getDeviceId(), token.getUserId());
+            tokenFamilyRevoker.revokeFamily(token.getFamilyId());
+            throw new BadRequestException("This session is no longer valid - please sign in again");
+        }
+        userDeviceRepository.findByUserIdAndDeviceId(token.getUserId(), token.getDeviceId())
+                .filter(UserDevice::isRevoked)
+                .ifPresent(device -> {
+                    throw new BadRequestException("This device has been signed out - please sign in again");
+                });
+    }
+
+    /**
+     * Records the device this session belongs to, creating the row on first sight and refreshing
+     * its display details after that. A device the user explicitly signed out is un-revoked here:
+     * reaching this method means they have just authenticated on it again, which is precisely the
+     * act of taking it back into use.
+     */
+    private String registerDevice(String userId, DeviceInfo info) {
+        if (info == null || !info.isPresent()) {
+            return null;
+        }
+        UserDevice device = userDeviceRepository.findByUserIdAndDeviceId(userId, info.deviceId())
+                .orElseGet(() -> UserDevice.builder().userId(userId).deviceId(info.deviceId()).build());
+
+        if (info.deviceName() != null) {
+            device.setDeviceName(info.deviceName());
+        }
+        if (info.platform() != null) {
+            device.setPlatform(info.platform());
+        }
+        device.setRevoked(false);
+        device.setLastSeenAt(Instant.now());
+        userDeviceRepository.save(device);
+        return device.getDeviceId();
+    }
+
+
+    /**
+     * The in-app counterpart to {@link #registerDevice}: role add/switch already knows the handset
+     * from the session it is running in, so only the id comes over the wire. An id that does not
+     * match a live device on this account yields null - the new session is simply unbound, which
+     * is no worse than the caller not having sent one, and never an error the user would have to
+     * understand mid-flow.
+     */
+    private String registerDeviceId(String userId, String deviceId) {
+        if (deviceId == null || deviceId.isBlank()) {
+            return null;
+        }
+        return userDeviceRepository.findByUserIdAndDeviceId(userId, deviceId)
+                .filter(device -> !device.isRevoked())
+                .map(device -> {
+                    device.setLastSeenAt(Instant.now());
+                    userDeviceRepository.save(device);
+                    return device.getDeviceId();
+                })
+                .orElse(null);
+    }
+    /** Keeps the devices screen honest about when each phone was last actually used. */
+    private void touchDevice(String userId, String deviceId) {
+        if (deviceId == null) {
+            return;
+        }
+        userDeviceRepository.findByUserIdAndDeviceId(userId, deviceId).ifPresent(device -> {
+            device.setLastSeenAt(Instant.now());
+            userDeviceRepository.save(device);
+        });
+    }
+
+    private AuthResponse issueTokens(User user, UserRole activeRole, DeviceInfo device) {
+        return issueTokens(user, activeRole, registerDevice(user.getId(), device), null);
+    }
+
+    /**
+     * @param familyId null for a genuine sign-in, which starts a new family; carried through on
+     *                 rotation so every token descended from that sign-in stays identifiable as
+     *                 one lineage.
+     */
+    private AuthResponse issueTokens(User user, UserRole activeRole, String deviceId, String familyId) {
         String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFullName(), activeRole);
 
         String refreshTokenValue = UUID.randomUUID().toString();
@@ -345,15 +509,81 @@ public class AuthService {
                 .userId(user.getId())
                 .token(refreshTokenValue)
                 .activeRole(activeRole)
+                .deviceId(deviceId)
+                .familyId(familyId == null ? UUID.randomUUID().toString() : familyId)
                 .expiresAt(Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS))
                 .build());
 
+        return buildAuthResponse(user, activeRole, accessToken, refreshTokenValue,
+                Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS));
+    }
+
+    /** A new access token against an existing, unchanged refresh token - the retry path in {@link #handleSpentToken}. */
+    private AuthResponse issueAccessTokenFor(User user, RefreshToken refreshToken) {
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFullName(),
+                refreshToken.getActiveRole());
+        return buildAuthResponse(user, refreshToken.getActiveRole(), accessToken, refreshToken.getToken(),
+                refreshToken.getExpiresAt());
+    }
+
+    private AuthResponse buildAuthResponse(User user, UserRole activeRole, String accessToken,
+                                           String refreshTokenValue, Instant refreshExpiresAt) {
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
         long expiresIn = jwtUtil.getExpirationMs() / 1000;
-        long refreshExpiresIn = Duration.ofDays(REFRESH_TOKEN_TTL_DAYS).getSeconds();
+        long refreshExpiresIn = Math.max(0, Duration.between(Instant.now(), refreshExpiresAt).getSeconds());
         // fullName carries only the first name - the key stays for the clients already bound to
         // it, the JWT claim keeps the full name for service-to-service use.
         return new AuthResponse(user.getId(), Names.firstName(user.getFullName()), user.getPhone(), activeRole.name(), roleNames,
                 accessToken, expiresIn, refreshTokenValue, refreshExpiresIn);
+    }
+
+    /** Everywhere the user is signed in, newest first. */
+    public List<DeviceResponse> listDevices(String userId, String currentDeviceId) {
+        return userDeviceRepository.findByUserIdAndRevokedFalseOrderByLastSeenAtDesc(userId).stream()
+                .map(device -> new DeviceResponse(
+                        device.getDeviceId(),
+                        device.getDeviceName(),
+                        device.getPlatform(),
+                        device.isBiometricEnabled(),
+                        device.getLastSeenAt(),
+                        device.getDeviceId().equals(currentDeviceId)))
+                .toList();
+    }
+
+    /**
+     * Signs one device out: the row is marked revoked and every refresh token bound to it dies
+     * with it. This is the answer to a lost or stolen phone, and it is why device binding is worth
+     * having at all - without the binding there would be nothing to revoke, since an unbound token
+     * is usable from anywhere.
+     */
+    @Transactional
+    public void revokeDevice(String userId, String deviceId) {
+        UserDevice device = userDeviceRepository.findByUserIdAndDeviceId(userId, deviceId)
+                .orElseThrow(() -> new ResourceNotFoundException("No such device on this account"));
+
+        device.setRevoked(true);
+        device.setBiometricEnabled(false);
+        userDeviceRepository.save(device);
+        refreshTokenRepository.revokeAllForDevice(userId, deviceId);
+        log.info("Device {} signed out for user {}", deviceId, userId);
+    }
+
+    /**
+     * Records that the user turned fingerprint sign-in on or off for a device.
+     *
+     * <p>Bookkeeping, not enforcement. No fingerprint reaches this service - the platform does not
+     * expose one - so this grants nothing and proves nothing. It exists so the devices screen can
+     * tell the user, from any of their phones, which handsets they left biometric sign-in enabled
+     * on. Never treat it as evidence a biometric check happened.
+     */
+    @Transactional
+    public void setBiometricPreference(String userId, BiometricPreferenceRequest request) {
+        UserDevice device = userDeviceRepository.findByUserIdAndDeviceId(userId, request.deviceId())
+                .orElseThrow(() -> new ResourceNotFoundException("No such device on this account"));
+        if (device.isRevoked()) {
+            throw new BadRequestException("This device has been signed out - sign in on it again first");
+        }
+        device.setBiometricEnabled(request.enabled());
+        userDeviceRepository.save(device);
     }
 }
