@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -13,6 +14,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -28,7 +30,11 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     private final PaystackProperties paystackProperties;
 
     private RestClient restClient() {
-        return RestClient.builder()
+        // Longer read timeout than the service-to-service default: Paystack is a third party over
+        // the public internet and a charge/verify round-trip can legitimately take several
+        // seconds. Bounded all the same - an unbounded wait here parks a request thread holding
+        // an open payment indefinitely.
+        return HttpTimeouts.builder(Duration.ofSeconds(5), Duration.ofSeconds(20))
                 .baseUrl(paystackProperties.getBaseUrl())
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + paystackProperties.getSecretKey())
                 .build();

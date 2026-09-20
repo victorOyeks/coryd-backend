@@ -35,7 +35,7 @@ public class NotificationEventListener {
 
     private final NotificationDispatchService dispatchService;
 
-    @KafkaListener(topics = KafkaTopics.OTP_ISSUED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.OTP_ISSUED, groupId = KafkaConfig.GROUP_ID_OTP)
     public void onOtpIssued(OtpIssuedEvent event) {
         // Must match Termii's approved message format exactly (business name, expiry, no-share
         // warning) or the DND route can block/flag it - see the "Your CoRyd verification code is
@@ -46,13 +46,13 @@ public class NotificationEventListener {
         dispatchService.sendOtp(event.getPhone(), message, event.getCode(), "OTP_ISSUED", event.getChannel());
     }
 
-    @KafkaListener(topics = KafkaTopics.BOOKING_CONFIRMED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.BOOKING_CONFIRMED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onBookingConfirmed(BookingConfirmedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Booking confirmed",
                 "Your seat is confirmed. See you at pickup!", "BOOKING_CONFIRMED", event.getBookingId());
     }
 
-    @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onBookingCancelled(BookingCancelledEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Booking cancelled",
                 "Your booking was cancelled by " + event.getCancelledBy().toLowerCase() + ".", "BOOKING_CANCELLED",
@@ -68,7 +68,7 @@ public class NotificationEventListener {
         }
     }
 
-    @KafkaListener(topics = KafkaTopics.PAYMENT_FAILED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.PAYMENT_FAILED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onPaymentFailed(PaymentFailedEvent event) {
         if (event.getRiderId() == null) {
             return;
@@ -79,28 +79,28 @@ public class NotificationEventListener {
                 "PAYMENT_FAILED", event.getBookingId());
     }
 
-    @KafkaListener(topics = KafkaTopics.REFUND_ISSUED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.REFUND_ISSUED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onRefundIssued(RefundIssuedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Refund issued",
                 "You've been refunded ₦" + event.getAmount().toPlainString() + " for a cancelled booking.",
                 "REFUND_ISSUED", event.getBookingId());
     }
 
-    @KafkaListener(topics = KafkaTopics.DRIVER_EN_ROUTE, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.DRIVER_EN_ROUTE, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onDriverEnRoute(DriverEnRouteEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Driver is on the way",
                 (event.getDriverName() == null ? "Your driver" : event.getDriverName()) + " is on the way to pick you up.",
                 "DRIVER_EN_ROUTE", event.getBookingId());
     }
 
-    @KafkaListener(topics = KafkaTopics.DRIVER_ARRIVED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.DRIVER_ARRIVED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onDriverArrived(DriverArrivedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Driver has arrived",
                 (event.getDriverName() == null ? "Your driver" : event.getDriverName()) + " has arrived at your pickup point.",
                 "DRIVER_ARRIVED", event.getBookingId());
     }
 
-    @KafkaListener(topics = KafkaTopics.ROUTE_CANCELLED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.ROUTE_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onRouteCancelled(RouteCancelledEvent event) {
         // Per-rider notification for R-704 is handled by the booking-cancelled listener above,
         // which trip-service publishes once per affected booking. This just confirms to the driver.
@@ -109,7 +109,7 @@ public class NotificationEventListener {
                 "ROUTE_CANCELLED", null);
     }
 
-    @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onTripCompleted(TripCompletedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "Trip completed",
                 "Your trip is complete. Rate your driver!", "TRIP_COMPLETED", event.getBookingId());
@@ -126,13 +126,13 @@ public class NotificationEventListener {
         }
     }
 
-    @KafkaListener(topics = KafkaTopics.NOTIFY_ME_MATCHED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.NOTIFY_ME_MATCHED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onNotifyMeMatched(NotifyMeMatchedEvent event) {
         dispatchService.sendPush(event.getRiderId(), "A ride is available",
                 "A driver just posted a route matching your search.", "NOTIFY_ME_MATCHED", null);
     }
 
-    @KafkaListener(topics = KafkaTopics.SEAT_RESERVED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.SEAT_RESERVED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onSeatReserved(SeatReservedEvent event) {
         String driverName = event.getDriverName() == null ? "Your favourite driver" : event.getDriverName();
         dispatchService.sendPush(event.getRiderId(), "Your favourite driver reserved you a seat",
@@ -141,13 +141,13 @@ public class NotificationEventListener {
                 "SEAT_RESERVED", event.getBookingId());
     }
 
-    @KafkaListener(topics = KafkaTopics.DOCUMENT_EXPIRING, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.DOCUMENT_EXPIRING, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onDocumentExpiring(DocumentExpiringEvent event) {
         dispatchService.sendPush(event.getDriverId(), "Document expiring soon",
                 "Your " + event.getDocumentType() + " expires in " + event.getDaysRemaining() + " days.", "DOCUMENT_EXPIRING", null);
     }
 
-    @KafkaListener(topics = KafkaTopics.DRIVER_APPROVED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.DRIVER_APPROVED, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onDriverApproved(DriverApprovedEvent event) {
         dispatchService.sendPush(event.getDriverId(), "You're verified!",
                 "Your CoRyd driver verification is complete. You can start posting routes now.", "DRIVER_APPROVED", null);
@@ -158,7 +158,7 @@ public class NotificationEventListener {
         }
     }
 
-    @KafkaListener(topics = KafkaTopics.DRIVER_REJECTED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.DRIVER_REJECTED, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onDriverRejected(DriverRejectedEvent event) {
         String reason = event.getRejectionReason() == null ? "Please review and resubmit." : event.getRejectionReason();
         dispatchService.sendPush(event.getDriverId(), "Action needed on your verification",
@@ -169,7 +169,7 @@ public class NotificationEventListener {
         }
     }
 
-    @KafkaListener(topics = KafkaTopics.TRIP_SHARE_REQUESTED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.TRIP_SHARE_REQUESTED, groupId = KafkaConfig.GROUP_ID_SAFETY)
     public void onTripShareRequested(TripShareRequestedEvent event) {
         for (EmergencyContactPayload contact : event.getContacts()) {
             dispatchService.sendSms(contact.getPhone(),
@@ -179,7 +179,7 @@ public class NotificationEventListener {
         }
     }
 
-    @KafkaListener(topics = KafkaTopics.SOS_TRIGGERED, groupId = KafkaConfig.GROUP_ID)
+    @KafkaListener(topics = KafkaTopics.SOS_TRIGGERED, groupId = KafkaConfig.GROUP_ID_SAFETY)
     public void onSosTriggered(SosTriggeredEvent event) {
         if (event.getContacts() == null || event.getContacts().isEmpty()) {
             log.warn("SOS triggered for booking {} but rider has no emergency contacts set - no SMS sent", event.getBookingId());

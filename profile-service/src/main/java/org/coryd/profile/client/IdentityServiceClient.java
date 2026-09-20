@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.security.ForwardedAuthInterceptor;
 import org.coryd.common.security.InternalApiKeyInterceptor;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -19,7 +20,7 @@ public class IdentityServiceClient {
 
     public IdentityServiceClient(@Value("${services.identity.url}") String identityServiceUrl,
                                   @Value("${services.internal.api-key}") String internalApiKey) {
-        this.restClient = RestClient.builder()
+        this.restClient = HttpTimeouts.builder()
                 .baseUrl(identityServiceUrl)
                 .requestInterceptor(new ForwardedAuthInterceptor())
                 .requestInterceptor(new InternalApiKeyInterceptor(internalApiKey))

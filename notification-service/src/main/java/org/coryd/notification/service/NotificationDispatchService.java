@@ -25,7 +25,7 @@ public class NotificationDispatchService {
     private final NotificationLogRepository notificationLogRepository;
     private final UserNotificationRepository userNotificationRepository;
 
-    @Async
+    @Async("notificationExecutor")
     @Transactional
     public void sendSms(String phone, String message, String eventType) {
         boolean delivered = termiiSmsService.send(phone, message);
@@ -39,7 +39,7 @@ public class NotificationDispatchService {
 
     /** code is the bare OTP digits, needed separately from message since the voice channel reads
      * out its own script around the code rather than speaking a pre-built SMS-style sentence. */
-    @Async
+    @Async("notificationExecutor")
     @Transactional
     public void sendOtp(String phone, String message, String code, String eventType, OtpChannel channel) {
         boolean delivered = switch (channel) {
@@ -60,7 +60,7 @@ public class NotificationDispatchService {
                 .build());
     }
 
-    @Async
+    @Async("notificationExecutor")
     @Transactional
     public void sendPush(String userId, String title, String body, String eventType, String bookingId) {
         // One feed entry per logical notification, not one per device - a rider with two
@@ -84,7 +84,7 @@ public class NotificationDispatchService {
     }
 
     /** Caller decides whether an email is worth sending (e.g. only if the recipient has one on file) - this method always attempts it. */
-    @Async
+    @Async("notificationExecutor")
     @Transactional
     public void sendEmail(String toEmail, String subject, String body, String eventType) {
         boolean delivered = emailService.send(toEmail, subject, body);

@@ -3,6 +3,7 @@ package org.coryd.profile.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -26,7 +27,7 @@ public class IdentityAuthClient {
     private final RestClient restClient;
 
     public IdentityAuthClient(@Value("${services.identity.url}") String identityServiceUrl) {
-        this.restClient = RestClient.builder().baseUrl(identityServiceUrl).build();
+        this.restClient = HttpTimeouts.builder().baseUrl(identityServiceUrl).build();
     }
 
     public String resolveUserId(String phone, String password, UserRole role) {

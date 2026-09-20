@@ -3,6 +3,7 @@ package org.coryd.trip.dev;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.security.ForwardedAuthInterceptor;
 import org.coryd.common.security.InternalApiKeyInterceptor;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -25,7 +26,7 @@ public class PaymentDevClient {
 
     public PaymentDevClient(@Value("${services.payment.url}") String paymentServiceUrl,
                             @Value("${services.internal.api-key}") String internalApiKey) {
-        this.restClient = RestClient.builder()
+        this.restClient = HttpTimeouts.builder()
                 .baseUrl(paymentServiceUrl)
                 .requestInterceptor(new ForwardedAuthInterceptor())
                 .requestInterceptor(new InternalApiKeyInterceptor(internalApiKey))

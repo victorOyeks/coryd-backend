@@ -35,8 +35,18 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
     consumer:
-      group-id: coryd-notification-service
-      auto-offset-reset: earliest
+      # No group-id here on purpose - KafkaConfig defines one group per concern (otp / trip /
+      # safety / admin) and every @KafkaListener names its own, so a wedged consumer on one
+      # concern can no longer stall the others. The rest of the consumer is configured in
+      # KafkaConfig rather than split across both places.
+      #
+      # latest, not earliest: a notification has a shelf life. After any outage - or on the first
+      # boot of a newly-named group - replaying the broker's full 48h retention would text every
+      # user a pile of long-expired OTPs and "driver has arrived" alerts for trips that ended two
+      # days ago. Better to skip a stale backlog than to deliver it. The cost is that messages
+      # produced while a group has no committed offset at all are missed, which is only ever a
+      # few seconds during the one deploy that introduces the new group ids.
+      auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:latest}
 
 jwt:
   secret: ${JWT_SECRET:change-me-in-every-environment}
@@ -59,6 +69,13 @@ spring.mail:
         auth: true
         starttls:
           enable: true
+        # JavaMail defaults every one of these to infinite. Without them a single unresponsive
+        # SMTP server parks a notification-dispatch thread permanently, and enough of those
+        # silently take the whole pool - and therefore all notification delivery - down while
+        # the service still reports healthy.
+        connectiontimeout: 5000
+        timeout: 10000
+        writetimeout: 10000
 
 mail:
   from-address: ${MAIL_FROM_ADDRESS:no-reply@coryd.ng}
@@ -90,7 +107,16 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        # metrics alongside health so consumer lag is observable without a restart-and-guess:
+        # /actuator/metrics/kafka.consumer.fetch.manager.records.lag.max is the number to alert
+        # on - it going non-zero and staying there is the earliest signal that notifications
+        # have stopped being delivered.
+        include: health,metrics
+  endpoint:
+    health:
+      # The kafkaConsumers indicator is the point of this endpoint for this service - seeing
+      # WHICH listener stopped is what makes the alert actionable.
+      show-details: always
   health:
     mail:
       # Email is best-effort, same as SMS/push (EmailService already logs and

@@ -2,6 +2,7 @@ package org.coryd.identity.client;
 
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -22,7 +23,7 @@ public class ProfileServiceClient {
     private final RestClient restClient;
 
     public ProfileServiceClient(@Value("${services.profile.url}") String profileServiceUrl) {
-        this.restClient = RestClient.create(profileServiceUrl);
+        this.restClient = HttpTimeouts.create(profileServiceUrl);
     }
 
     public boolean hasProfile(UserRole activeRole, String bearerToken) {

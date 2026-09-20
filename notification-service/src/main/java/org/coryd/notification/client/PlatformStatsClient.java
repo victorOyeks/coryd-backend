@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.security.InternalApiKeyInterceptor;
 import org.coryd.common.security.JwtUtil;
 import org.coryd.common.security.SystemAuthInterceptor;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -40,7 +41,7 @@ public class PlatformStatsClient {
     }
 
     private static RestClient build(String baseUrl, String internalApiKey, JwtUtil jwtUtil) {
-        return RestClient.builder()
+        return HttpTimeouts.builder()
                 .baseUrl(baseUrl)
                 .requestInterceptor(new SystemAuthInterceptor(jwtUtil))
                 .requestInterceptor(new InternalApiKeyInterceptor(internalApiKey))

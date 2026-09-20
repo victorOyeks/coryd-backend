@@ -1,10 +1,12 @@
 package org.coryd.notification.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -24,7 +26,16 @@ public class TermiiSmsService {
                              @Value("${termii.enabled:false}") boolean enabled,
                              @Value("${termii.api-key}") String apiKey,
                              @Value("${termii.sender-id}") String senderId) {
-        this.restClient = RestClient.create(baseUrl);
+        // Explicit, and deliberately not unbounded. RestClient.create(baseUrl) - what this was -
+        // has no connect or read timeout at all, so a Termii endpoint that accepted the connection
+        // and then went quiet parked a notification-dispatch thread forever. Eight of those was
+        // the whole pool, after which no OTP, push or email was delivered by this service again
+        // until it was restarted, with nothing in the logs and /actuator/health still reporting UP.
+        // Termii is a third party over the public internet, so the read timeout is more generous
+        // than the service-to-service default - but it is finite, which is the point.
+        this.restClient = HttpTimeouts.builder(Duration.ofSeconds(5), Duration.ofSeconds(15))
+                .baseUrl(baseUrl)
+                .build();
         this.enabled = enabled;
         this.apiKey = apiKey;
         this.senderId = senderId;

@@ -23,8 +23,16 @@ public class FirebaseConfig {
         if (!FirebaseApp.getApps().isEmpty()) return;
 
         try (FileInputStream serviceAccount = new FileInputStream(credentialsPath)) {
+            // FirebaseOptions leaves all three timeouts at 0, and google-http-client reads 0 as
+            // "wait forever". An unresponsive FCM endpoint would therefore park a
+            // notification-dispatch thread permanently, exactly as an unbounded Termii or SMTP
+            // call does - same failure, different vendor. Set explicitly so push can fail but
+            // never hang.
             FirebaseOptions options = FirebaseOptions.builder()
                     .setCredentials(GoogleCredentials.fromStream(serviceAccount))
+                    .setConnectTimeout(5_000)
+                    .setReadTimeout(10_000)
+                    .setWriteTimeout(10_000)
                     .build();
             FirebaseApp.initializeApp(options);
             log.info("Firebase initialized successfully from: {}", credentialsPath);
