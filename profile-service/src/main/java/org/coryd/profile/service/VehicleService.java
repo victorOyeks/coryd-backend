@@ -9,7 +9,6 @@ import org.coryd.profile.dto.VehicleRegistrationRequest;
 import org.coryd.profile.dto.VehicleSummary;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.repository.VehicleRepository;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,7 +19,7 @@ import java.util.List;
 public class VehicleService {
 
     private final VehicleRepository vehicleRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    private final PremblyVerificationService premblyVerificationService;
 
     @Transactional
     public Vehicle register(String driverId, String callerId, VehicleRegistrationRequest request) {
@@ -46,7 +45,8 @@ public class VehicleService {
                 .acConfirmedWorking(request.acConfirmedWorking())
                 .build();
         Vehicle saved = vehicleRepository.save(vehicle);
-        publishPlateCheck(saved);
+        premblyVerificationService.checkPlateNumber(
+                saved.getDriverId(), saved.getPlateNumber(), saved.getMake(), saved.getColor());
         return saved;
     }
 
@@ -74,14 +74,9 @@ public class VehicleService {
         vehicle.setRejectionReason(null);
 
         Vehicle saved = vehicleRepository.save(vehicle);
-        publishPlateCheck(saved);
+        premblyVerificationService.checkPlateNumber(
+                saved.getDriverId(), saved.getPlateNumber(), saved.getMake(), saved.getColor());
         return saved;
-    }
-
-    /** Fires after the save commits; a repeat of the same plate is deduped downstream, not here. */
-    private void publishPlateCheck(Vehicle vehicle) {
-        eventPublisher.publishEvent(new PremblyVerificationService.PlateCheckRequested(
-                vehicle.getDriverId(), vehicle.getPlateNumber(), vehicle.getMake(), vehicle.getColor()));
     }
 
     public List<Vehicle> findByDriver(String driverId) {

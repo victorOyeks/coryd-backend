@@ -11,7 +11,6 @@ import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.repository.DriverProfileRepository;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +25,7 @@ public class DriverProfileService {
     private final DriverProfileRepository driverProfileRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final IdentityServiceClient identityServiceClient;
-    private final ApplicationEventPublisher eventPublisher;
+    private final PremblyVerificationService premblyVerificationService;
 
     /** Internal/batch use (InternalDriverController, getBatch below) - no phone, no extra cross-service call. */
     public DriverProfile get(String userId) {
@@ -82,10 +81,9 @@ public class DriverProfileService {
 
         DriverProfile saved = driverProfileRepository.save(profile);
         identityServiceClient.syncName(userId, saved.getFirstName(), saved.getLastName());
-        // Runs after this commits, and is idempotent - re-saving an unchanged licence number
-        // does not spend another lookup.
-        eventPublisher.publishEvent(new PremblyVerificationService.LicenceCheckRequested(
-                userId, saved.getIdNumber(), saved.getFirstName(), saved.getLastName()));
+        // Off-thread and idempotent - re-saving an unchanged licence number spends no lookup.
+        premblyVerificationService.checkDriversLicence(
+                userId, saved.getIdNumber(), saved.getFirstName(), saved.getLastName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
         }

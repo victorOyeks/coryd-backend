@@ -12,10 +12,7 @@ import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VerificationCheckRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
 import java.util.Locale;
@@ -45,47 +42,21 @@ public class PremblyVerificationService {
     private final VerificationCheckRepository verificationCheckRepository;
     private final DriverProfileRepository driverProfileRepository;
 
-    /**
-     * Requested when a driver saves a licence number; handled after that save commits. Going
-     * through an event rather than a direct call is what keeps the check off the request thread
-     * without it racing the very write that triggered it - a direct @Async call from inside the
-     * caller's transaction can read the profile before the caller has committed it.
-     */
-    public record LicenceCheckRequested(String driverId, String licenceNumber, String firstName, String lastName) {
-    }
-
-    public record PlateCheckRequested(String driverId, String plateNumber, String make, String color) {
-    }
-
     @Transactional(readOnly = true)
     public List<VerificationCheck> checksFor(String driverId) {
         return verificationCheckRepository.findByDriverId(driverId);
     }
 
     /**
-     * REQUIRES_NEW is mandatory, and Spring refuses to start without it: an AFTER_COMMIT listener
-     * still has the completed transaction bound to it, so plain REQUIRED would join a transaction
-     * that can never commit again. fallbackExecution covers callers outside a transaction
-     * altogether, such as the dev seeder.
-     */
-    @Async("verificationExecutor")
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-    public void onLicenceCheckRequested(LicenceCheckRequested event) {
-        checkDriversLicence(event.driverId(), event.licenceNumber(), event.firstName(), event.lastName());
-    }
-
-    @Async("verificationExecutor")
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-    public void onPlateCheckRequested(PlateCheckRequested event) {
-        checkPlateNumber(event.driverId(), event.plateNumber(), event.make(), event.color());
-    }
-
-    /**
      * Confirms the licence is real and belongs to the name on the profile. A match approves the
      * government-ID item outright; anything else is left for ops with a note.
+     *
+     * <p>Everything it needs is passed in, so it never re-reads what the caller just wrote. Call it
+     * from another bean - a call from inside this class would bypass the proxy and run FRSC on the
+     * request thread.
      */
+    @Async("verificationExecutor")
+    @Transactional
     public void checkDriversLicence(String driverId, String licenceNumber, String firstName, String lastName) {
         String subject = normalizeKey(licenceNumber);
         if (!properties.isEnabled() || subject == null || isBlank(firstName) || isBlank(lastName)) {
@@ -130,6 +101,8 @@ public class PremblyVerificationService {
      * A match is recorded but does not approve the vehicle: the plate record names a car, not an
      * owner, so it cannot show this driver is entitled to drive it. Ops still decides.
      */
+    @Async("verificationExecutor")
+    @Transactional
     public void checkPlateNumber(String driverId, String plateNumber, String declaredMake, String declaredColor) {
         String subject = normalizeKey(plateNumber);
         if (!properties.isEnabled() || subject == null) {
