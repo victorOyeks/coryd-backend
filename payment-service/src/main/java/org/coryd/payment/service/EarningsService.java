@@ -17,7 +17,6 @@ import org.coryd.payment.dto.PeriodEarningsSummary;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
-import org.coryd.payment.gateway.PaystackGatewayClient;
 import org.coryd.payment.dto.WalletTransactionItem;
 import org.coryd.payment.dto.WalletTransactionType;
 import org.coryd.payment.repository.DriverEarningsAccountRepository;
@@ -56,7 +55,6 @@ public class EarningsService {
     private final ProfileServiceClient profileServiceClient;
     private final CommissionProperties commissionProperties;
     private final WalletService walletService;
-    private final PaystackGatewayClient paystackGatewayClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID)
@@ -168,16 +166,12 @@ public class EarningsService {
         fareHoldRepository.save(hold);
 
         paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).ifPresent(transaction -> {
-            // We fully own the wallet ledger, so a wallet-paid booking gets its money back
-            // immediately. A Paystack-paid booking that never actually succeeded (still PENDING,
-            // or FAILED) has nothing to refund - only PAID has real money on Paystack's side to
-            // reverse; refunding anything else would just fail the gateway call outright.
-            if (transaction.getPaymentMethod() == PaymentMethod.WALLET) {
-                walletService.creditRefund(transaction.getRiderId(), bookingId, hold.getAmount(), reason);
-            } else if (transaction.getPaymentMethod() == PaymentMethod.PAYSTACK
-                    && transaction.getStatus() == PayoutStatus.PAID) {
-                paystackGatewayClient.refundTransaction(transaction.getGatewayReference(), hold.getAmount(), reason);
+            boolean hasMoneyToRefund = transaction.getPaymentMethod() == PaymentMethod.WALLET
+                    || (transaction.getPaymentMethod() == PaymentMethod.PAYSTACK && transaction.getStatus() == PayoutStatus.PAID);
+            if (!hasMoneyToRefund) {
+                return;
             }
+            walletService.creditRefund(transaction.getRiderId(), bookingId, hold.getAmount(), reason);
 
             kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
                     .bookingId(bookingId)

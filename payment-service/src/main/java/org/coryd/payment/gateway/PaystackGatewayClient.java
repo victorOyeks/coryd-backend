@@ -30,10 +30,7 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     private final PaystackProperties paystackProperties;
 
     private RestClient restClient() {
-        // Longer read timeout than the service-to-service default: Paystack is a third party over
-        // the public internet and a charge/verify round-trip can legitimately take several
-        // seconds. Bounded all the same - an unbounded wait here parks a request thread holding
-        // an open payment indefinitely.
+
         return HttpTimeouts.builder(Duration.ofSeconds(5), Duration.ofSeconds(20))
                 .baseUrl(paystackProperties.getBaseUrl())
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + paystackProperties.getSecretKey())
@@ -149,33 +146,6 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         return new TransferResult(response.data().transferCode(), response.data().status());
     }
 
-    /**
-     * Refunds a previously successful charge. gatewayReference is the SAME reference used at
-     * /transaction/initialize time - Paystack accepts either the reference or the numeric
-     * transaction id, and reference is what PaymentTransaction already stores. Treated the same
-     * as initiateTransfer(): the synchronous "pending"/"processed" status here is provisional,
-     * not authoritative - Paystack settles most refunds over hours to days on the customer's
-     * side regardless of what this call returns.
-     */
-    public void refundTransaction(String gatewayReference, BigDecimal amount, String reason) {
-        Map<String, Object> body = new HashMap<>(Map.of(
-                "transaction", gatewayReference,
-                "amount", amount.movePointRight(2).longValueExact()
-        ));
-        if (reason != null && !reason.isBlank()) {
-            body.put("customer_note", reason);
-        }
-
-        RefundResponse response = restClient().post()
-                .uri("/refund")
-                .body(body)
-                .retrieve()
-                .body(RefundResponse.class);
-        if (response == null || !response.status()) {
-            throw new BadRequestException("Refund could not be initiated with Paystack. Please try again.");
-        }
-    }
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record BankOption(String name, String code) {
     }
@@ -208,10 +178,6 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         @JsonIgnoreProperties(ignoreUnknown = true)
         private record Data(@JsonProperty("transfer_code") String transferCode, String status) {
         }
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private record RefundResponse(boolean status) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
