@@ -9,6 +9,7 @@ import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
+import org.coryd.trip.service.LiveSearchSessionRegistry;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessagingException;
@@ -38,12 +39,14 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
     private static final Pattern ROUTE_LOCATION_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/location$");
     private static final Pattern ROUTE_CHAT_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/chat$");
     private static final Pattern ROUTE_UPDATE_TOPIC = Pattern.compile("^/topic/routes/([^/]+)/route-update$");
+    private static final Pattern SEARCH_SESSION_TOPIC = Pattern.compile("^/topic/search-sessions/([^/]+)$");
     private static final Set<BookingStatus> NON_TERMINAL_BOOKING_STATUSES =
             Set.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
     private final JwtUtil jwtUtil;
     private final BookingRepository bookingRepository;
     private final RoutePostRepository routePostRepository;
+    private final LiveSearchSessionRegistry liveSearchSessionRegistry;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -103,6 +106,12 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         Matcher routeUpdateMatcher = ROUTE_UPDATE_TOPIC.matcher(destination);
         if (routeUpdateMatcher.matches()) {
             authorizeRouteSubscription(destination, routeUpdateMatcher.group(1), currentUserId(accessor));
+            return;
+        }
+
+        Matcher searchSessionMatcher = SEARCH_SESSION_TOPIC.matcher(destination);
+        if (searchSessionMatcher.matches()) {
+            authorizeSearchSessionSubscription(destination, searchSessionMatcher.group(1), currentUserId(accessor));
         }
     }
 
@@ -129,6 +138,16 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         if (!isDriver && !isActiveRider) {
             log.warn("Rejected WebSocket subscribe to {} - user {} is not a party to route {}", destination, userId, routePostId);
             throw new MessagingException("Not authorized for this trip");
+        }
+    }
+
+    /** No booking/route party check applies here - a rider live-searching hasn't booked anything
+     * yet, so ownership is just "did this user create this search session." */
+    private void authorizeSearchSessionSubscription(String destination, String sessionId, String userId) {
+        LiveSearchSessionRegistry.Session session = liveSearchSessionRegistry.get(sessionId);
+        if (session == null || !userId.equals(session.riderId())) {
+            log.warn("Rejected WebSocket subscribe to {} - user {} does not own live-search session {}", destination, userId, sessionId);
+            throw new MessagingException("Search session not found or expired - search again before subscribing");
         }
     }
 

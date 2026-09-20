@@ -29,6 +29,7 @@ import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.RoutePreview;
+import org.coryd.trip.dto.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
@@ -44,6 +45,7 @@ import org.coryd.trip.repository.NotifyMeRequestRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -61,6 +63,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -103,6 +106,8 @@ public class RouteService {
     private final DriverVerificationPolicy verificationPolicy;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ChatService chatService;
+    private final LiveSearchSessionRegistry liveSearchSessionRegistry;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public RoutePost post(String driverId, String callerId, PostRouteRequest request) {
@@ -191,6 +196,7 @@ public class RouteService {
                 .build());
 
         notifyMatchingWaitlist(route);
+        eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(route.getId()));
 
         return route;
     }
@@ -251,6 +257,11 @@ public class RouteService {
      * on an existing route just because it isn't brand new. */
     @Transactional
     public void reopenIfSeatsAvailable(String routePostId) {
+        // Published unconditionally, not just when this flips FULL->PUBLISHED - every seat-release
+        // call site (payment failure, hold release, reservation decline, rider cancellation, the
+        // expiry sweep) routes through here, and seatsAvailable increases regardless of whether
+        // the route had actually gone FULL, which live search results also need to reflect.
+        eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(routePostId));
         if (routePostRepository.reopenIfSeatsAvailable(routePostId) == 0) {
             return;
         }
@@ -293,6 +304,20 @@ public class RouteService {
         );
 
         return enrich(matches, request.originLat(), request.originLng());
+    }
+
+    /** Same search, but also registers/refreshes a live-search session so the rider can subscribe
+     * to /topic/search-sessions/{sessionId} and get pushed updates instead of polling this endpoint -
+     * see LiveSearchPushService/LiveSearchSessionRegistry. sessionId is client-generated (a UUID the
+     * app keeps for the life of the search screen); riderId is null-safe only in that a null
+     * sessionId skips registration entirely - a real search always has an authenticated caller. */
+    public List<RideSearchResult> search(SearchRequest request, String sessionId, String riderId) {
+        List<RideSearchResult> results = search(request);
+        if (sessionId != null) {
+            Set<String> resultIds = results.stream().map(RideSearchResult::routePostId).collect(Collectors.toSet());
+            liveSearchSessionRegistry.registerOrRefresh(sessionId, riderId, request, resultIds);
+        }
+        return results;
     }
 
     /**
@@ -511,6 +536,7 @@ public class RouteService {
         route.setStatus(RouteStatus.IN_PROGRESS);
         route.setStartedAt(Instant.now());
         routePostRepository.save(route);
+        eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(routePostId));
     }
 
     /**
@@ -688,6 +714,7 @@ public class RouteService {
 
         // Same as completion - the route's group chat has no reason to outlive the route itself.
         chatService.deleteChatForRoute(routePostId);
+        eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(routePostId));
     }
 
     /**

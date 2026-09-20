@@ -52,9 +52,14 @@ public class RouteController {
         return ApiResponse.ok(routeService.post(driverId, principal.getUserId(), request));
     }
 
+    /** sessionId is optional and client-generated (a UUID kept for the life of the search screen) -
+     * when present, the rider can subscribe to /topic/search-sessions/{sessionId} over WebSocket for
+     * pushed updates instead of polling this endpoint again. See LiveSearchPushService. */
     @PostMapping("/search")
-    public ApiResponse<List<RideSearchResult>> search(@Valid @RequestBody SearchRequest request) {
-        return ApiResponse.ok(routeService.search(request));
+    public ApiResponse<List<RideSearchResult>> search(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                        @RequestParam(required = false) String sessionId,
+                                                        @Valid @RequestBody SearchRequest request) {
+        return ApiResponse.ok(routeService.search(request, sessionId, principal.getUserId()));
     }
 
     /** Called by the client only when /search comes back empty - relaxed radius/time window, capped result count. */

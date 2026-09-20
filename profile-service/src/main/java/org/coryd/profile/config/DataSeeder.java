@@ -75,7 +75,7 @@ public class DataSeeder implements ApplicationRunner {
         driverProfileService.updateMine(driverId, new UpdateDriverProfileRequest(
                 driver.fullName(),
                 null,
-                "driver" + index + "@coryd.test",
+                "driver" + index + "@example.com",
                 LocalDate.of(1995, 1, 1),
                 "https://example.com/coryd-seed/gov-id-" + index + ".jpg",
                 "SEED-ID-" + index,
@@ -124,7 +124,7 @@ public class DataSeeder implements ApplicationRunner {
         String riderId = identityAuthClient.resolveUserId(rider.phone(), SeedFixtures.SEED_PASSWORD, UserRole.RIDER);
         riderProfileService.updateMine(riderId, new UpdateRiderProfileRequest(
                 rider.fullName(),
-                rider.fullName().toLowerCase().replace(" ", "") + "@coryd.test",
+                rider.fullName().toLowerCase().replace(" ", "") + "@example.com",
                 null,
                 null,
                 null

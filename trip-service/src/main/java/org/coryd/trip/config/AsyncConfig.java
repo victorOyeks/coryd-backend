@@ -33,4 +33,18 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /** Backs LiveSearchPushService - re-running every active live-search session's query must
+     * never add latency to the booking/posting request that triggered it. */
+    @Bean("liveSearchExecutor")
+    public ThreadPoolTaskExecutor liveSearchExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(8);
+        executor.setQueueCapacity(200);
+        executor.setThreadNamePrefix("live-search-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
 }

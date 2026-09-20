@@ -27,6 +27,7 @@ import org.coryd.trip.config.CancellationPolicy;
 import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
+import org.coryd.trip.dto.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.BookingSummary;
 import org.coryd.trip.dto.DriverActiveTripResponse;
@@ -53,6 +54,7 @@ import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SosIncidentRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -113,6 +115,7 @@ public class BookingService {
     private final ChatService chatService;
     private final RouteService routeService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
 
@@ -507,6 +510,7 @@ public class BookingService {
         }
         routePostRepository.markFullIfExhausted(routePostId);
         routePostRepository.lockOnFirstBooking(routePostId, Instant.now());
+        eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(routePostId));
 
         BigDecimal fareTotal = route.getFarePerSeat().multiply(BigDecimal.valueOf(request.seatCount()));
 
