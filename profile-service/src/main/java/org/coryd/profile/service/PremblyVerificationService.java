@@ -12,6 +12,7 @@ import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VerificationCheckRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -62,19 +63,20 @@ public class PremblyVerificationService {
     }
 
     /**
-     * fallbackExecution covers callers outside a transaction, such as the dev seeder. @Async is
-     * load-bearing, not just for latency: a synchronous AFTER_COMMIT listener still has the
-     * completed transaction bound to its thread, so @Transactional would join it and never commit.
+     * REQUIRES_NEW is mandatory, and Spring refuses to start without it: an AFTER_COMMIT listener
+     * still has the completed transaction bound to it, so plain REQUIRED would join a transaction
+     * that can never commit again. fallbackExecution covers callers outside a transaction
+     * altogether, such as the dev seeder.
      */
     @Async("verificationExecutor")
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onLicenceCheckRequested(LicenceCheckRequested event) {
         checkDriversLicence(event.driverId(), event.licenceNumber(), event.firstName(), event.lastName());
     }
 
     @Async("verificationExecutor")
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onPlateCheckRequested(PlateCheckRequested event) {
         checkPlateNumber(event.driverId(), event.plateNumber(), event.make(), event.color());
