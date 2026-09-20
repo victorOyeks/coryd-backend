@@ -23,5 +23,6 @@
     <include file="db/changelog/012-chat-message-media-public-id.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/013-driver-grace-period.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/014-driver-prerequisites-met.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/015-route-departure-reminder.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

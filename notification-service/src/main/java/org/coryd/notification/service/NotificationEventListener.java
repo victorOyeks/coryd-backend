@@ -16,6 +16,7 @@ import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
+import org.coryd.common.kafka.events.RouteDepartureReminderEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
@@ -107,6 +108,22 @@ public class NotificationEventListener {
         dispatchService.sendPush(event.getDriverId(), "Route cancelled",
                 "Your route post was cancelled and " + event.getAffectedBookingIds().size() + " booking(s) were refunded.",
                 "ROUTE_CANCELLED", null);
+    }
+
+    @KafkaListener(topics = KafkaTopics.ROUTE_DEPARTURE_REMINDER, groupId = KafkaConfig.GROUP_ID_TRIP)
+    public void onRouteDepartureReminder(RouteDepartureReminderEvent event) {
+        String routeSummary = event.getOriginLabel() + " -> " + event.getDestinationLabel();
+
+        dispatchService.sendPush(event.getDriverId(), "Almost time to depart",
+                "Your route " + routeSummary + " departs in 15 minutes - "
+                        + event.getRiders().size() + " rider(s) booked.",
+                "ROUTE_DEPARTURE_REMINDER", null);
+
+        for (RouteDepartureReminderEvent.RiderBooking rider : event.getRiders()) {
+            dispatchService.sendPush(rider.getRiderId(), "Almost time for your ride",
+                    "Your ride " + routeSummary + " departs in 15 minutes - be at your pickup point.",
+                    "ROUTE_DEPARTURE_REMINDER", rider.getBookingId());
+        }
     }
 
     @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID_TRIP)

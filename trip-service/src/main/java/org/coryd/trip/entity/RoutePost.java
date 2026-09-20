@@ -71,4 +71,7 @@ public class RoutePost extends BaseEntity {
     /** When the driver actually tapped Start Trip / Complete Trip - departureTime is only the planned time, these are the real ones, used for the receipt's trip duration. */
     private Instant startedAt;
     private Instant completedAt;
+
+    /** Set once RouteDepartureReminderJob has pushed the "15 minutes to departure" reminder - never reset, guards against re-sending it on a later sweep. */
+    private Instant reminderSentAt;
 }

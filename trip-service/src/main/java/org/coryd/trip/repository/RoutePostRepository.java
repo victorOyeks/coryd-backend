@@ -142,4 +142,16 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     /** RouteExpiryJob's "never started" sweep - PUBLISHED/FULL routes whose departure has passed by more than the grace window. */
     List<RoutePost> findByStatusInAndDepartureTimeBefore(List<RouteStatus> statuses, Instant before);
+
+    /** RouteDepartureReminderJob's sweep - PUBLISHED/FULL routes departing within the reminder
+     * window that haven't been reminded yet. */
+    List<RoutePost> findByStatusInAndDepartureTimeBetweenAndReminderSentAtIsNull(
+            List<RouteStatus> statuses, Instant windowStart, Instant windowEnd);
+
+    /** Atomic claim on the reminder, same shape as lockOnFirstBooking - the "where reminder_sent_at
+     * is null" guard means a route can only ever be claimed once, even if the sweep somehow overlaps
+     * itself across runs. */
+    @Modifying
+    @Query("update RoutePost r set r.reminderSentAt = :now where r.id = :id and r.reminderSentAt is null")
+    int markReminderSent(@Param("id") String id, @Param("now") Instant now);
 }

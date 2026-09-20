@@ -41,6 +41,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic routeDepartureReminderTopic() {
+        return TopicBuilder.name(KafkaTopics.ROUTE_DEPARTURE_REMINDER).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic bookingConfirmedTopic() {
         return TopicBuilder.name(KafkaTopics.BOOKING_CONFIRMED).partitions(3).replicas(1).build();
     }

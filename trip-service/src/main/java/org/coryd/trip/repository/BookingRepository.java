@@ -15,6 +15,9 @@ import java.util.Optional;
 public interface BookingRepository extends JpaRepository<Booking, String> {
     List<Booking> findByRoutePostId(String routePostId);
 
+    /** RouteDepartureReminderJob - who to actually push the "15 minutes to departure" reminder to. */
+    List<Booking> findByRoutePostIdAndStatus(String routePostId, BookingStatus status);
+
     /** Dev route reset only - see RouteResetService. */
     long deleteByRoutePostId(String routePostId);
     List<Booking> findByRoutePostIdIn(List<String> routePostIds);
