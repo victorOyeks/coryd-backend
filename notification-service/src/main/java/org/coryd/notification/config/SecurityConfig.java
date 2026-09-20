@@ -1,7 +1,7 @@
 package org.coryd.notification.config;
 
 import lombok.RequiredArgsConstructor;
-import org.coryd.common.security.JwtFilter;
+import org.coryd.common.security.filter.JwtFilter;
 import org.coryd.common.security.PublicPaths;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

@@ -3,7 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.trip.dto.MultiStopRoutePreview;
-import org.coryd.trip.dto.RouteUpdateEvent;
+import org.coryd.trip.event.RouteUpdateEvent;
 import org.coryd.trip.util.PolylineDecoder;
 import org.coryd.trip.util.PolylineDecoder.LatLng;
 import org.springframework.data.redis.core.StringRedisTemplate;

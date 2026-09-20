@@ -18,18 +18,19 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController
+@RequestMapping("/drivers")
 @RequiredArgsConstructor
 public class DriverDocumentController {
 
     private final DriverDocumentService driverDocumentService;
 
-    @PostMapping("/drivers/me/documents")
+    @PostMapping("/me/documents")
     public ApiResponse<DriverDocument> create(@AuthenticationPrincipal CoRydUserDetails principal,
                                                @Valid @RequestBody CreateDriverDocumentRequest request) {
         return ApiResponse.ok(driverDocumentService.create(principal.getUserId(), request));
     }
 
-    @GetMapping("/drivers/{driverId}/documents")
+    @GetMapping("/{driverId}/documents")
     public ApiResponse<List<DriverDocument>> list(@PathVariable String driverId) {
         return ApiResponse.ok(driverDocumentService.findByDriver(driverId));
     }

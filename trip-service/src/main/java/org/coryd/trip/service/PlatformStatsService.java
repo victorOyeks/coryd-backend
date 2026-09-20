@@ -2,7 +2,7 @@ package org.coryd.trip.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.trip.dto.TripStatsResponse;
-import org.coryd.trip.config.DriverVerificationPolicy;
+import org.coryd.trip.config.policy.DriverVerificationPolicy;
 import org.coryd.trip.repository.PlatformStatsRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

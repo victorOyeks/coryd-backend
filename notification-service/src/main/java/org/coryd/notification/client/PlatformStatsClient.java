@@ -2,9 +2,9 @@ package org.coryd.notification.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.coryd.common.security.InternalApiKeyInterceptor;
+import org.coryd.common.security.client.InternalApiKeyInterceptor;
 import org.coryd.common.security.JwtUtil;
-import org.coryd.common.security.SystemAuthInterceptor;
+import org.coryd.common.security.client.SystemAuthInterceptor;
 import org.coryd.common.http.HttpTimeouts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;

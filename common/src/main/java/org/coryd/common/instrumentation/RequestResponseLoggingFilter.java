@@ -4,11 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.coryd.common.security.CoRydUserDetails;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingRequestWrapper;
@@ -24,13 +21,6 @@ import java.util.Map;
 public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RequestResponseLoggingFilter.class);
-
-    private static final String[] IP_HEADERS = {
-            "X-Forwarded-For", "X-Real-IP", "Proxy-Client-IP",
-            "WL-Proxy-Client-IP", "HTTP_X_FORWARDED_FOR", "HTTP_X_FORWARDED",
-            "HTTP_X_CLUSTER_CLIENT_IP", "HTTP_CLIENT_IP", "HTTP_FORWARDED_FOR",
-            "HTTP_FORWARDED", "HTTP_VIA", "REMOTE_ADDR"
-    };
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -61,7 +51,7 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         String body = new String(request.getContentAsByteArray(), StandardCharsets.UTF_8);
         String maskedBody = SensitiveDataMasker.maskJsonBody(body);
 
-        String clientIp = getClientIp(request);
+        String clientIp = RequestLoggingSupport.getClientIp(request);
         String remoteAddr = request.getRemoteAddr();
         String clientInfo = clientIp.equals(remoteAddr) ? clientIp : clientIp + " (via proxy: " + remoteAddr + ")";
 
@@ -69,7 +59,7 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
                 request.getMethod(),
                 request.getRequestURI(),
                 clientInfo,
-                resolveUser(),
+                RequestLoggingSupport.resolveUser(),
                 getMaskedHeaders(request),
                 maskedBody.isBlank() ? "<empty>" : maskedBody);
     }
@@ -91,21 +81,4 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         return headers;
     }
 
-    private String resolveUser() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof CoRydUserDetails u) {
-            return SensitiveDataMasker.maskPhone(u.getPhone()) + " " + u.getActiveRole();
-        }
-        return "anonymous";
-    }
-
-    private String getClientIp(HttpServletRequest request) {
-        for (String header : IP_HEADERS) {
-            String ip = request.getHeader(header);
-            if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
-                return ip.contains(",") ? ip.split(",")[0].trim() : ip;
-            }
-        }
-        return request.getRemoteAddr();
-    }
 }

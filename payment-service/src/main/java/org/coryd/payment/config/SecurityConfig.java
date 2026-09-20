@@ -1,9 +1,9 @@
 package org.coryd.payment.config;
 
 import lombok.RequiredArgsConstructor;
-import org.coryd.common.security.InternalApiKeyFilter;
+import org.coryd.common.security.filter.InternalApiKeyFilter;
 import org.coryd.common.security.InternalOnlyPaths;
-import org.coryd.common.security.JwtFilter;
+import org.coryd.common.security.filter.JwtFilter;
 import org.coryd.common.security.PublicPaths;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
