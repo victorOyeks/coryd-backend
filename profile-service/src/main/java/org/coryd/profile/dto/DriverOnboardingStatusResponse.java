@@ -16,7 +16,6 @@ import org.coryd.common.enums.VerificationStatus;
 public record DriverOnboardingStatusResponse(
         boolean profileSubmitted,
         boolean governmentIdSubmitted,
-        boolean selfieSubmitted,
         boolean vehicleSubmitted,
         boolean documentsSubmitted,
         VerificationStatus overallStatus

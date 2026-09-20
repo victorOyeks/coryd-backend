@@ -100,7 +100,7 @@ public class BookingController {
         return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, status, search, pageable));
     }
 
-    /** "View Passenger Manifest" - only the route's own driver can see who's booked on it. */
+    /** "View Passenger Manifest" - the route's driver, or a rider actively booked on it. */
     @GetMapping("/routes/{routePostId}")
     public ApiResponse<List<BookingSummary>> manifestForRoute(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                 @PathVariable String routePostId) {

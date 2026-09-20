@@ -23,11 +23,6 @@ public record DriverProfileResponse(
         String idNumber,
         VerificationStatus governmentIdStatus,
         String governmentIdRejectionReason,
-        String selfieUrl,
-        String selfiePublicId,
-        VerificationStatus selfieStatus,
-        String selfieRejectionReason,
-        Instant selfieSubmittedAt,
         Instant verifiedSince
 ) {
     public static DriverProfileResponse from(DriverProfile profile, String phone) {
@@ -36,8 +31,7 @@ public record DriverProfileResponse(
                 profile.getUserId(), profile.getLegalName(), profile.getPhotoUrl(), profile.getEmail(), phone,
                 profile.getDateOfBirth(), profile.getGovernmentIdUrl(), profile.getIdNumber(),
                 profile.getGovernmentIdStatus(), profile.getGovernmentIdRejectionReason(),
-                profile.getSelfieUrl(), profile.getSelfiePublicId(), profile.getSelfieStatus(),
-                profile.getSelfieRejectionReason(), profile.getSelfieSubmittedAt(), profile.getVerifiedSince()
+                profile.getVerifiedSince()
         );
     }
 }

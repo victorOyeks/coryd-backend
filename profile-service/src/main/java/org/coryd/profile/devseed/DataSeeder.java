@@ -78,9 +78,7 @@ public class DataSeeder implements ApplicationRunner {
                 "driver" + index + "@example.com",
                 LocalDate.of(1995, 1, 1),
                 "https://example.com/coryd-seed/gov-id-" + index + ".jpg",
-                "SEED-ID-" + index,
-                "https://example.com/coryd-seed/selfie-" + index + ".jpg",
-                null
+                "SEED-ID-" + index
         ));
 
         Vehicle vehicle = vehicleRepository.findByDriverId(driverId).stream().findFirst()
@@ -102,7 +100,6 @@ public class DataSeeder implements ApplicationRunner {
         VerificationDecisionBatchRequest approveEverything = new VerificationDecisionBatchRequest(
                 List.of(
                         new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null),
-                        new ItemDecision(ReviewableItem.SELFIE, VerificationStatus.APPROVED, null),
                         new ItemDecision(ReviewableItem.VEHICLE, VerificationStatus.APPROVED, null),
                         new ItemDecision(ReviewableItem.INSURANCE, VerificationStatus.APPROVED, null),
                         new ItemDecision(ReviewableItem.ROADWORTHINESS_CERT, VerificationStatus.APPROVED, null)

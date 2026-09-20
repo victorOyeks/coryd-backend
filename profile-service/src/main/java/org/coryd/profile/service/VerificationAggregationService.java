@@ -60,10 +60,6 @@ public class VerificationAggregationService {
                         profile == null ? VerificationStatus.PENDING : profile.getGovernmentIdStatus(),
                         profile == null ? null : profile.getGovernmentIdRejectionReason(),
                         profile == null ? null : profile.getGovernmentIdUrl()),
-                new VerificationStatusResponse.ItemStatus(
-                        profile == null ? VerificationStatus.PENDING : profile.getSelfieStatus(),
-                        profile == null ? null : profile.getSelfieRejectionReason(),
-                        profile == null ? null : profile.getSelfieUrl()),
                 new VerificationStatusResponse.VehicleRegistrationStatus(
                         vehicle == null ? VerificationStatus.PENDING : vehicle.getVerificationStatus(),
                         vehicle == null ? null : vehicle.getRejectionReason(),
@@ -95,7 +91,7 @@ public class VerificationAggregationService {
      * already know; this is how they discover one in the first place. Checked per item type rather
      * than by overall status, since a driver with one item REJECTED and another still genuinely
      * PENDING needs that second item to keep showing up here regardless of the (rejected)
-     * aggregate. Government ID/selfie also need a submission check on top of status = PENDING,
+     * aggregate. Government ID also needs a submission check on top of status = PENDING,
      * since both default to PENDING before the driver has uploaded anything - unlike Vehicle/
      * DriverDocument, which only exist as rows once actually submitted. */
     public List<PendingVerificationItem> getPendingQueue(UserRole callerRole) {
@@ -107,9 +103,6 @@ public class VerificationAggregationService {
 
         for (DriverProfile profile : driverProfileRepository.findByGovernmentIdUrlIsNotNullAndGovernmentIdStatus(VerificationStatus.PENDING)) {
             pendingByDriver.computeIfAbsent(profile.getUserId(), id -> new ArrayList<>()).add(ReviewableItem.GOVERNMENT_ID);
-        }
-        for (DriverProfile profile : driverProfileRepository.findBySelfieSubmittedAtIsNotNullAndSelfieStatus(VerificationStatus.PENDING)) {
-            pendingByDriver.computeIfAbsent(profile.getUserId(), id -> new ArrayList<>()).add(ReviewableItem.SELFIE);
         }
         for (Vehicle vehicle : vehicleRepository.findByVerificationStatus(VerificationStatus.PENDING)) {
             pendingByDriver.computeIfAbsent(vehicle.getDriverId(), id -> new ArrayList<>()).add(ReviewableItem.VEHICLE);
@@ -138,21 +131,6 @@ public class VerificationAggregationService {
                         .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
                 profile.setGovernmentIdStatus(decision.status());
                 profile.setGovernmentIdRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
-                driverProfileRepository.save(profile);
-            }
-            case SELFIE -> {
-                DriverProfile profile = driverProfileRepository.findByUserId(driverId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
-                profile.setSelfieStatus(decision.status());
-                profile.setSelfieRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
-                if (decision.status() == VerificationStatus.APPROVED) {
-                    // Only ever needed for this review - nothing rider-facing surfaces it - so free
-                    // the storage once approved. Best-effort: a flaky Cloudinary call must never
-                    // block the approval itself.
-                    deleteFromCloudinary(profile.getSelfiePublicId(), "image");
-                    profile.setSelfieUrl(null);
-                    profile.setSelfiePublicId(null);
-                }
                 driverProfileRepository.save(profile);
             }
             case VEHICLE -> {
@@ -209,12 +187,9 @@ public class VerificationAggregationService {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
         Vehicle vehicle = primaryVehicle(driverId);
 
-        boolean identitySubmitted = profile != null
-                && profile.getGovernmentIdUrl() != null
-                && profile.getSelfieSubmittedAt() != null;
+        boolean identitySubmitted = profile != null && profile.getGovernmentIdUrl() != null;
         boolean identityApproved = profile != null
-                && profile.getGovernmentIdStatus() == VerificationStatus.APPROVED
-                && profile.getSelfieStatus() == VerificationStatus.APPROVED;
+                && profile.getGovernmentIdStatus() == VerificationStatus.APPROVED;
 
         return new DriverPrerequisiteStatus(
                 identitySubmitted,
@@ -240,15 +215,12 @@ public class VerificationAggregationService {
 
         boolean profileSubmitted = profile != null && profile.getLegalName() != null && profile.getDateOfBirth() != null;
         boolean governmentIdSubmitted = profile != null && profile.getGovernmentIdUrl() != null;
-        // Deliberately not getSelfieUrl(): approving a selfie purges the image (see applyDecision),
-        // and a purged selfie is still a submitted one.
-        boolean selfieSubmitted = profile != null && profile.getSelfieSubmittedAt() != null;
         boolean vehicleSubmitted = vehicle != null;
         boolean documentsSubmitted = Arrays.stream(DocumentType.values())
                 .allMatch(type -> findByType(documents, type) != null);
 
         return new DriverOnboardingStatusResponse(
-                profileSubmitted, governmentIdSubmitted, selfieSubmitted, vehicleSubmitted, documentsSubmitted,
+                profileSubmitted, governmentIdSubmitted, vehicleSubmitted, documentsSubmitted,
                 computeOverallStatus(profile, vehicle, documents)
         );
     }
@@ -331,7 +303,6 @@ public class VerificationAggregationService {
     private VerificationStatus computeOverallStatus(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents) {
         List<VerificationStatus> statuses = new ArrayList<>();
         statuses.add(profile == null ? VerificationStatus.PENDING : profile.getGovernmentIdStatus());
-        statuses.add(profile == null ? VerificationStatus.PENDING : profile.getSelfieStatus());
         statuses.add(vehicle == null ? VerificationStatus.PENDING : vehicle.getVerificationStatus());
         for (DocumentType type : DocumentType.values()) {
             DriverDocument doc = findByType(documents, type);
@@ -350,9 +321,6 @@ public class VerificationAggregationService {
     private String firstRejectionReason(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents) {
         if (profile != null && profile.getGovernmentIdStatus() == VerificationStatus.REJECTED) {
             return profile.getGovernmentIdRejectionReason();
-        }
-        if (profile != null && profile.getSelfieStatus() == VerificationStatus.REJECTED) {
-            return profile.getSelfieRejectionReason();
         }
         if (vehicle != null && vehicle.getVerificationStatus() == VerificationStatus.REJECTED) {
             return vehicle.getRejectionReason();

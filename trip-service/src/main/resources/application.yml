@@ -81,7 +81,7 @@ driver:
   verification:
     enforcement: ${DRIVER_VERIFICATION_ENFORCEMENT:GRACE}
     grace-period-days: ${DRIVER_VERIFICATION_GRACE_DAYS:30}
-    # APPROVED: ops must approve ID, selfie and vehicle before a driver can post. Requires
+    # APPROVED: ops must approve the government ID and vehicle before a driver can post. Requires
     # someone actually reviewing - SUBMITTED drops the bar to "uploaded" if that stalls.
     prerequisite-level: ${DRIVER_PREREQUISITE_LEVEL:APPROVED}
 

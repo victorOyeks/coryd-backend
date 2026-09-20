@@ -16,5 +16,4 @@ public interface DriverProfileRepository extends JpaRepository<DriverProfile, St
      * (which only exist as rows once submitted) - the URL/submittedAt check is what excludes a
      * driver who simply hasn't gotten to this step yet. */
     List<DriverProfile> findByGovernmentIdUrlIsNotNullAndGovernmentIdStatus(VerificationStatus status);
-    List<DriverProfile> findBySelfieSubmittedAtIsNotNullAndSelfieStatus(VerificationStatus status);
 }

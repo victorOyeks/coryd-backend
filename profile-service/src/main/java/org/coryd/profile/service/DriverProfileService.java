@@ -69,19 +69,12 @@ public class DriverProfileService {
         profile.setDateOfBirth(request.dateOfBirth());
         profile.setIdNumber(request.idNumber());
 
-        // Resubmitting either the license photo or the selfie resets just that
+        // Resubmitting the license photo resets just that
         // item's own review back to PENDING - the other stays as it was.
         if (request.governmentIdUrl() != null) {
             profile.setGovernmentIdUrl(request.governmentIdUrl());
             profile.setGovernmentIdStatus(VerificationStatus.PENDING);
             profile.setGovernmentIdRejectionReason(null);
-        }
-        if (request.selfieUrl() != null) {
-            profile.setSelfieUrl(request.selfieUrl());
-            profile.setSelfiePublicId(request.selfiePublicId());
-            profile.setSelfieSubmittedAt(Instant.now());
-            profile.setSelfieStatus(VerificationStatus.PENDING);
-            profile.setSelfieRejectionReason(null);
         }
 
         DriverProfile saved = driverProfileRepository.save(profile);

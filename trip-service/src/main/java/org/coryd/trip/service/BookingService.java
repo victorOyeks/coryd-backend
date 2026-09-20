@@ -98,7 +98,7 @@ public class BookingService {
     private final CancellationPolicy cancellationPolicy;
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
-     * DriverSummary.verificationStatus, which is identity-only (government ID + selfie) and would
+     * DriverSummary.verificationStatus, which is identity-only and would
      * show a green tick on a driver operating under the document grace window.
      */
     private boolean isFullyVerified(String driverId) {
@@ -177,14 +177,23 @@ public class BookingService {
                 bookingSummaries));
     }
 
-    /** "View Passenger Manifest" after publishing (or any time after) - who's booked on this specific route, only visible to the route's own driver. Excludes only HELD (payment-pending, not a real booking yet) - cancellations and no-shows stay visible so the driver sees the full picture. */
+    /** "View Passenger Manifest" after publishing (or any time after) - who's booked on this specific route.
+     * Visible to the route's driver, or to any rider actively booked on it - not to anyone else, since this
+     * carries every passenger's name/photo/pickup location. Excludes only HELD (payment-pending, not a real
+     * booking yet) - cancellations and no-shows stay visible so the driver sees the full picture. */
     public List<BookingSummary> getManifestForRoute(String routePostId, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
-        if (!callerId.equals(route.getDriverId())) {
-            throw new UnauthorizedException("Only this route's driver can view its passenger manifest");
+        List<Booking> bookings = bookingRepository.findByRoutePostId(routePostId);
+
+        boolean isDriver = callerId.equals(route.getDriverId());
+        boolean isActiveRider = bookings.stream()
+                .anyMatch(b -> callerId.equals(b.getRiderId()) && ACTIVE_TRIP_STATUSES.contains(b.getStatus()));
+        if (!isDriver && !isActiveRider) {
+            throw new UnauthorizedException("Only this route's driver or a rider booked on it can view its passenger manifest");
         }
-        List<Booking> manifest = bookingRepository.findByRoutePostId(routePostId).stream()
+
+        List<Booking> manifest = bookings.stream()
                 .filter(b -> b.getStatus() != BookingStatus.HELD)
                 .toList();
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(manifest);

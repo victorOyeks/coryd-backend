@@ -11,8 +11,6 @@ public record UpdateDriverProfileRequest(
         @Email String email,
         LocalDate dateOfBirth,
         String governmentIdUrl,
-        String idNumber,
-        String selfieUrl,
-        String selfiePublicId
+        String idNumber
 ) {
 }

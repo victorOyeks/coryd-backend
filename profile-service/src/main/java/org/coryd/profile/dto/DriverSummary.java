@@ -10,12 +10,12 @@ public record DriverSummary(String userId, String legalName, String photoUrl, Ve
         return new DriverSummary(profile.getUserId(), profile.getLegalName(), profile.getPhotoUrl(), identityStatus(profile));
     }
 
-    /** Identity-only signal (government ID + selfie) for the rider-facing "verified driver" badge - not the full six-item verification gate that RouteService.post() checks. */
+    /** Identity-only signal (government ID) for display - not the verification gate that RouteService.post() checks. */
     private static VerificationStatus identityStatus(DriverProfile profile) {
-        if (profile.getGovernmentIdStatus() == VerificationStatus.REJECTED || profile.getSelfieStatus() == VerificationStatus.REJECTED) {
+        if (profile.getGovernmentIdStatus() == VerificationStatus.REJECTED) {
             return VerificationStatus.REJECTED;
         }
-        if (profile.getGovernmentIdStatus() == VerificationStatus.APPROVED && profile.getSelfieStatus() == VerificationStatus.APPROVED) {
+        if (profile.getGovernmentIdStatus() == VerificationStatus.APPROVED) {
             return VerificationStatus.APPROVED;
         }
         return VerificationStatus.PENDING;

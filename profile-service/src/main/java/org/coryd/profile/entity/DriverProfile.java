@@ -50,24 +50,6 @@ public class DriverProfile extends BaseEntity {
 
     private String governmentIdRejectionReason;
 
-    private String selfieUrl;
-
-    private String selfiePublicId;
-
-    @Enumerated(EnumType.STRING)
-    @Builder.Default
-    @Column(nullable = false, length = 20)
-    private VerificationStatus selfieStatus = VerificationStatus.PENDING;
-
-    private String selfieRejectionReason;
-
-    /**
-     * When the driver last sent a selfie in. Kept separately from selfieUrl because approving a
-     * selfie deletes the image and nulls the URL - the submission still happened, and the
-     * onboarding checklist has to keep saying so.
-     */
-    private Instant selfieSubmittedAt;
-
     /** Set once, the first time this driver ever reaches overallStatus APPROVED - never moves
      * after that, even if a later rejection + re-approval cycle happens. "Verified Since" on the
      * Verification Status screen. */

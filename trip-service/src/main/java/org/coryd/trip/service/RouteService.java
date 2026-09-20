@@ -582,8 +582,8 @@ public class RouteService {
         ProfileServiceClient.DriverOnboarding onboarding = profileServiceClient.fetchOnboarding(cache.getDriverId());
         if (!onboarding.identityMeets(requireApproved)) {
             throw new BadRequestException(requireApproved
-                    ? "Your government ID and selfie are still being reviewed - you can post routes once they are approved"
-                    : "Upload your government ID and selfie before posting a route");
+                    ? "Your government ID is still being reviewed - you can post routes once it is approved"
+                    : "Upload your government ID before posting a route");
         }
         if (!onboarding.vehicleMeets(requireApproved)) {
             throw new BadRequestException(requireApproved
@@ -654,7 +654,7 @@ public class RouteService {
 
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
-     * DriverSummary.verificationStatus, which is identity-only (government ID + selfie) and would
+     * DriverSummary.verificationStatus, which is identity-only and would
      * show a green tick on a driver operating under the document grace window.
      */
     private boolean isFullyVerified(String driverId) {
