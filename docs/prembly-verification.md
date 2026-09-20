@@ -26,14 +26,19 @@ on working exactly as it did before this existed.
 
 1. Create an account at [prembly.com](https://prembly.com) and complete their business KYC. They
    ask for CAC documents — Kinetum Global Solutions Ltd, RC 9825799.
-2. Take the **sandbox** secret key from the dashboard first. Sandbox is free and answers with fixed
-   test data, so the whole flow can be exercised without spending anything.
-3. Fund the wallet and switch to the live key only once the sandbox flow is right. Prembly bills
-   per successful lookup, and the per-check caching below is what keeps that bill sane.
+2. Take the **test** secret key from the dashboard first. It answers with fixed test data, so the
+   whole flow can be exercised without spending anything.
+3. Fund the wallet and swap in the live key once the test flow is right. Prembly bills per
+   successful lookup, and the per-check caching below is what keeps that bill sane.
+
+Test and live share the same host, `https://api.prembly.com` — **the key is the only difference**.
+There is no separate sandbox URL to point at, and no base-url change when you go live. The flip
+side is that a live key in a staging `.env` will bill you for real, so treat the key as the
+environment switch it actually is.
 
 ```bash
 PREMBLY_ENABLED=true
-PREMBLY_BASE_URL=https://sandbox.prembly.com    # https://api.prembly.com when live
+PREMBLY_BASE_URL=https://api.prembly.com        # same for test and live
 PREMBLY_API_KEY=<secret key>
 PREMBLY_NAME_MATCH_THRESHOLD=0.85
 PREMBLY_CROSS_CHECK_VEHICLE=true

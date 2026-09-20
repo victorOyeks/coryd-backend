@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component;
 /**
  * Prembly is off by default: without a key every check would fail, and a failed check must not
  * block a driver, so running with it disabled is the same as running the way we did before.
- * Point the base URL at the sandbox until the live key is issued - the key itself decides which
- * environment Prembly answers as, so a live key against the sandbox URL is the mistake to avoid.
+ * Test and live share one host - the key alone decides which of the two Prembly answers as, so
+ * moving to production is a key swap and nothing else.
  */
 @Getter
 @Setter
@@ -19,7 +19,7 @@ public class PremblyProperties {
 
     private boolean enabled = false;
 
-    private String baseUrl = "https://sandbox.prembly.com";
+    private String baseUrl = "https://api.prembly.com";
 
     /** Sent as x-api-key. Prembly explicitly wants no Authorization header alongside it. */
     private String apiKey;

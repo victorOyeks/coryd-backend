@@ -53,10 +53,10 @@ services:
 
 # Driver identity checks (FRSC driver's licence, vehicle plate register). Off unless a key is
 # set: a check that cannot run leaves the item pending for ops, which is exactly how it behaved
-# before this existed. Point base-url at the sandbox until Prembly issues the live key.
+# before this existed. Test and live share one host; the key alone decides which you get.
 prembly:
   enabled: ${PREMBLY_ENABLED:false}
-  base-url: ${PREMBLY_BASE_URL:https://sandbox.prembly.com}
+  base-url: ${PREMBLY_BASE_URL:https://api.prembly.com}
   api-key: ${PREMBLY_API_KEY:}
   name-match-threshold: ${PREMBLY_NAME_MATCH_THRESHOLD:0.85}
   cross-check-vehicle-details: ${PREMBLY_CROSS_CHECK_VEHICLE:true}
