@@ -28,8 +28,8 @@ GET    /profile/riders/me/favorite-drivers              → the rider's own list
 ```json
 {
   "data": [
-    { "userId": "usr_driver_9", "legalName": "Chidi Eze", "photoUrl": "https://...", "verificationStatus": "APPROVED" },
-    { "userId": "usr_driver_4", "legalName": "Femi Adeyemi", "photoUrl": null, "verificationStatus": "PENDING" }
+    { "userId": "usr_driver_9", "firstName": "Chidi", "lastName": "Eze", "photoUrl": "https://...", "verificationStatus": "APPROVED" },
+    { "userId": "usr_driver_4", "firstName": "Femi", "lastName": "Adeyemi", "photoUrl": null, "verificationStatus": "PENDING" }
   ]
 }
 ```
@@ -47,8 +47,8 @@ This is the picker for step 2 below — every rider who has favourited the calli
 ```json
 {
   "data": [
-    { "userId": "usr_rider_1", "fullName": "Adaeze Okafor", "photoUrl": "https://..." },
-    { "userId": "usr_rider_2", "fullName": "Tunde Bakare", "photoUrl": null }
+    { "userId": "usr_rider_1", "firstName": "Adaeze", "lastName": "Okafor", "photoUrl": "https://..." },
+    { "userId": "usr_rider_2", "firstName": "Tunde", "lastName": "Bakare", "photoUrl": null }
   ]
 }
 ```

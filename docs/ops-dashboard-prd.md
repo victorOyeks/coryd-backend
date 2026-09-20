@@ -145,10 +145,12 @@ longest-waiting driver is handled first.
 navigating.
 
 *Acceptance criteria*
-- Government ID image and selfie shown **side by side**, both zoomable — comparing faces is the task
+- Driver's licence image, zoomable, shown beside the FRSC result for that licence
 - Vehicle exterior and interior photos, zoomable
 - Vehicle details: make, model, year, colour, plate number, seat capacity, AC declared/confirmed
 - Per-item status, previous rejection reason if any, and submission timestamp
+- `providerChecks`: what FRSC and the plate register said, with the name-match score. A
+  `NAME_MISMATCH` must show both names side by side — that comparison *is* the decision
 - Keyboard navigation to the next driver without returning to the list
 
 **US-2.3** As an ops admin, I want to approve or reject all items in one action, so review is fast.
@@ -170,11 +172,16 @@ mistake them for new submissions.
 
 ### Three system behaviours that constrain the design
 
-1. **Approving a selfie permanently deletes the image.** It is purged from storage on approval for
-   privacy. An approved selfie can never be displayed again.
+1. **Approving an item permanently deletes its image.** Licence, vehicle photos and documents are
+   purged from storage on approval for privacy, and can never be displayed again.
 2. **Resubmission resets status to `PENDING`.** Any edit before approval does the same.
 3. **`verifiedSince` is set once, on first-ever approval, and never moves** — it is a "verified
    since" date, not a last-reviewed date.
+4. **A licence that matches FRSC approves itself.** Those drivers never reach this queue, so what
+   ops sees is the exceptions: mismatches, unknown licences, and everything the provider could not
+   answer. Design the queue for that population, not for the average driver.
+5. **A failed provider check never rejects anyone.** `PROVIDER_ERROR` means the provider was
+   unreachable, which is our problem — the row must not read as a strike against the driver.
 
 *API:* `GET /profile/drivers/pending-verification` · `GET /profile/drivers/{driverId}/verification-status`
 · `PATCH /profile/drivers/{driverId}/verification`
@@ -474,7 +481,7 @@ refresh without a manual reload.
 **Performance.** Queue and list screens must stay usable at thousands of rows — server-side paging,
 filtering and sorting.
 
-**Security.** `OPS_ADMIN` only. The console exposes government ID images, selfies, phone numbers and
+**Security.** `OPS_ADMIN` only. The console exposes driver's licence images, phone numbers and
 bank details, so it needs session timeout, and ideally 2FA and IP restriction before it holds real
 user data.
 

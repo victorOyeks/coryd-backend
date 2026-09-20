@@ -32,6 +32,8 @@ Three consequences to design around:
   "data": {
     "userId": "ff293fca-6f29-4033-ac38-46942aa66ec9",
     "fullName": "Victor",
+    "firstName": "Victor",
+    "lastName": "Oyekanmi",
     "phone": "+2349035911994",
     "activeRole": "RIDER",
     "roles": ["RIDER", "DRIVER"],
@@ -43,7 +45,8 @@ Three consequences to design around:
 }
 ```
 
-- **`fullName`** — despite the key, this is the **first name only** (`"Victor"`, not `"Victor Oyekanmi"`). The key is kept for clients already bound to it. Use it directly for greetings; the full legal name lives in profile-service.
+- **`fullName`** — despite the key, this is the **first name only** (`"Victor"`, not `"Victor Oyekanmi"`). The key is kept for clients already bound to it.
+- **`firstName` / `lastName`** — the name as two fields, which is how it is now stored everywhere. Prefer these. Greet with `firstName`; join the two when you need the whole name. `lastName` is null for an account that only ever gave one name.
 - **`activeRole`** — what this token is scoped to. Drive your UI mode off this.
 - **`roles`** — everything the account holds. Show the "Switch to Driver" button only when `DRIVER` is missing from this; show a mode toggle when both are present.
 - **Always replace both tokens.** Every endpoint here mints a fresh pair and the old access token keeps its old `activeRole`, so reusing it silently leaves you in the wrong mode.
@@ -193,7 +196,7 @@ GET /auth/onboarding-status     ← authenticated
 
 | Endpoint | Auth | Notes |
 |---|---|---|
-| `GET /auth/me` | ✅ | `userId`, `fullName`, `phone` — note `fullName` here is the **full** name, unlike the auth response. Only place a user's own phone is available |
+| `GET /auth/me` | ✅ | `userId`, `fullName`, `firstName`, `lastName`, `phone` — note `fullName` here is the **full** name, unlike the auth response. Only place a user's own phone is available |
 | `POST /auth/change-password` | ✅ | `{ currentPassword, newPassword, confirmPassword }` |
 | `POST /auth/forgot-password` | ✖ | `{ phone }` — always returns success, even for an unknown number, so it can't be used to probe which numbers are registered |
 | `POST /auth/reset-password` | ✖ | `{ phone, code, newPassword, confirmPassword }` — OTP-based. **Revokes every existing session** on success, so the user is logged out everywhere and must sign in again |
