@@ -7,6 +7,7 @@ import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.util.Names;
 import org.coryd.common.exception.RoleNotHeldException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
@@ -331,7 +332,7 @@ public class AuthService {
     public UserContactResponse getMyContact(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
-        return new UserContactResponse(user.getId(), user.getFullName(), user.getFirstName(), user.getLastName(), user.getPhone());
+        return new UserContactResponse(user.getId(), Names.join(user.getFirstName(), user.getLastName()), user.getFirstName(), user.getLastName(), user.getPhone());
     }
 
     /**

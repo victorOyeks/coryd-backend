@@ -3,6 +3,7 @@ package org.coryd.identity.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.util.Names;
 import org.coryd.identity.dto.UserContactResponse;
 import org.coryd.identity.entity.User;
 import org.coryd.identity.repository.UserRepository;
@@ -22,7 +23,7 @@ public class UserService {
     public UserContactResponse getContact(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return new UserContactResponse(user.getId(), user.getFullName(), user.getFirstName(), user.getLastName(), user.getPhone());
+        return new UserContactResponse(user.getId(), Names.join(user.getFirstName(), user.getLastName()), user.getFirstName(), user.getLastName(), user.getPhone());
     }
 
     /**

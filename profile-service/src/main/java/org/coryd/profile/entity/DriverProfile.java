@@ -12,7 +12,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
-import org.coryd.common.util.Names;
 import org.coryd.common.enums.VerificationStatus;
 
 import java.time.Instant;
@@ -37,10 +36,6 @@ public class DriverProfile extends BaseEntity {
 
     @Column(length = 100)
     private String lastName;
-
-    public String getLegalName() {
-        return Names.join(firstName, lastName);
-    }
 
     private String photoUrl;
 

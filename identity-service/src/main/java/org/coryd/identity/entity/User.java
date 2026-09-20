@@ -17,7 +17,6 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.UserRole;
-import org.coryd.common.util.Names;
 
 import java.time.Instant;
 import java.util.HashSet;
@@ -40,11 +39,6 @@ public class User extends BaseEntity {
 
     @Column(length = 100)
     private String lastName;
-
-    /** Derived for display and cross-service payloads - the columns stay split so a surname can be matched on its own. */
-    public String getFullName() {
-        return Names.join(firstName, lastName);
-    }
 
     /** Set the moment verify-otp succeeds - lets onboarding-status distinguish "never verified" from later incomplete steps. */
     private Instant phoneVerifiedAt;
