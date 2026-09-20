@@ -8,7 +8,7 @@ public record VehicleRegistrationRequest(
         @NotBlank String make,
         @NotBlank String model,
         @NotNull Integer year,
-        String color,
+        @NotBlank String color,
         @NotBlank String plateNumber,
         @NotNull @Positive Integer seatCapacity,
         @NotBlank String exteriorPhotoUrl,

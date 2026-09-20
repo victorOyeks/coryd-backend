@@ -13,8 +13,15 @@ public record VerificationStatusResponse(
         VehicleRegistrationStatus vehicleRegistration,
         List<DocumentStatus> documents,
         VerificationStatus overallStatus,
-        Instant verifiedSince
+        Instant verifiedSince,
+        List<ProviderCheck> providerChecks
 ) {
+    /** What an identity provider said about this driver, and when. Empty when the provider is off
+     * or has not been asked yet. Advisory only: ops still decides, this is the evidence. */
+    public record ProviderCheck(VerificationCheckType type, VerificationCheckOutcome outcome,
+                                Double nameMatchScore, String summary, Instant checkedAt) {
+    }
+
     public record ItemStatus(VerificationStatus status, String rejectionReason, String url) {
     }
 

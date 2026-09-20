@@ -23,6 +23,7 @@ import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.repository.DriverDocumentRepository;
 import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
+import org.coryd.profile.repository.VerificationCheckRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +50,7 @@ public class VerificationAggregationService {
     private final VehicleRepository vehicleRepository;
     private final DriverDocumentRepository driverDocumentRepository;
     private final CloudinaryService cloudinaryService;
+    private final VerificationCheckRepository verificationCheckRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     public VerificationStatusResponse getStatus(String driverId) {
@@ -68,7 +71,8 @@ public class VerificationAggregationService {
                                 vehicle.getExteriorPhotoUrl(), vehicle.getInteriorPhotoUrl(), vehicle.isHasAC(), vehicle.isAcConfirmedWorking())),
                 documentStatuses(documents),
                 computeOverallStatus(profile, vehicle, documents),
-                profile == null ? null : profile.getVerifiedSince()
+                profile == null ? null : profile.getVerifiedSince(),
+                providerChecks(driverId)
         );
     }
 
@@ -127,6 +131,17 @@ public class VerificationAggregationService {
                             profile == null ? null : profile.getLastName(),
                             entry.getValue());
                 })
+                .toList();
+    }
+
+    /** Newest first - a re-checked licence leaves the superseded row behind, and ops wants the current one. */
+    private List<VerificationStatusResponse.ProviderCheck> providerChecks(String driverId) {
+        return verificationCheckRepository.findByDriverId(driverId).stream()
+                .map(check -> new VerificationStatusResponse.ProviderCheck(
+                        check.getCheckType(), check.getOutcome(), check.getNameMatchScore(),
+                        check.getProviderSummary(), check.getUpdatedAt()))
+                .sorted(Comparator.comparing(VerificationStatusResponse.ProviderCheck::checkedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 
