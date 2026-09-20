@@ -26,14 +26,13 @@ public class PremblyClient {
     private final RestClient restClient;
 
     public PremblyClient(PremblyProperties properties) {
-        RestClient.Builder builder = HttpTimeouts.builder(HttpTimeouts.DEFAULT_CONNECT_TIMEOUT, READ_TIMEOUT)
+        // The secret key is the whole of Prembly's auth - they are explicit that no other
+        // authorization header should be sent.
+        this.restClient = HttpTimeouts.builder(HttpTimeouts.DEFAULT_CONNECT_TIMEOUT, READ_TIMEOUT)
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("x-api-key", properties.getApiKey() == null ? "" : properties.getApiKey())
-                .defaultHeader("accept", "application/json");
-        if (properties.getAppId() != null && !properties.getAppId().isBlank()) {
-            builder = builder.defaultHeader("app-id", properties.getAppId());
-        }
-        this.restClient = builder.build();
+                .defaultHeader("accept", "application/json")
+                .build();
     }
 
     /**

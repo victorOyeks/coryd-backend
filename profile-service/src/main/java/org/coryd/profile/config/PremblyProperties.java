@@ -24,9 +24,6 @@ public class PremblyProperties {
     /** Sent as x-api-key. Prembly explicitly wants no Authorization header alongside it. */
     private String apiKey;
 
-    /** Some Prembly tenants also require app-id; left blank it simply isn't sent. */
-    private String appId;
-
     /**
      * How close the FRSC name has to be to what the driver typed, 0-1. Names come back from FRSC
      * uppercased and sometimes with the middle name in the first-name field, so an exact match is

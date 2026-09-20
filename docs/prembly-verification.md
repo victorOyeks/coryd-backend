@@ -35,7 +35,6 @@ on working exactly as it did before this existed.
 PREMBLY_ENABLED=true
 PREMBLY_BASE_URL=https://sandbox.prembly.com    # https://api.prembly.com when live
 PREMBLY_API_KEY=<secret key>
-PREMBLY_APP_ID=                                 # only if your tenant requires it
 PREMBLY_NAME_MATCH_THRESHOLD=0.85
 PREMBLY_CROSS_CHECK_VEHICLE=true
 ```
@@ -87,9 +86,9 @@ correct: it is a different licence.
 
 ## Operating it
 
-Checks run after the triggering transaction commits, on a 2–4 thread pool with a bounded queue. If
-the queue overflows the check is dropped — the item simply stays pending for ops, which is where an
-unchecked item belongs anyway.
+Checks run off the request thread on a 2–4 thread pool with a bounded queue, so a driver saving
+their profile never waits on FRSC. If the queue overflows the check is dropped — the item simply
+stays pending for ops, which is where an unchecked item belongs anyway.
 
 `GET /profile/drivers/{driverId}/verification-status` returns `providerChecks`, the evidence behind
 an automatic approval and the reason behind anything sent to manual review.
