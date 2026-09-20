@@ -62,14 +62,15 @@ public class RiderProfileService {
             profile = RiderProfile.builder().userId(userId).build();
         }
 
-        profile.setFullName(request.fullName());
+        profile.setFirstName(request.firstName());
+        profile.setLastName(request.lastName());
         profile.setEmail(request.email());
         profile.setPhotoUrl(request.photoUrl());
         profile.setEmergencyContactName(request.emergencyContactName());
         profile.setEmergencyContactPhone(request.emergencyContactPhone());
 
         RiderProfile saved = riderProfileRepository.save(profile);
-        identityServiceClient.syncFullName(userId, saved.getFullName());
+        identityServiceClient.syncName(userId, saved.getFirstName(), saved.getLastName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.RIDER_PROFILE_CREATED, RiderProfileCreatedEvent.builder().riderId(userId).build());
         }

@@ -131,7 +131,7 @@ public class WalletFeedRepository {
                 (BigDecimal) row[6],
                 (BigDecimal) row[7],
                 // Identity only at this layer - the name/photo are filled in per page, not per row.
-                riderId == null ? null : new WalletTransactionItem.Rider(riderId, null, null),
+                riderId == null ? null : new WalletTransactionItem.Rider(riderId, null, null, null),
                 (BigDecimal) row[9],
                 row[10] == null ? null : PayoutStatus.valueOf((String) row[10]),
                 (String) row[11],

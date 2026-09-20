@@ -12,7 +12,6 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.security.JwtUtil;
-import org.coryd.common.util.Names;
 import org.coryd.common.util.PhoneNumbers;
 import org.coryd.identity.client.ProfileServiceClient;
 import org.coryd.identity.dto.AddRoleRequest;
@@ -332,7 +331,7 @@ public class AuthService {
     public UserContactResponse getMyContact(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
-        return new UserContactResponse(user.getId(), user.getFullName(), user.getPhone());
+        return new UserContactResponse(user.getId(), user.getFullName(), user.getFirstName(), user.getLastName(), user.getPhone());
     }
 
     /**
@@ -502,7 +501,7 @@ public class AuthService {
      *                 one lineage.
      */
     private AuthResponse issueTokens(User user, UserRole activeRole, String deviceId, String familyId) {
-        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFullName(), activeRole);
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(), activeRole);
 
         String refreshTokenValue = UUID.randomUUID().toString();
         refreshTokenRepository.save(RefreshToken.builder()
@@ -520,7 +519,7 @@ public class AuthService {
 
     /** A new access token against an existing, unchanged refresh token - the retry path in {@link #handleSpentToken}. */
     private AuthResponse issueAccessTokenFor(User user, RefreshToken refreshToken) {
-        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFullName(),
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(),
                 refreshToken.getActiveRole());
         return buildAuthResponse(user, refreshToken.getActiveRole(), accessToken, refreshToken.getToken(),
                 refreshToken.getExpiresAt());
@@ -531,9 +530,10 @@ public class AuthService {
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
         long expiresIn = jwtUtil.getExpirationMs() / 1000;
         long refreshExpiresIn = Math.max(0, Duration.between(Instant.now(), refreshExpiresAt).getSeconds());
-        // fullName carries only the first name - the key stays for the clients already bound to
-        // it, the JWT claim keeps the full name for service-to-service use.
-        return new AuthResponse(user.getId(), Names.firstName(user.getFullName()), user.getPhone(), activeRole.name(), roleNames,
+        // fullName carries only the first name - the key stays for the clients already bound to it,
+        // with firstName/lastName alongside it for anything that needs the surname on its own.
+        return new AuthResponse(user.getId(), user.getFirstName(), user.getFirstName(), user.getLastName(),
+                user.getPhone(), activeRole.name(), roleNames,
                 accessToken, expiresIn, refreshTokenValue, refreshExpiresIn);
     }
 

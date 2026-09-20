@@ -76,7 +76,7 @@ public class ProfileServiceClient {
         public static final BillingContact EMPTY = new BillingContact(null, null);
     }
 
-    public record RiderSummaryItem(String userId, String fullName, String photoUrl) {
+    public record RiderSummaryItem(String userId, String firstName, String lastName, String photoUrl) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

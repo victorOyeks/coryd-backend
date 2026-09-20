@@ -14,7 +14,8 @@ public record DriverProfileResponse(
         Instant createdAt,
         Instant updatedAt,
         String userId,
-        String legalName,
+        String firstName,
+        String lastName,
         String photoUrl,
         String email,
         String phone,
@@ -28,7 +29,7 @@ public record DriverProfileResponse(
     public static DriverProfileResponse from(DriverProfile profile, String phone) {
         return new DriverProfileResponse(
                 profile.getId(), profile.getCustomId(), profile.getCreatedAt(), profile.getUpdatedAt(),
-                profile.getUserId(), profile.getLegalName(), profile.getPhotoUrl(), profile.getEmail(), phone,
+                profile.getUserId(), profile.getFirstName(), profile.getLastName(), profile.getPhotoUrl(), profile.getEmail(), phone,
                 profile.getDateOfBirth(), profile.getGovernmentIdUrl(), profile.getIdNumber(),
                 profile.getGovernmentIdStatus(), profile.getGovernmentIdRejectionReason(),
                 profile.getVerifiedSince()

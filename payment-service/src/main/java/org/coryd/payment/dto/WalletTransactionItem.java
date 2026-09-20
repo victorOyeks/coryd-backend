@@ -35,10 +35,10 @@ public record WalletTransactionItem(
         BankAccount bankAccount
 ) {
 
-    /** The rider who paid for this trip. fullName/photoUrl come from profile-service and are null
+    /** The rider who paid for this trip. The name/photo come from profile-service and are null
      * if that lookup failed or the rider has no profile yet - riderId is always present on rows
      * recorded after the rider_id column was added. */
-    public record Rider(String riderId, String fullName, String photoUrl) {
+    public record Rider(String riderId, String firstName, String lastName, String photoUrl) {
     }
 
     /** The bank account a withdrawal paid out to, as it was at the time of the withdrawal. Null on

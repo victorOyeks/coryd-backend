@@ -73,7 +73,8 @@ public class DataSeeder implements ApplicationRunner {
         String driverId = identityAuthClient.resolveUserId(driver.phone(), SeedFixtures.SEED_PASSWORD, UserRole.DRIVER);
 
         driverProfileService.updateMine(driverId, new UpdateDriverProfileRequest(
-                driver.fullName(),
+                driver.firstName(),
+                driver.lastName(),
                 null,
                 "driver" + index + "@example.com",
                 LocalDate.of(1995, 1, 1),
@@ -120,7 +121,8 @@ public class DataSeeder implements ApplicationRunner {
     private void seedRider(SeedFixtures.SeedPerson rider) {
         String riderId = identityAuthClient.resolveUserId(rider.phone(), SeedFixtures.SEED_PASSWORD, UserRole.RIDER);
         riderProfileService.updateMine(riderId, new UpdateRiderProfileRequest(
-                rider.fullName(),
+                rider.firstName(),
+                rider.lastName(),
                 rider.fullName().toLowerCase().replace(" ", "") + "@example.com",
                 null,
                 null,

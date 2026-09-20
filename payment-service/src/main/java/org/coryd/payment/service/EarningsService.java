@@ -133,7 +133,7 @@ public class EarningsService {
             return item;
         }
         return item.withRider(new WalletTransactionItem.Rider(
-                item.rider().riderId(), profile.fullName(), profile.photoUrl()));
+                item.rider().riderId(), profile.firstName(), profile.lastName(), profile.photoUrl()));
     }
 
     /** Dashboard's two earnings tiles - lifetimeNet isn't a stored column, it's derived here rather than on every read of the raw account row. */

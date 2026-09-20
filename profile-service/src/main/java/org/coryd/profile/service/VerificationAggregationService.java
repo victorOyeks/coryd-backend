@@ -116,11 +116,17 @@ public class VerificationAggregationService {
             return List.of();
         }
 
-        Map<String, String> legalNames = driverProfileRepository.findByUserIdIn(new ArrayList<>(pendingByDriver.keySet())).stream()
-                .collect(Collectors.toMap(DriverProfile::getUserId, DriverProfile::getLegalName));
+        Map<String, DriverProfile> profiles = driverProfileRepository.findByUserIdIn(new ArrayList<>(pendingByDriver.keySet())).stream()
+                .collect(Collectors.toMap(DriverProfile::getUserId, profile -> profile));
 
         return pendingByDriver.entrySet().stream()
-                .map(entry -> new PendingVerificationItem(entry.getKey(), legalNames.get(entry.getKey()), entry.getValue()))
+                .map(entry -> {
+                    DriverProfile profile = profiles.get(entry.getKey());
+                    return new PendingVerificationItem(entry.getKey(),
+                            profile == null ? null : profile.getFirstName(),
+                            profile == null ? null : profile.getLastName(),
+                            entry.getValue());
+                })
                 .toList();
     }
 
@@ -213,7 +219,7 @@ public class VerificationAggregationService {
         Vehicle vehicle = primaryVehicle(driverId);
         List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
 
-        boolean profileSubmitted = profile != null && profile.getLegalName() != null && profile.getDateOfBirth() != null;
+        boolean profileSubmitted = profile != null && profile.getFirstName() != null && profile.getDateOfBirth() != null;
         boolean governmentIdSubmitted = profile != null && profile.getGovernmentIdUrl() != null;
         boolean vehicleSubmitted = vehicle != null;
         boolean documentsSubmitted = Arrays.stream(DocumentType.values())

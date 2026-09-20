@@ -7,7 +7,8 @@ import java.util.List;
  * full detail (urls, rejection reasons, etc.) needed to actually make the call. */
 public record PendingVerificationItem(
         String driverId,
-        String legalName,
+        String firstName,
+        String lastName,
         List<ReviewableItem> pendingItems
 ) {
 }

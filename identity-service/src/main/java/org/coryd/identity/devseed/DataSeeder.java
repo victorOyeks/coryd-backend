@@ -32,11 +32,11 @@ public class DataSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        SeedFixtures.RIDERS.forEach(rider -> seedUser(rider.phone(), rider.fullName(), UserRole.RIDER));
-        SeedFixtures.DRIVERS.forEach(driver -> seedUser(driver.phone(), driver.fullName(), UserRole.DRIVER));
+        SeedFixtures.RIDERS.forEach(rider -> seedUser(rider.phone(), rider.firstName(), rider.lastName(), UserRole.RIDER));
+        SeedFixtures.DRIVERS.forEach(driver -> seedUser(driver.phone(), driver.firstName(), driver.lastName(), UserRole.DRIVER));
         // OPS_ADMIN can't be self-assigned via signup/roles-add (AuthService blocks it) - this
         // seeder is the only way to get one in dev/test.
-        seedUser("08000000003", "Test Ops Admin", UserRole.OPS_ADMIN);
+        seedUser("08000000003", "Test", "Ops Admin", UserRole.OPS_ADMIN);
         log.info("Seeded {} riders + {} drivers (phones {}-{} / {}-{}) and 1 ops admin (08000000003) - password: {}",
                 SeedFixtures.RIDERS.size(), SeedFixtures.DRIVERS.size(),
                 SeedFixtures.RIDERS.getFirst().phone(), SeedFixtures.RIDERS.getLast().phone(),
@@ -44,10 +44,11 @@ public class DataSeeder implements ApplicationRunner {
                 SeedFixtures.SEED_PASSWORD);
     }
 
-    private void seedUser(String phone, String fullName, UserRole role) {
+    private void seedUser(String phone, String firstName, String lastName, UserRole role) {
         User user = userRepository.findByPhone(phone)
                 .orElseGet(() -> User.builder().phone(phone).build());
-        user.setFullName(fullName);
+        user.setFirstName(firstName);
+        user.setLastName(lastName);
         user.getRoles().add(role);
         user.setPasswordHash(passwordEncoder.encode(SeedFixtures.SEED_PASSWORD));
         user.setPhoneVerifiedAt(Instant.now());

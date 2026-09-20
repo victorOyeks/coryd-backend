@@ -18,5 +18,6 @@
     <include file="db/changelog/007-backfill-user-full-name.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/008-normalize-user-phone.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/009-device-binding.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/010-split-user-name.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

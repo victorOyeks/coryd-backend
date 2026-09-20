@@ -39,7 +39,7 @@ public class SystemAuthInterceptor implements ClientHttpRequestInterceptor {
 
     private String token() {
         if (cachedToken == null || Instant.now().isAfter(cachedUntil)) {
-            cachedToken = jwtUtil.generateToken(SYSTEM_USER_ID, null, "CoRyd System", UserRole.OPS_ADMIN);
+            cachedToken = jwtUtil.generateToken(SYSTEM_USER_ID, null, "CoRyd", "System", UserRole.OPS_ADMIN);
             cachedUntil = Instant.now()
                     .plusMillis(jwtUtil.getExpirationMs())
                     .minus(REFRESH_MARGIN);

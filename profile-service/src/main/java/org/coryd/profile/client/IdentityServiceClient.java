@@ -45,18 +45,21 @@ public class IdentityServiceClient {
      * response - signup only captures a phone, so identity has no name of its own. Best-effort:
      * a failure here must not fail the profile save.
      */
-    public void syncFullName(String userId, String fullName) {
-        if (fullName == null || fullName.isBlank()) {
+    public void syncName(String userId, String firstName, String lastName) {
+        if (firstName == null || firstName.isBlank()) {
             return;
         }
         try {
+            java.util.Map<String, String> body = new java.util.HashMap<>();
+            body.put("firstName", firstName);
+            body.put("lastName", lastName);
             restClient.put()
-                    .uri("/internal/users/{userId}/full-name", userId)
-                    .body(java.util.Map.of("fullName", fullName))
+                    .uri("/internal/users/{userId}/name", userId)
+                    .body(body)
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {
-            log.warn("Could not sync full name for user {}: {}", userId, e.getMessage());
+            log.warn("Could not sync name for user {}: {}", userId, e.getMessage());
         }
     }
 

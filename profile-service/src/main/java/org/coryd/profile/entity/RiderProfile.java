@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
+import org.coryd.common.util.Names;
 
 
 @Entity
@@ -24,7 +25,14 @@ public class RiderProfile extends BaseEntity {
     private String userId;
 
     @Column(length = 100)
-    private String fullName;
+    private String firstName;
+
+    @Column(length = 100)
+    private String lastName;
+
+    public String getFullName() {
+        return Names.join(firstName, lastName);
+    }
 
     private String email;
 

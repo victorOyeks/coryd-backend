@@ -4,10 +4,12 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.entity.DriverProfile;
 
 /** Lightweight, search-result-safe projection of DriverProfile - deliberately excludes governmentIdUrl. */
-public record DriverSummary(String userId, String legalName, String photoUrl, VerificationStatus verificationStatus) {
+public record DriverSummary(String userId, String firstName, String lastName, String photoUrl,
+                            VerificationStatus verificationStatus) {
 
     public static DriverSummary from(DriverProfile profile) {
-        return new DriverSummary(profile.getUserId(), profile.getLegalName(), profile.getPhotoUrl(), identityStatus(profile));
+        return new DriverSummary(profile.getUserId(), profile.getFirstName(), profile.getLastName(),
+                profile.getPhotoUrl(), identityStatus(profile));
     }
 
     /** Identity-only signal (government ID) for display - not the verification gate that RouteService.post() checks. */

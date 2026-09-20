@@ -9,6 +9,8 @@ import org.coryd.identity.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Objects;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -20,7 +22,7 @@ public class UserService {
     public UserContactResponse getContact(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return new UserContactResponse(user.getId(), user.getFullName(), user.getPhone());
+        return new UserContactResponse(user.getId(), user.getFullName(), user.getFirstName(), user.getLastName(), user.getPhone());
     }
 
     /**
@@ -29,14 +31,28 @@ public class UserService {
      * on every token issue. profile-service pushes this on every profile save.
      */
     @Transactional
-    public void updateFullName(String userId, String fullName) {
+    public void updateName(String userId, String firstName, String lastName) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        if (fullName == null || fullName.isBlank() || fullName.equals(user.getFullName())) {
+        String first = trimToNull(firstName);
+        String last = trimToNull(lastName);
+        if (first == null && last == null) {
             return;
         }
-        user.setFullName(fullName.trim());
+        if (Objects.equals(first, user.getFirstName()) && Objects.equals(last, user.getLastName())) {
+            return;
+        }
+        user.setFirstName(first == null ? user.getFirstName() : first);
+        user.setLastName(last == null ? user.getLastName() : last);
         userRepository.save(user);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

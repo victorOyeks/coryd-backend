@@ -11,7 +11,7 @@ public interface DriverProfileRepository extends JpaRepository<DriverProfile, St
     Optional<DriverProfile> findByUserId(String userId);
     List<DriverProfile> findByUserIdIn(List<String> userIds);
 
-    /** Both government ID and selfie default to PENDING before anything's even uploaded, so status
+    /** Government ID defaults to PENDING before anything is even uploaded, so status
      * alone can't mean "submitted and awaiting a decision" the way it does for Vehicle/DriverDocument
      * (which only exist as rows once submitted) - the URL/submittedAt check is what excludes a
      * driver who simply hasn't gotten to this step yet. */

@@ -6,6 +6,7 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.http.HttpTimeouts;
 import org.coryd.common.security.client.ForwardedAuthInterceptor;
 import org.coryd.common.security.client.InternalApiKeyInterceptor;
+import org.coryd.common.util.Names;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -165,7 +166,10 @@ public class ProfileServiceClient {
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record DriverProfileView(Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Data(String legalName) {
+        private record Data(String firstName, String lastName) {
+            private String legalName() {
+                return Names.join(firstName, lastName);
+            }
         }
     }
 
@@ -207,7 +211,13 @@ public class ProfileServiceClient {
         }
     }
 
-    public record DriverSummaryItem(String userId, String legalName, String photoUrl, VerificationStatus verificationStatus) {
+    public record DriverSummaryItem(String userId, String firstName, String lastName, String photoUrl,
+                                    VerificationStatus verificationStatus) {
+
+        /** Derived - display sites want one string, identity checks want the surname on its own. */
+        public String legalName() {
+            return Names.join(firstName, lastName);
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -224,7 +234,11 @@ public class ProfileServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record RiderSummaryItem(String userId, String fullName, String photoUrl) {
+    public record RiderSummaryItem(String userId, String firstName, String lastName, String photoUrl) {
+
+        public String fullName() {
+            return Names.join(firstName, lastName);
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

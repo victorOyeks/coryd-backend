@@ -2,6 +2,7 @@ package org.coryd.common.security;
 
 import lombok.Getter;
 import org.coryd.common.enums.UserRole;
+import org.coryd.common.util.Names;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -20,14 +21,21 @@ public class CoRydUserDetails implements UserDetails {
 
     private final String userId;
     private final String phone;
-    private final String fullName;
+    private final String firstName;
+    private final String lastName;
     private final UserRole activeRole;
 
-    public CoRydUserDetails(String userId, String phone, String fullName, UserRole activeRole) {
+    public CoRydUserDetails(String userId, String phone, String firstName, String lastName, UserRole activeRole) {
         this.userId = userId;
         this.phone = phone;
-        this.fullName = fullName;
+        this.firstName = firstName;
+        this.lastName = lastName;
         this.activeRole = activeRole;
+    }
+
+    /** Derived, not stored - the token carries the two parts. */
+    public String getFullName() {
+        return Names.join(firstName, lastName);
     }
 
     @Override

@@ -12,7 +12,8 @@ public record RiderProfileResponse(
         Instant createdAt,
         Instant updatedAt,
         String userId,
-        String fullName,
+        String firstName,
+        String lastName,
         String email,
         String phone,
         String photoUrl,
@@ -22,7 +23,7 @@ public record RiderProfileResponse(
     public static RiderProfileResponse from(RiderProfile profile, String phone) {
         return new RiderProfileResponse(
                 profile.getId(), profile.getCustomId(), profile.getCreatedAt(), profile.getUpdatedAt(),
-                profile.getUserId(), profile.getFullName(), profile.getEmail(), phone, profile.getPhotoUrl(),
+                profile.getUserId(), profile.getFirstName(), profile.getLastName(), profile.getEmail(), phone, profile.getPhotoUrl(),
                 profile.getEmergencyContactName(), profile.getEmergencyContactPhone()
         );
     }

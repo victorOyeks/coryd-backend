@@ -63,7 +63,8 @@ public class DriverProfileService {
             profile = DriverProfile.builder().userId(userId).build();
         }
 
-        profile.setLegalName(request.legalName());
+        profile.setFirstName(request.firstName());
+        profile.setLastName(request.lastName());
         profile.setPhotoUrl(request.photoUrl());
         profile.setEmail(request.email());
         profile.setDateOfBirth(request.dateOfBirth());
@@ -78,7 +79,7 @@ public class DriverProfileService {
         }
 
         DriverProfile saved = driverProfileRepository.save(profile);
-        identityServiceClient.syncFullName(userId, saved.getLegalName());
+        identityServiceClient.syncName(userId, saved.getFirstName(), saved.getLastName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
         }

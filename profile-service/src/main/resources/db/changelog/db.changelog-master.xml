@@ -22,5 +22,6 @@
     <include file="db/changelog/011-driver-verified-since.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/012-favorite-drivers.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/013-drop-driver-selfie.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/014-split-profile-names.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

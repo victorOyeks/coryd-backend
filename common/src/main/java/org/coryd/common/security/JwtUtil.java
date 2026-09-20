@@ -6,6 +6,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
+import org.coryd.common.util.Names;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,11 +32,12 @@ public class JwtUtil {
         return expirationMs;
     }
 
-    public String generateToken(String userId, String phone, String fullName, UserRole activeRole) {
+    public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole) {
         return Jwts.builder()
                 .subject(userId)
                 .claim("phone", phone)
-                .claim("fullName", fullName)
+                .claim("firstName", firstName)
+                .claim("lastName", lastName)
                 .claim("role", activeRole.name())
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
@@ -61,12 +63,21 @@ public class JwtUtil {
         }
     }
 
+    /** Tokens minted before the name split carry a single fullName claim, so fall back to splitting it. */
     public CoRydUserDetails extractUserDetails(String token) {
         Claims claims = extractAllClaims(token);
+        String firstName = claims.get("firstName", String.class);
+        String lastName = claims.get("lastName", String.class);
+        if (firstName == null && lastName == null) {
+            String legacy = claims.get("fullName", String.class);
+            firstName = Names.firstName(legacy);
+            lastName = Names.lastName(legacy);
+        }
         return new CoRydUserDetails(
                 claims.getSubject(),
                 claims.get("phone", String.class),
-                claims.get("fullName", String.class),
+                firstName,
+                lastName,
                 UserRole.valueOf(claims.get("role", String.class))
         );
     }
