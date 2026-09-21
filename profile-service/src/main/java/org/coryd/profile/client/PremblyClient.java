@@ -2,13 +2,17 @@ package org.coryd.profile.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.http.HttpTimeouts;
 import org.coryd.profile.config.PremblyProperties;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Thin transport over Prembly's verification endpoints. Every failure - timeout, rate limit, a
@@ -24,8 +28,10 @@ public class PremblyClient {
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
 
     private final RestClient restClient;
+    private final ObjectMapper objectMapper;
 
-    public PremblyClient(PremblyProperties properties) {
+    public PremblyClient(PremblyProperties properties, ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
         // The secret key is the whole of Prembly's auth - they are explicit that no other
         // authorization header should be sent.
         this.restClient = HttpTimeouts.builder(HttpTimeouts.DEFAULT_CONNECT_TIMEOUT, READ_TIMEOUT)
@@ -41,26 +47,45 @@ public class PremblyClient {
      * near-miss can be judged instead of guessed at.
      */
     public DriversLicenceResult verifyDriversLicence(String licenceNumber, String firstName, String lastName) {
-        return post("/verification/drivers_license/advance/v2",
-                java.util.Map.of("number", licenceNumber, "first_name", firstName, "last_name", lastName),
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("number", licenceNumber);
+        fields.put("first_name", firstName);
+        fields.put("last_name", lastName);
+        return post("/verification/drivers_license/advance/v2", fields,
                 DriversLicenceResult.class, "driver's licence " + licenceNumber);
     }
 
     public VehicleResult verifyPlateNumber(String plateNumber) {
-        return post("/verification/vehicle",
-                java.util.Map.of("vehicle_number", plateNumber),
-                VehicleResult.class, "plate " + plateNumber);
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("vehicle_number", plateNumber);
+        return post("/verification/vehicle", fields, VehicleResult.class, "plate " + plateNumber);
     }
 
-    private <T> T post(String path, Object body, Class<T> responseType, String subject) {
+    /**
+     * Serialises to a String rather than handing the map to the converter, so the request carries a
+     * Content-Length instead of being chunked - Prembly answered "this field is required" for every
+     * field of a body we definitely sent, which is what a gateway dropping a chunked body looks
+     * like. The content type is stated outright for the same reason: not to be inferred.
+     */
+    private <T> T post(String path, Map<String, String> fields, Class<T> responseType, String subject) {
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(fields);
+        } catch (Exception e) {
+            log.error("Could not build the Prembly request for {}: {}", subject, e.getMessage());
+            return null;
+        }
         try {
             return restClient.post()
                     .uri(path)
-                    .body(body)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
                     .retrieve()
                     .body(responseType);
         } catch (Exception e) {
-            log.warn("Prembly lookup failed for {}: {}", subject, e.getMessage());
+            // The payload is logged because the last failure was unreadable without it - it carries
+            // a licence or plate number, both of which are already in the subject.
+            log.warn("Prembly lookup failed for {} (sent {}): {}", subject, payload, e.getMessage());
             return null;
         }
     }
