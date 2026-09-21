@@ -71,13 +71,13 @@ public class PremblyVerificationService {
 
         if (result == null) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
-                    null, "Prembly did not answer - licence not checked");
+                    null, "Prembly did not answer - licence not checked", null);
             return;
         }
         PremblyClient.DriversLicenceResult.FrscData frsc = result.frscData();
         if (!result.status() || frsc == null) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.NOT_FOUND,
-                    null, "FRSC has no record for this licence number: " + safe(result.detail()));
+                    null, "FRSC has no record for this licence number: " + safe(result.detail()), result.reference());
             return;
         }
 
@@ -87,12 +87,13 @@ public class PremblyVerificationService {
 
         if (score < properties.getNameMatchThreshold()) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.NAME_MISMATCH,
-                    score, "Licence is held by " + onRecord + ", driver entered " + entered);
+                    score, tag(result.sandbox()) + "Licence is held by " + onRecord + ", driver entered " + entered,
+                    result.reference());
             return;
         }
 
         record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.MATCH,
-                score, "FRSC confirmed " + onRecord);
+                score, tag(result.sandbox()) + "FRSC confirmed " + onRecord, result.reference());
         approveGovernmentId(driverId);
     }
 
@@ -116,13 +117,13 @@ public class PremblyVerificationService {
 
         if (result == null) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
-                    null, "Prembly did not answer - plate not checked");
+                    null, "Prembly did not answer - plate not checked", null);
             return;
         }
-        PremblyClient.VehicleResult.Data data = result.data();
+        PremblyClient.VehicleResult.Data data = result.vehicle();
         if (!result.status() || data == null) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.NOT_FOUND,
-                    null, "No vehicle registered against this plate: " + safe(result.detail()));
+                    null, "No vehicle registered against this plate: " + safe(result.detail()), result.reference());
             return;
         }
 
@@ -132,12 +133,13 @@ public class PremblyVerificationService {
         if (properties.isCrossCheckVehicleDetails()
                 && contradicts(declaredMake, data.vehicleName(), declaredColor, data.vehicleColor())) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.DETAILS_MISMATCH,
-                    null, "Plate is registered to a " + onRecord + ", driver declared a " + declared);
+                    null, tag(result.sandbox()) + "Plate is registered to a " + onRecord + ", driver declared a "
+                            + declared, result.reference());
             return;
         }
 
         record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.MATCH,
-                null, "Register confirmed " + onRecord);
+                null, tag(result.sandbox()) + "Register confirmed " + onRecord, result.reference());
     }
 
     private void approveGovernmentId(String driverId) {
@@ -163,8 +165,13 @@ public class PremblyVerificationService {
                 .isPresent();
     }
 
+    /** A sandbox key answers with fixture data for any input, so an approval from one must say so. */
+    private static String tag(boolean sandbox) {
+        return sandbox ? "[SANDBOX] " : "";
+    }
+
     private void record(String driverId, VerificationCheckType type, String subjectKey,
-                        VerificationCheckOutcome outcome, Double score, String summary) {
+                        VerificationCheckOutcome outcome, Double score, String summary, String reference) {
         VerificationCheck check = verificationCheckRepository
                 .findByDriverIdAndCheckTypeAndSubjectKey(driverId, type, subjectKey)
                 .orElseGet(() -> VerificationCheck.builder()
@@ -175,6 +182,7 @@ public class PremblyVerificationService {
         check.setOutcome(outcome);
         check.setNameMatchScore(score);
         check.setProviderSummary(truncate(summary));
+        check.setProviderReference(reference);
         verificationCheckRepository.save(check);
     }
 

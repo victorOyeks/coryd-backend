@@ -90,10 +90,34 @@ public class PremblyClient {
         }
     }
 
+    /**
+     * The live response nests the documented payload one level down, inside "data", and carries an
+     * is_sandbox flag the docs never mention. Both shapes are accepted because the docs have been
+     * wrong about this endpoint more than once, and reading the wrong one silently turns a verified
+     * licence into "no record found".
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record DriversLicenceResult(boolean status, String detail,
                                        @JsonProperty("response_code") String responseCode,
-                                       @JsonProperty("frsc_data") FrscData frscData) {
+                                       @JsonProperty("is_sandbox") boolean sandbox,
+                                       @JsonProperty("frsc_data") FrscData rootFrscData,
+                                       Data data,
+                                       Verification verification) {
+
+        public FrscData frscData() {
+            if (rootFrscData != null) {
+                return rootFrscData;
+            }
+            return data == null ? null : data.frscData();
+        }
+
+        public String reference() {
+            return verification == null ? null : verification.reference();
+        }
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public record Data(@JsonProperty("frsc_data") FrscData frscData) {
+        }
 
         @JsonIgnoreProperties(ignoreUnknown = true)
         public record FrscData(@JsonProperty("driversLicense") String driversLicense,
@@ -107,12 +131,32 @@ public class PremblyClient {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record VehicleResult(boolean status, String detail,
                                 @JsonProperty("response_code") String responseCode,
-                                Data data) {
+                                @JsonProperty("is_sandbox") boolean sandbox,
+                                Data data,
+                                Verification verification) {
+
+        /** Same nesting caveat as the licence response - the fields may be one level deeper. */
+        public Data vehicle() {
+            if (data == null) {
+                return null;
+            }
+            boolean populated = data.vehicleName() != null || data.vehicleNumber() != null;
+            return populated ? data : data.data();
+        }
+
+        public String reference() {
+            return verification == null ? null : verification.reference();
+        }
 
         @JsonIgnoreProperties(ignoreUnknown = true)
         public record Data(@JsonProperty("vehicle_number") String vehicleNumber,
                            @JsonProperty("vehicle_name") String vehicleName,
-                           @JsonProperty("vehicle_color") String vehicleColor) {
+                           @JsonProperty("vehicle_color") String vehicleColor,
+                           Data data) {
         }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Verification(String status, String reference) {
     }
 }
