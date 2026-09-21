@@ -60,9 +60,12 @@ public class PremblyVerificationService {
     public void checkDriversLicence(String driverId, String licenceNumber, String firstName, String lastName) {
         String subject = normalizeKey(licenceNumber);
         if (!properties.isEnabled() || subject == null || isBlank(firstName) || isBlank(lastName)) {
+            log.debug("Skipping licence check for driver {}: enabled={}, licence={}, name present={}",
+                    driverId, properties.isEnabled(), subject != null, !isBlank(firstName) && !isBlank(lastName));
             return;
         }
         if (alreadySettled(driverId, VerificationCheckType.DRIVERS_LICENCE, subject)) {
+            log.debug("Licence {} already checked for driver {} - not spending another lookup", subject, driverId);
             return;
         }
 
@@ -114,9 +117,12 @@ public class PremblyVerificationService {
     public void checkPlateNumber(String driverId, String plateNumber, String declaredMake, String declaredColor) {
         String subject = normalizeKey(plateNumber);
         if (!properties.isEnabled() || subject == null) {
+            log.debug("Skipping plate check for driver {}: enabled={}, plate={}",
+                    driverId, properties.isEnabled(), subject != null);
             return;
         }
         if (alreadySettled(driverId, VerificationCheckType.VEHICLE_PLATE, subject)) {
+            log.debug("Plate {} already checked for driver {} - not spending another lookup", subject, driverId);
             return;
         }
 
@@ -196,6 +202,7 @@ public class PremblyVerificationService {
         check.setProviderSummary(truncate(summary));
         check.setProviderReference(reference);
         verificationCheckRepository.save(check);
+        log.info("Prembly {} check for driver {} on {}: {} - {}", type, driverId, subjectKey, outcome, summary);
     }
 
     /**
