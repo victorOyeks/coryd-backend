@@ -74,10 +74,17 @@ public class PremblyVerificationService {
                     null, "Prembly did not answer - licence not checked", null);
             return;
         }
-        PremblyClient.DriversLicenceResult.FrscData frsc = result.frscData();
-        if (!result.status() || frsc == null) {
+        if (!result.status()) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.NOT_FOUND,
                     null, "FRSC has no record for this licence number: " + safe(result.detail()), result.reference());
+            return;
+        }
+        // Prembly said yes but we could not find the names. That is our parsing, not their record,
+        // and calling it NOT_FOUND would tell ops the opposite of the truth about a real licence.
+        PremblyClient.DriversLicenceResult.FrscData frsc = result.frscData();
+        if (frsc == null) {
+            record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
+                    null, "Prembly verified this licence but the response could not be read", result.reference());
             return;
         }
 
@@ -120,10 +127,15 @@ public class PremblyVerificationService {
                     null, "Prembly did not answer - plate not checked", null);
             return;
         }
-        PremblyClient.VehicleResult.Data data = result.vehicle();
-        if (!result.status() || data == null) {
+        if (!result.status()) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.NOT_FOUND,
                     null, "No vehicle registered against this plate: " + safe(result.detail()), result.reference());
+            return;
+        }
+        PremblyClient.VehicleResult.Data data = result.data();
+        if (data == null) {
+            record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
+                    null, "Prembly verified this plate but the response could not be read", result.reference());
             return;
         }
 
