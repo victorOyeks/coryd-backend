@@ -41,6 +41,7 @@ public class PremblyVerificationService {
     private final PremblyClient premblyClient;
     private final VerificationCheckRepository verificationCheckRepository;
     private final DriverProfileRepository driverProfileRepository;
+    private final VerificationAggregationService verificationAggregationService;
 
     @Transactional(readOnly = true)
     public List<VerificationCheck> checksFor(String driverId) {
@@ -167,6 +168,8 @@ public class PremblyVerificationService {
             }
             profile.setGovernmentIdStatus(VerificationStatus.APPROVED);
             profile.setGovernmentIdRejectionReason(null);
+            // Same purge an ops approval does - an approved licence image is never shown again.
+            verificationAggregationService.purgeGovernmentId(profile);
             driverProfileRepository.save(profile);
             log.info("Auto-approved government ID for driver {} on an FRSC licence match", driverId);
         });

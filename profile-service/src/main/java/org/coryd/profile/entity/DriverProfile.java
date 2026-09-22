@@ -45,6 +45,8 @@ public class DriverProfile extends BaseEntity {
 
     private String governmentIdUrl;
 
+    private String governmentIdPublicId;
+
     private String idNumber;
 
     @Enumerated(EnumType.STRING)

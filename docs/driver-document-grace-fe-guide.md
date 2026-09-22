@@ -487,3 +487,33 @@ the most urgent thing outstanding.
 > **Deploy note:** this is a shared enum. Older clients that switch exhaustively on the three old
 > values will fall through on `IN_REVIEW` — make the mapping tolerant of unknown values before
 > this ships.
+
+---
+
+## Approval destroys the image — send the `publicId`
+
+Approving any verification item deletes its file from Cloudinary and nulls the URL, so it can never
+be displayed again. That already worked for vehicle photos and documents, because those send a
+`publicId` alongside the URL. The government ID did not, so **approved licence images were staying
+live in Cloudinary and readable from the API**.
+
+`PUT /profile/drivers/me` now takes `governmentIdPublicId` beside `governmentIdUrl` — the same
+`publicId` that `POST /profile/media/upload` already returns to you:
+
+```json
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "dateOfBirth": "1990-01-01",
+  "idNumber": "ABC12345YZ00",
+  "governmentIdUrl": "https://res.cloudinary.com/.../coryd/uploads/aaed57b6.jpg",
+  "governmentIdPublicId": "coryd/uploads/aaed57b6"
+}
+```
+
+It is optional, so an older build will not break — but without it the image is never deleted, which
+is the bug. Send it whenever you send `governmentIdUrl`.
+
+**Expect `governmentId.url` to be `null` once the status is `APPROVED`.** Render the approved state
+from the status, never from the presence of a URL — the same rule that already applies to approved
+vehicle photos and documents.

@@ -164,6 +164,9 @@ public class VerificationAggregationService {
                         .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
                 profile.setGovernmentIdStatus(decision.status());
                 profile.setGovernmentIdRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
+                if (decision.status() == VerificationStatus.APPROVED) {
+                    purgeGovernmentId(profile);
+                }
                 driverProfileRepository.save(profile);
             }
             case VEHICLE -> {
@@ -174,8 +177,10 @@ public class VerificationAggregationService {
                 vehicle.setVerificationStatus(decision.status());
                 vehicle.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
                 if (decision.status() == VerificationStatus.APPROVED) {
-                    deleteFromCloudinary(vehicle.getExteriorPhotoPublicId(), "image");
-                    deleteFromCloudinary(vehicle.getInteriorPhotoPublicId(), "image");
+                    deleteFromCloudinary(vehicle.getExteriorPhotoPublicId(),
+                            CloudinaryService.resourceTypeFromUrl(vehicle.getExteriorPhotoUrl()));
+                    deleteFromCloudinary(vehicle.getInteriorPhotoPublicId(),
+                            CloudinaryService.resourceTypeFromUrl(vehicle.getInteriorPhotoUrl()));
                     vehicle.setExteriorPhotoUrl(null);
                     vehicle.setExteriorPhotoPublicId(null);
                     vehicle.setInteriorPhotoUrl(null);
@@ -190,13 +195,22 @@ public class VerificationAggregationService {
                 document.setStatus(decision.status());
                 document.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
                 if (decision.status() == VerificationStatus.APPROVED) {
-                    deleteFromCloudinary(document.getDocumentPublicId(), "raw");
+                    deleteFromCloudinary(document.getDocumentPublicId(),
+                            CloudinaryService.resourceTypeFromUrl(document.getDocumentUrl()));
                     document.setDocumentUrl(null);
                     document.setDocumentPublicId(null);
                 }
                 driverDocumentRepository.save(document);
             }
         }
+    }
+
+    /** Shared with the Prembly auto-approval, which reaches the same state without an ops decision. */
+    void purgeGovernmentId(DriverProfile profile) {
+        deleteFromCloudinary(profile.getGovernmentIdPublicId(),
+                CloudinaryService.resourceTypeFromUrl(profile.getGovernmentIdUrl()));
+        profile.setGovernmentIdUrl(null);
+        profile.setGovernmentIdPublicId(null);
     }
 
     private void deleteFromCloudinary(String publicId, String resourceType) {
@@ -247,7 +261,7 @@ public class VerificationAggregationService {
         List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
 
         boolean profileSubmitted = profile != null && profile.getFirstName() != null && profile.getDateOfBirth() != null;
-        boolean governmentIdSubmitted = profile != null && profile.getGovernmentIdUrl() != null;
+        boolean governmentIdSubmitted = profile != null && profile.getGovernmentIdStatus() != VerificationStatus.PENDING;
         boolean vehicleSubmitted = vehicle != null;
         boolean documentsSubmitted = Arrays.stream(DocumentType.values())
                 .allMatch(type -> findByType(documents, type) != null);

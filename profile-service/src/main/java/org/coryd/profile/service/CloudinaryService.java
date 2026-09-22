@@ -63,6 +63,23 @@ public class CloudinaryService {
         }
     }
 
+    /**
+     * The type is in the URL, right after the cloud name. Getting it wrong is silent: destroy()
+     * answers "not found", which we treat as already-gone, and the asset stays up forever.
+     */
+    public static String resourceTypeFromUrl(String url) {
+        if (url == null) {
+            return "image";
+        }
+        if (url.contains("/raw/upload/")) {
+            return "raw";
+        }
+        if (url.contains("/video/upload/")) {
+            return "video";
+        }
+        return "image";
+    }
+
     /** resourceType defaults to "image" - pass "raw" explicitly to delete a PDF document uploaded above. */
     public void delete(String publicId, String resourceType) {
         if (publicId == null || publicId.isBlank()) {

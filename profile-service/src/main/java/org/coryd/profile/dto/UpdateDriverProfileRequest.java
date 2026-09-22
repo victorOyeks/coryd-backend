@@ -13,6 +13,7 @@ public record UpdateDriverProfileRequest(
         @Email String email,
         @NotNull LocalDate dateOfBirth,
         String governmentIdUrl,
+        String governmentIdPublicId,
         @NotBlank String idNumber
 ) {
 }

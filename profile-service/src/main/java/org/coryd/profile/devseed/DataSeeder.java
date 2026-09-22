@@ -79,6 +79,7 @@ public class DataSeeder implements ApplicationRunner {
                 "driver" + index + "@example.com",
                 LocalDate.of(1995, 1, 1),
                 "https://example.com/coryd-seed/gov-id-" + index + ".jpg",
+                "coryd-seed/gov-id-" + index,
                 "SEED-ID-" + index
         ));
 
