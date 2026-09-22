@@ -14,12 +14,6 @@ public record DriverSummary(String userId, String firstName, String lastName, St
 
     /** Identity-only signal (government ID) for display - not the verification gate that RouteService.post() checks. */
     private static VerificationStatus identityStatus(DriverProfile profile) {
-        if (profile.getGovernmentIdStatus() == VerificationStatus.REJECTED) {
-            return VerificationStatus.REJECTED;
-        }
-        if (profile.getGovernmentIdStatus() == VerificationStatus.APPROVED) {
-            return VerificationStatus.APPROVED;
-        }
-        return VerificationStatus.PENDING;
+        return profile.getGovernmentIdStatus();
     }
 }

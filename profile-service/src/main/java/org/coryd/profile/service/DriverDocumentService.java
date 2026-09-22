@@ -26,7 +26,7 @@ public class DriverDocumentService {
         document.setDocumentUrl(request.url());
         document.setDocumentPublicId(request.publicId());
         document.setExpiresOn(request.expiresOn());
-        document.setStatus(VerificationStatus.PENDING);
+        document.setStatus(VerificationStatus.IN_REVIEW);
         document.setRejectionReason(null);
         document.setReminderSent14d(false);
         document.setReminderSent3d(false);

@@ -24,5 +24,6 @@
     <include file="db/changelog/013-drop-driver-selfie.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/014-split-profile-names.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/015-verification-checks.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/016-in-review-status.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

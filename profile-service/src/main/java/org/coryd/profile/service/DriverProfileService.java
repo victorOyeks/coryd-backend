@@ -75,7 +75,7 @@ public class DriverProfileService {
         // item's own review back to PENDING - the other stays as it was.
         if (request.governmentIdUrl() != null) {
             profile.setGovernmentIdUrl(request.governmentIdUrl());
-            profile.setGovernmentIdStatus(VerificationStatus.PENDING);
+            profile.setGovernmentIdStatus(VerificationStatus.IN_REVIEW);
             profile.setGovernmentIdRejectionReason(null);
         }
 

@@ -43,6 +43,8 @@ public class VehicleService {
                 .interiorPhotoPublicId(request.interiorPhotoPublicId())
                 .hasAC(request.hasAC())
                 .acConfirmedWorking(request.acConfirmedWorking())
+                // A vehicle row only exists once registered, so it is never merely PENDING.
+                .verificationStatus(VerificationStatus.IN_REVIEW)
                 .build();
         Vehicle saved = vehicleRepository.save(vehicle);
         premblyVerificationService.checkPlateNumber(
@@ -70,7 +72,7 @@ public class VehicleService {
         vehicle.setInteriorPhotoPublicId(request.interiorPhotoPublicId());
         vehicle.setHasAC(request.hasAC());
         vehicle.setAcConfirmedWorking(request.acConfirmedWorking());
-        vehicle.setVerificationStatus(VerificationStatus.PENDING);
+        vehicle.setVerificationStatus(VerificationStatus.IN_REVIEW);
         vehicle.setRejectionReason(null);
 
         Vehicle saved = vehicleRepository.save(vehicle);

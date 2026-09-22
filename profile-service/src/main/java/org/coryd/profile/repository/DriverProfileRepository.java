@@ -15,5 +15,5 @@ public interface DriverProfileRepository extends JpaRepository<DriverProfile, St
      * alone can't mean "submitted and awaiting a decision" the way it does for Vehicle/DriverDocument
      * (which only exist as rows once submitted) - the URL/submittedAt check is what excludes a
      * driver who simply hasn't gotten to this step yet. */
-    List<DriverProfile> findByGovernmentIdUrlIsNotNullAndGovernmentIdStatus(VerificationStatus status);
+    List<DriverProfile> findByGovernmentIdStatus(VerificationStatus status);
 }

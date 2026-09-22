@@ -91,13 +91,6 @@ public class VerificationAggregationService {
         return getStatus(driverId);
     }
 
-    /** Ops admin's review queue - decide() and getStatus() are both keyed by a driverId ops has to
-     * already know; this is how they discover one in the first place. Checked per item type rather
-     * than by overall status, since a driver with one item REJECTED and another still genuinely
-     * PENDING needs that second item to keep showing up here regardless of the (rejected)
-     * aggregate. Government ID also needs a submission check on top of status = PENDING,
-     * since both default to PENDING before the driver has uploaded anything - unlike Vehicle/
-     * DriverDocument, which only exist as rows once actually submitted. */
     public List<PendingVerificationItem> getPendingQueue(UserRole callerRole) {
         if (callerRole != UserRole.OPS_ADMIN) {
             throw new UnauthorizedException("Only an ops admin can view the verification queue");
@@ -105,13 +98,13 @@ public class VerificationAggregationService {
 
         Map<String, List<ReviewableItem>> pendingByDriver = new LinkedHashMap<>();
 
-        for (DriverProfile profile : driverProfileRepository.findByGovernmentIdUrlIsNotNullAndGovernmentIdStatus(VerificationStatus.PENDING)) {
+        for (DriverProfile profile : driverProfileRepository.findByGovernmentIdStatus(VerificationStatus.IN_REVIEW)) {
             pendingByDriver.computeIfAbsent(profile.getUserId(), id -> new ArrayList<>()).add(ReviewableItem.GOVERNMENT_ID);
         }
-        for (Vehicle vehicle : vehicleRepository.findByVerificationStatus(VerificationStatus.PENDING)) {
+        for (Vehicle vehicle : vehicleRepository.findByVerificationStatus(VerificationStatus.IN_REVIEW)) {
             pendingByDriver.computeIfAbsent(vehicle.getDriverId(), id -> new ArrayList<>()).add(ReviewableItem.VEHICLE);
         }
-        for (DriverDocument document : driverDocumentRepository.findByStatus(VerificationStatus.PENDING)) {
+        for (DriverDocument document : driverDocumentRepository.findByStatus(VerificationStatus.IN_REVIEW)) {
             ReviewableItem item = document.getDocumentType() == DocumentType.INSURANCE ? ReviewableItem.INSURANCE : ReviewableItem.ROADWORTHINESS_CERT;
             pendingByDriver.computeIfAbsent(document.getDriverId(), id -> new ArrayList<>()).add(item);
         }
@@ -208,7 +201,7 @@ public class VerificationAggregationService {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
         Vehicle vehicle = primaryVehicle(driverId);
 
-        boolean identitySubmitted = profile != null && profile.getGovernmentIdUrl() != null;
+        boolean identitySubmitted = profile != null && profile.getGovernmentIdStatus() != VerificationStatus.PENDING;
         boolean identityApproved = profile != null
                 && profile.getGovernmentIdStatus() == VerificationStatus.APPROVED;
 
@@ -336,7 +329,12 @@ public class VerificationAggregationService {
         if (statuses.stream().allMatch(status -> status == VerificationStatus.APPROVED)) {
             return VerificationStatus.APPROVED;
         }
-        return VerificationStatus.PENDING;
+        // Anything still PENDING means the driver has not finished submitting, and that outranks
+        // IN_REVIEW: the next move is theirs, not ops's.
+        if (statuses.contains(VerificationStatus.PENDING)) {
+            return VerificationStatus.PENDING;
+        }
+        return VerificationStatus.IN_REVIEW;
     }
 
     private String firstRejectionReason(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents) {

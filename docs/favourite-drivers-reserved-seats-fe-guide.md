@@ -29,7 +29,7 @@ GET    /profile/riders/me/favorite-drivers              → the rider's own list
 {
   "data": [
     { "userId": "usr_driver_9", "firstName": "Chidi", "lastName": "Eze", "photoUrl": "https://...", "verificationStatus": "APPROVED" },
-    { "userId": "usr_driver_4", "firstName": "Femi", "lastName": "Adeyemi", "photoUrl": null, "verificationStatus": "PENDING" }
+    { "userId": "usr_driver_4", "firstName": "Femi", "lastName": "Adeyemi", "photoUrl": null, "verificationStatus": "IN_REVIEW" }
   ]
 }
 ```

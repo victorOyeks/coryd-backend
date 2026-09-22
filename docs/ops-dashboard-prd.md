@@ -128,7 +128,7 @@ driver cannot post a route at all.
 at the driver's first posted route.
 
 Overall status is all-or-nothing: any item `REJECTED` makes the driver `REJECTED`; all five
-`APPROVED` makes them `APPROVED`; anything else is `PENDING`.
+`APPROVED` makes them `APPROVED`; submitted-but-undecided is `IN_REVIEW`; anything still missing is `PENDING`.
 
 **US-2.1** As an ops admin, I want a queue of drivers awaiting review, ordered by wait time, so the
 longest-waiting driver is handled first.
@@ -167,14 +167,15 @@ mistake them for new submissions.
 
 *Acceptance criteria*
 - Documents past their expiry date are flipped back to `PENDING` by a nightly job, with a
-  system-generated reason, with no human involved
+  system-generated reason, with no human involved. `PENDING` rather than `IN_REVIEW` is deliberate:
+  the next move is the driver's re-upload, not an ops decision
 - These are labelled distinctly from a driver's fresh submission
 
 ### Three system behaviours that constrain the design
 
 1. **Approving an item permanently deletes its image.** Licence, vehicle photos and documents are
    purged from storage on approval for privacy, and can never be displayed again.
-2. **Resubmission resets status to `PENDING`.** Any edit before approval does the same.
+2. **Resubmission resets status to `IN_REVIEW`.** Any edit before approval does the same, so it returns to the queue.
 3. **`verifiedSince` is set once, on first-ever approval, and never moves** — it is a "verified
    since" date, not a last-reviewed date.
 4. **A licence that matches FRSC approves itself.** Those drivers never reach this queue, so what
@@ -535,7 +536,7 @@ Configuration · Ratings · Notifications · Reports · Audit · System health
 
 **Route status:** `DRAFT`, `PUBLISHED`, `FULL`, `IN_PROGRESS`, `CANCELLED`, `COMPLETED`
 
-**Verification status:** `PENDING`, `APPROVED`, `REJECTED`
+**Verification status:** `PENDING` (nothing submitted), `IN_REVIEW` (submitted, with ops), `APPROVED`, `REJECTED`
 
 **Reviewable items:** `GOVERNMENT_ID`, `SELFIE`, `VEHICLE`, `INSURANCE`, `ROADWORTHINESS_CERT`
 

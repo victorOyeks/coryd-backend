@@ -434,3 +434,47 @@ cannot show the driver is entitled to drive it — ops still reviews every vehic
 
 The array is empty when the provider is switched off, which is the default until the live key is
 issued. Treat empty as "no information", not as a failure.
+
+---
+
+## `IN_REVIEW`: a fourth verification status
+
+`VerificationStatus` was `PENDING | APPROVED | REJECTED`, and `PENDING` carried two different
+meanings that the app had to tell apart by itself:
+
+- nothing has been submitted — **the driver has work to do**
+- submitted, no ops verdict yet — **the driver can only wait**
+
+There is now an explicit `IN_REVIEW` for the second, so nothing has to be inferred:
+
+| Status | Means | Whose turn |
+|---|---|---|
+| `PENDING` | Not submitted, or expired and needs re-upload | **Driver** |
+| `IN_REVIEW` | Submitted, sitting with ops | **Ops** — show a wait state, no action button |
+| `APPROVED` | Cleared | — |
+| `REJECTED` | Turned down, `rejectionReason` is set | **Driver** |
+
+This applies everywhere a status appears: `governmentId.status`, `vehicleRegistration.status`,
+each entry in `documents[]`, `overallStatus`, and `verificationStatus` on driver summaries in
+search results and booking screens.
+
+### What changes for you
+
+**Treat `IN_REVIEW` as a wait state, never as a prompt.** The mistake to avoid is rendering it the
+same as `PENDING` — that puts an "Upload your insurance" button in front of a driver who uploaded
+it an hour ago.
+
+**`overallStatus` now distinguishes the two as well.** It is `PENDING` while *anything* is still
+unsubmitted, and only becomes `IN_REVIEW` once everything has been submitted and the whole file is
+with ops. So `overallStatus: "IN_REVIEW"` is the "you're done, we're checking" screen.
+
+**Nothing about the posting gate changes.** `canPostRoutes` and `blockedReason` behave exactly as
+before, and `IDENTITY_PENDING_APPROVAL` / `VEHICLE_PENDING_APPROVAL` keep their names — those
+already made the distinction, which is why they exist.
+
+**Expired documents go to `PENDING`, not `IN_REVIEW`.** The nightly expiry job needs the driver to
+upload a current certificate, so it is their turn again.
+
+> **Deploy note:** this is a shared enum. Older clients that switch exhaustively on the three old
+> values will fall through on `IN_REVIEW` — make the mapping tolerant of unknown values before
+> this ships.
