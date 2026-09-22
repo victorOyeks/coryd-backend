@@ -30,6 +30,7 @@ public final class KafkaTopics {
 
     public static final String DRIVER_APPROVED = "coryd-driver-approved";
     public static final String DRIVER_REJECTED = "coryd-driver-rejected";
+    public static final String VERIFICATION_ITEM_DECIDED = "coryd-verification-item-decided";
     public static final String DOCUMENT_EXPIRING = "coryd-document-expiring";
 
     /** Fired once, the first time a DriverProfile/RiderProfile row is ever created (not on later

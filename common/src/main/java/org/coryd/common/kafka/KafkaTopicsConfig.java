@@ -116,6 +116,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic verificationItemDecidedTopic() {
+        return TopicBuilder.name(KafkaTopics.VERIFICATION_ITEM_DECIDED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic documentExpiringTopic() {
         return TopicBuilder.name(KafkaTopics.DOCUMENT_EXPIRING).partitions(3).replicas(1).build();
     }

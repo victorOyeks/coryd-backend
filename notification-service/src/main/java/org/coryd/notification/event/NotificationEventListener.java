@@ -9,7 +9,7 @@ import org.coryd.common.kafka.events.DocumentExpiringEvent;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverArrivedEvent;
 import org.coryd.common.kafka.events.DriverEnRouteEvent;
-import org.coryd.common.kafka.events.DriverRejectedEvent;
+import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.common.kafka.events.EmergencyContactPayload;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
@@ -176,14 +176,23 @@ public class NotificationEventListener {
         }
     }
 
-    @KafkaListener(topics = KafkaTopics.DRIVER_REJECTED, groupId = KafkaConfig.GROUP_ID_ADMIN)
-    public void onDriverRejected(DriverRejectedEvent event) {
-        String reason = event.getRejectionReason() == null ? "Please review and resubmit." : event.getRejectionReason();
-        dispatchService.sendPush(event.getDriverId(), "Action needed on your verification",
-                reason, "DRIVER_REJECTED", null);
+    /** Fires per decided item, so the driver hears about each document rather than only about the
+     * milestones the aggregate events mark. DRIVER_REJECTED deliberately notifies nothing now - it
+     * would arrive alongside this one saying less. */
+    @KafkaListener(topics = KafkaTopics.VERIFICATION_ITEM_DECIDED, groupId = KafkaConfig.GROUP_ID_ADMIN)
+    public void onVerificationItemDecided(VerificationItemDecidedEvent event) {
+        String label = event.getItemLabel();
+        String title = event.isApproved() ? label + " approved" : label + " needs attention";
+        String body = event.isApproved()
+                ? "Your " + label.toLowerCase() + " has been approved."
+                : (event.getRejectionReason() == null
+                        ? "Your " + label.toLowerCase() + " was not accepted. Please review and resubmit."
+                        : event.getRejectionReason());
+        String type = event.isApproved() ? "VERIFICATION_ITEM_APPROVED" : "VERIFICATION_ITEM_REJECTED";
+
+        dispatchService.sendPush(event.getDriverId(), title, body, type, null);
         if (event.getEmail() != null) {
-            dispatchService.sendEmail(event.getEmail(), "Action needed on your CoRyd verification",
-                    "One of your verification items needs attention: " + reason, "DRIVER_REJECTED");
+            dispatchService.sendEmail(event.getEmail(), title + " - CoRyd", body, type);
         }
     }
 

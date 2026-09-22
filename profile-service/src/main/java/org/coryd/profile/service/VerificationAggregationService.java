@@ -10,6 +10,7 @@ import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
+import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.ItemDecision;
 import org.coryd.profile.dto.PendingVerificationItem;
@@ -76,19 +77,37 @@ public class VerificationAggregationService {
         );
     }
 
-    /** Ops admin's single decision call - approve/reject any/all of a driver's reviewable items in one request, then re-evaluate and publish once at the end (not once per item, which would fire redundant Kafka events/emails for a partial state). Returns the resulting status so the ops screen doesn't need a second call to refresh. */
+    /** Ops admin's single decision call - approve/reject any/all of a driver's reviewable items in one request. Each item notifies the driver on its own, then the aggregate is re-evaluated once at the end so the overall status only moves after every decision has landed. Returns the resulting status so the ops screen doesn't need a second call to refresh. */
     @Transactional
     public VerificationStatusResponse decide(String driverId, UserRole callerRole, VerificationDecisionBatchRequest request) {
         if (callerRole != UserRole.OPS_ADMIN) {
             throw new UnauthorizedException("Only an ops admin can decide driver verification items");
         }
 
+        String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         for (ItemDecision decision : request.decisions()) {
             applyDecision(driverId, decision);
+            publishItemDecision(driverId, email, decision, request.reviewedBy());
         }
 
         reevaluateAndPublish(driverId, request.reviewedBy());
         return getStatus(driverId);
+    }
+
+    /** Per-item, because the aggregate events only fire on full approval or overall rejection - a driver whose insurance was approved while a document is still outstanding would otherwise hear nothing. */
+    private void publishItemDecision(String driverId, String email, ItemDecision decision, String reviewedBy) {
+        boolean approved = decision.status() == VerificationStatus.APPROVED;
+        logKafkaResult(driverId, KafkaTopics.VERIFICATION_ITEM_DECIDED,
+                kafkaTemplate.send(KafkaTopics.VERIFICATION_ITEM_DECIDED, VerificationItemDecidedEvent.builder()
+                        .driverId(driverId)
+                        .email(email)
+                        .item(decision.item().name())
+                        .itemLabel(decision.item().label())
+                        .approved(approved)
+                        .rejectionReason(approved ? null : decision.rejectionReason())
+                        .reviewedBy(reviewedBy)
+                        .decidedAt(LocalDateTime.now())
+                        .build()));
     }
 
     public List<PendingVerificationItem> getPendingQueue(UserRole callerRole) {
