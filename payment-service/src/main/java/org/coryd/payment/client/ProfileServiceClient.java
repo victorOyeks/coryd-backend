@@ -2,6 +2,7 @@ package org.coryd.payment.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.security.JwtUtil;
 import org.coryd.common.security.client.ForwardedAuthInterceptor;
 import org.coryd.common.security.client.InternalApiKeyInterceptor;
 import org.coryd.common.http.HttpTimeouts;
@@ -26,10 +27,11 @@ public class ProfileServiceClient {
     private final RestClient restClient;
 
     public ProfileServiceClient(@Value("${services.profile.url}") String profileServiceUrl,
-                                 @Value("${services.internal.api-key}") String internalApiKey) {
+                                 @Value("${services.internal.api-key}") String internalApiKey,
+                                 JwtUtil jwtUtil) {
         this.restClient = HttpTimeouts.builder()
                 .baseUrl(profileServiceUrl)
-                .requestInterceptor(new ForwardedAuthInterceptor())
+                .requestInterceptor(new ForwardedAuthInterceptor(jwtUtil))
                 .requestInterceptor(new InternalApiKeyInterceptor(internalApiKey))
                 .build();
     }

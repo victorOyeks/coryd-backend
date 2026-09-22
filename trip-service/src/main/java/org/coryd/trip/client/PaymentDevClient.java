@@ -1,6 +1,7 @@
 package org.coryd.trip.client;
 
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.security.JwtUtil;
 import org.coryd.common.security.client.ForwardedAuthInterceptor;
 import org.coryd.common.security.client.InternalApiKeyInterceptor;
 import org.coryd.common.http.HttpTimeouts;
@@ -25,10 +26,11 @@ public class PaymentDevClient {
     private final RestClient restClient;
 
     public PaymentDevClient(@Value("${services.payment.url}") String paymentServiceUrl,
-                            @Value("${services.internal.api-key}") String internalApiKey) {
+                            @Value("${services.internal.api-key}") String internalApiKey,
+                                 JwtUtil jwtUtil) {
         this.restClient = HttpTimeouts.builder()
                 .baseUrl(paymentServiceUrl)
-                .requestInterceptor(new ForwardedAuthInterceptor())
+                .requestInterceptor(new ForwardedAuthInterceptor(jwtUtil))
                 .requestInterceptor(new InternalApiKeyInterceptor(internalApiKey))
                 .build();
     }
