@@ -449,10 +449,11 @@ There is now an explicit `IN_REVIEW` for the second, so nothing has to be inferr
 
 | Status | Means | Whose turn |
 |---|---|---|
-| `PENDING` | Not submitted, or expired and needs re-upload | **Driver** |
+| `PENDING` | Never submitted | **Driver** |
 | `IN_REVIEW` | Submitted, sitting with ops | **Ops** — show a wait state, no action button |
 | `APPROVED` | Cleared | — |
 | `REJECTED` | Turned down, `rejectionReason` is set | **Driver** |
+| `EXPIRED` | Was approved, then lapsed. `rejectionReason` names the document and date | **Driver** |
 
 This applies everywhere a status appears: `governmentId.status`, `vehicleRegistration.status`,
 each entry in `documents[]`, `overallStatus`, and `verificationStatus` on driver summaries in
@@ -472,8 +473,16 @@ with ops. So `overallStatus: "IN_REVIEW"` is the "you're done, we're checking" s
 before, and `IDENTITY_PENDING_APPROVAL` / `VEHICLE_PENDING_APPROVAL` keep their names — those
 already made the distinction, which is why they exist.
 
-**Expired documents go to `PENDING`, not `IN_REVIEW`.** The nightly expiry job needs the driver to
-upload a current certificate, so it is their turn again.
+**Expired documents get their own status.** A lapsed certificate reads `EXPIRED`, not `PENDING` —
+the driver has done this before and only needs a current copy, so the prompt should say "renew",
+not "upload". The vehicle is suspended alongside it and also reads `EXPIRED`, with a
+`rejectionReason` naming the document that caused it. Re-uploading returns both to `IN_REVIEW`.
+
+Note the expiry job runs nightly, so a certificate that lapses today flips overnight rather than
+at the stroke of midnight.
+
+`overallStatus` reports `EXPIRED` ahead of `PENDING` and `IN_REVIEW`, since a lapsed document is
+the most urgent thing outstanding.
 
 > **Deploy note:** this is a shared enum. Older clients that switch exhaustively on the three old
 > values will fall through on `IN_REVIEW` — make the mapping tolerant of unknown values before

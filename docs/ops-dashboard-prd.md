@@ -166,9 +166,9 @@ navigating.
 mistake them for new submissions.
 
 *Acceptance criteria*
-- Documents past their expiry date are flipped back to `PENDING` by a nightly job, with a
-  system-generated reason, with no human involved. `PENDING` rather than `IN_REVIEW` is deliberate:
-  the next move is the driver's re-upload, not an ops decision
+- Documents past their expiry date are flipped to `EXPIRED` by a nightly job, with a
+  system-generated reason, with no human involved. They do not enter the review queue - the next
+  move is the driver's re-upload, and they reappear as `IN_REVIEW` once it lands
 - These are labelled distinctly from a driver's fresh submission
 
 ### Three system behaviours that constrain the design
@@ -536,7 +536,7 @@ Configuration · Ratings · Notifications · Reports · Audit · System health
 
 **Route status:** `DRAFT`, `PUBLISHED`, `FULL`, `IN_PROGRESS`, `CANCELLED`, `COMPLETED`
 
-**Verification status:** `PENDING` (nothing submitted), `IN_REVIEW` (submitted, with ops), `APPROVED`, `REJECTED`
+**Verification status:** `PENDING` (nothing submitted), `IN_REVIEW` (submitted, with ops), `APPROVED`, `REJECTED`, `EXPIRED` (approved then lapsed)
 
 **Reviewable items:** `GOVERNMENT_ID`, `SELFIE`, `VEHICLE`, `INSURANCE`, `ROADWORTHINESS_CERT`
 

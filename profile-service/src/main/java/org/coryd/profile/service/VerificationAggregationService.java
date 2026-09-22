@@ -329,8 +329,10 @@ public class VerificationAggregationService {
         if (statuses.stream().allMatch(status -> status == VerificationStatus.APPROVED)) {
             return VerificationStatus.APPROVED;
         }
-        // Anything still PENDING means the driver has not finished submitting, and that outranks
-        // IN_REVIEW: the next move is theirs, not ops's.
+        // Worst-first. IN_REVIEW is the only non-approved state the driver cannot act on.
+        if (statuses.contains(VerificationStatus.EXPIRED)) {
+            return VerificationStatus.EXPIRED;
+        }
         if (statuses.contains(VerificationStatus.PENDING)) {
             return VerificationStatus.PENDING;
         }

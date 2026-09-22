@@ -60,11 +60,11 @@ public class DocumentExpiryJob {
         for (DriverDocument doc : expired) {
             // Suspending only the vehicle left the document itself reading APPROVED with no
             // reason, so the driver's app showed a green tick on the very document that got
-            // them suspended and gave them nothing to re-upload against. PENDING + a reason
+            // them suspended and gave them nothing to re-upload against. EXPIRED + a reason
             // mirrors what the vehicle gets below; an ops REJECTED verdict is left alone so
             // its own reason survives.
             if (doc.getStatus() != VerificationStatus.REJECTED) {
-                doc.setStatus(VerificationStatus.PENDING);
+                doc.setStatus(VerificationStatus.EXPIRED);
                 doc.setRejectionReason("Expired on " + doc.getExpiresOn() + " - please upload a current " + doc.getDocumentType());
                 documentRepository.save(doc);
             }
@@ -72,7 +72,7 @@ public class DocumentExpiryJob {
             List<Vehicle> vehicles = vehicleRepository.findByDriverId(doc.getDriverId());
             for (Vehicle vehicle : vehicles) {
                 if (vehicle.getVerificationStatus() != VerificationStatus.REJECTED) {
-                    vehicle.setVerificationStatus(VerificationStatus.PENDING);
+                    vehicle.setVerificationStatus(VerificationStatus.EXPIRED);
                     vehicle.setRejectionReason("Auto-suspended: " + doc.getDocumentType() + " expired");
                     vehicleRepository.save(vehicle);
                 }

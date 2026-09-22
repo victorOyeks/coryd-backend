@@ -25,5 +25,6 @@
     <include file="db/changelog/014-split-profile-names.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/015-verification-checks.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/016-in-review-status.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/017-expired-status.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
