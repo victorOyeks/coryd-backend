@@ -11,8 +11,6 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Pushes fresh results to every active live-search session whenever a route change could affect
@@ -39,11 +37,12 @@ public class LiveSearchPushService {
     private void pushIfChanged(String sessionId, LiveSearchSessionRegistry.Session session) {
         try {
             List<RideSearchResult> results = routeService.search(session.request());
-            Set<String> resultIds = results.stream().map(RideSearchResult::routePostId).collect(Collectors.toSet());
-            if (resultIds.equals(session.lastResultIds())) {
+            // Compared whole, because everything on the card can move without the route set moving:
+            // seats taken, fare edited, driver newly verified, note changed.
+            if (results.equals(session.lastResults())) {
                 return;
             }
-            registry.updateLastResults(sessionId, resultIds);
+            registry.updateLastResults(sessionId, results);
             messagingTemplate.convertAndSend("/topic/search-sessions/" + sessionId, results);
         } catch (Exception e) {
             log.warn("Live search push failed for session {}: {}", sessionId, e.getMessage());

@@ -1,12 +1,13 @@
 package org.coryd.trip.service;
 
+import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.SearchRequest;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 
@@ -24,26 +25,28 @@ public class LiveSearchSessionRegistry {
 
     private static final Duration SESSION_TTL = Duration.ofMinutes(30);
 
-    public record Session(String riderId, SearchRequest request, Instant lastSeenAt, Set<String> lastResultIds) {
-        Session withLastResultIds(Set<String> ids) {
-            return new Session(riderId, request, lastSeenAt, ids);
+    /** lastResults is the whole payload the client last saw, not just which routes it held - a seat
+     * count dropping from 4 to 3 changes neither the route set nor its size. */
+    public record Session(String riderId, SearchRequest request, Instant lastSeenAt, List<RideSearchResult> lastResults) {
+        Session withLastResults(List<RideSearchResult> results) {
+            return new Session(riderId, request, lastSeenAt, results);
         }
     }
 
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
 
-    /** Called from every live-search REST call - currentResultIds seeds lastResultIds so the first
-     * push only fires once something actually changes beyond what this response already returned. */
-    public void registerOrRefresh(String sessionId, String riderId, SearchRequest request, Set<String> currentResultIds) {
-        sessions.put(sessionId, new Session(riderId, request, Instant.now(), currentResultIds));
+    /** Called from every live-search REST call - currentResults seeds lastResults so the first push
+     * only fires once something actually changes beyond what this response already returned. */
+    public void registerOrRefresh(String sessionId, String riderId, SearchRequest request, List<RideSearchResult> currentResults) {
+        sessions.put(sessionId, new Session(riderId, request, Instant.now(), currentResults));
     }
 
     public Session get(String sessionId) {
         return sessions.get(sessionId);
     }
 
-    public void updateLastResults(String sessionId, Set<String> resultIds) {
-        sessions.computeIfPresent(sessionId, (id, session) -> session.withLastResultIds(resultIds));
+    public void updateLastResults(String sessionId, List<RideSearchResult> results) {
+        sessions.computeIfPresent(sessionId, (id, session) -> session.withLastResults(results));
     }
 
     public void forEachSession(BiConsumer<String, Session> action) {

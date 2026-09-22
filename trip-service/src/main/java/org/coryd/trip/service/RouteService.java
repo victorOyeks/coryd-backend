@@ -314,8 +314,7 @@ public class RouteService {
     public List<RideSearchResult> search(SearchRequest request, String sessionId, String riderId) {
         List<RideSearchResult> results = search(request);
         if (sessionId != null) {
-            Set<String> resultIds = results.stream().map(RideSearchResult::routePostId).collect(Collectors.toSet());
-            liveSearchSessionRegistry.registerOrRefresh(sessionId, riderId, request, resultIds);
+            liveSearchSessionRegistry.registerOrRefresh(sessionId, riderId, request, results);
         }
         return results;
     }
