@@ -667,6 +667,9 @@ public class RouteService {
             BookingStatus.RESERVED, BookingStatus.HELD, BookingStatus.CONFIRMED,
             BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
 
+    /** Annotated because this is an entry point: the delegation below is a self-call, so the
+     * proxy is never consulted again and the inner @Transactional would not apply. */
+    @Transactional
     public void cancel(String routePostId, String callerId) {
         cancel(routePostId, callerId, "DRIVER");
     }

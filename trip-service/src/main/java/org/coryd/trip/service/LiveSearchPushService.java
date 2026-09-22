@@ -28,9 +28,13 @@ public class LiveSearchPushService {
     private final RouteService routeService;
     private final SimpMessagingTemplate messagingTemplate;
 
+    /** fallbackExecution so a publisher that turns out not to be in a transaction still pushes -
+     * without it the listener is skipped in silence, which is exactly how route cancellation went
+     * unnoticed. */
     @Async("liveSearchExecutor")
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onRelevantChange(RouteSearchRelevantChangeEvent event) {
+        log.debug("Route {} changed - re-running every live search session", event.routePostId());
         registry.forEachSession(this::pushIfChanged);
     }
 
@@ -40,10 +44,12 @@ public class LiveSearchPushService {
             // Compared whole, because everything on the card can move without the route set moving:
             // seats taken, fare edited, driver newly verified, note changed.
             if (results.equals(session.lastResults())) {
+                log.debug("Live search session {} unchanged at {} result(s) - nothing pushed", sessionId, results.size());
                 return;
             }
             registry.updateLastResults(sessionId, results);
             messagingTemplate.convertAndSend("/topic/search-sessions/" + sessionId, results);
+            log.info("Pushed {} result(s) to live search session {}", results.size(), sessionId);
         } catch (Exception e) {
             log.warn("Live search push failed for session {}: {}", sessionId, e.getMessage());
         }
