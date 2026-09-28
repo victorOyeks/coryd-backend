@@ -1,8 +1,10 @@
 package org.coryd.notification.gateway;
 
 import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.Aps;
 import com.google.firebase.messaging.AndroidConfig;
 import com.google.firebase.messaging.AndroidNotification;
+import com.google.firebase.messaging.ApnsConfig;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
@@ -38,6 +40,13 @@ public class FcmService {
                     .setAndroidConfig(AndroidConfig.builder()
                             .setNotification(AndroidNotification.builder()
                                     .setChannelId("default")
+                                    .build())
+                            .build())
+                    // Android takes its sound from the channel; iOS plays nothing at all unless
+                    // aps.sound is set, so the alert would appear silently on every device.
+                    .setApnsConfig(ApnsConfig.builder()
+                            .setAps(Aps.builder()
+                                    .setSound("default")
                                     .build())
                             .build())
                     .putData("type", eventType);
