@@ -39,6 +39,9 @@ public class PaymentTransaction extends BaseEntity {
     @Column(nullable = false, unique = true)
     private String gatewayReference;
 
+    @Column(length = 512)
+    private String authorizationUrl;
+
     @Enumerated(EnumType.STRING)
     @Builder.Default
     @Column(nullable = false, length = 20)

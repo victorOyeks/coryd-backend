@@ -38,7 +38,7 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     }
 
     @Override
-    public GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl) {
+    public GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl, Map<String, String> metadata) {
         if (riderEmail == null || riderEmail.isBlank()) {
             // Map.of would NPE here; Paystack rejects the call anyway, so fail with something readable.
             throw new BadRequestException("A billing email is required to start a payment");
@@ -52,6 +52,9 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         ));
         if (callbackUrl != null && !callbackUrl.isBlank()) {
             body.put("callback_url", callbackUrl);
+        }
+        if (metadata != null && !metadata.isEmpty()) {
+            body.put("metadata", metadata);
         }
 
         InitResponse response = restClient().post()

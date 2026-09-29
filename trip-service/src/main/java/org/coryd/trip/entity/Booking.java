@@ -48,6 +48,9 @@ public class Booking extends BaseEntity {
 
     private Instant pickupConfirmedAt;
 
+    /** Set when payment confirms the booking - null means it never became a real booking. */
+    private Instant confirmedAt;
+
     // Snapshotted at booking time so history survives later profile/route edits.
     private String driverNameSnapshot;
     private String vehiclePlateSnapshot;

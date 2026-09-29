@@ -24,5 +24,6 @@
     <include file="db/changelog/013-driver-grace-period.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/014-driver-prerequisites-met.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/015-route-departure-reminder.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/016-booking-confirmed-at.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

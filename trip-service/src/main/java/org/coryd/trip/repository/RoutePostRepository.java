@@ -113,10 +113,11 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
             """)
     int holdSeats(@Param("id") String id, @Param("seats") int seats);
 
+    /** Capped at seatCapacity so a double release can never mint seats that were never there. */
     @Modifying
     @Query("""
             update RoutePost r
-            set r.seatsAvailable = r.seatsAvailable + :seats
+            set r.seatsAvailable = least(r.seatsAvailable + :seats, r.seatCapacity)
             where r.id = :id
             """)
     int releaseSeats(@Param("id") String id, @Param("seats") int seats);

@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Positive;
 
 
 public record BookSeatsRequest(
-        @NotNull String riderId,
+        String riderId,
         @NotNull @Positive Integer seatCount,
         @NotBlank String pickupLabel,
         @NotNull Double pickupLat,

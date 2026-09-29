@@ -11,4 +11,6 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
     Page<WalletTransaction> findByWalletIdOrderByCreatedAtDesc(String walletId, Pageable pageable);
 
     List<WalletTransaction> findByBookingIdIn(List<String> bookingIds);
+
+    boolean existsByReference(String reference);
 }

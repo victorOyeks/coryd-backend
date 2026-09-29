@@ -684,6 +684,12 @@ public class RouteService {
         if (!callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this route's driver can cancel it");
         }
+        if (route.getStatus() == RouteStatus.CANCELLED) {
+            return;
+        }
+        if (route.getStatus() == RouteStatus.COMPLETED) {
+            throw new BadRequestException("This trip is already completed - it can't be cancelled");
+        }
 
         route.setStatus(RouteStatus.CANCELLED);
         routePostRepository.save(route);
@@ -692,9 +698,9 @@ public class RouteService {
         List<String> affectedIds = affected.stream().map(BaseEntity::getId).toList();
 
         for (Booking booking : affected) {
-            if (CANCELLABLE_BY_ROUTE_CANCELLATION.contains(booking.getStatus())) {
+            // Compare-and-set so a booking the rider cancelled a moment earlier isn't cancelled (and refunded) twice.
+            if (bookingRepository.transitionStatus(booking.getId(), CANCELLABLE_BY_ROUTE_CANCELLATION, BookingStatus.CANCELLED_DRIVER) == 1) {
                 booking.setStatus(BookingStatus.CANCELLED_DRIVER);
-                bookingRepository.save(booking);
                 kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                         .bookingId(booking.getId())
                         .routePostId(routePostId)

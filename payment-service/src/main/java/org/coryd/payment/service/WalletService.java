@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Map;
 import java.util.UUID;
 
 /** The rider's internal balance - debited synchronously for "pay from wallet" bookings, topped up via the same Paystack redirect used for direct fare payment. */
@@ -44,6 +45,17 @@ public class WalletService {
     }
 
 
+    /** Every balance change goes through this - see WalletRepository.findForUpdate. */
+    private Wallet lockWallet(String userId) {
+        // Locked read first - loading it unlocked beforehand would leave that stale copy in the
+        // persistence context, and the locked query would hand back the same stale instance.
+        return walletRepository.findForUpdate(userId).orElseGet(() -> {
+            walletRepository.insertIfAbsent(UUID.randomUUID().toString(), userId);
+            return walletRepository.findForUpdate(userId)
+                    .orElseThrow(() -> new IllegalStateException("Wallet insert-if-absent left no row for userId=" + userId));
+        });
+    }
+
     @Transactional
     public BigDecimal getBalance(String userId) {
         return getOrCreateWallet(userId).getAvailableBalance();
@@ -59,7 +71,8 @@ public class WalletService {
     public InitiatePaymentResponse initiateTopUp(String userId, BigDecimal amount, String email, String callbackUrl) {
         String reference = UUID.randomUUID().toString();
         PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(
-                reference, amount, checkoutEmailResolver.resolve(userId, email), callbackUrl);
+                reference, amount, checkoutEmailResolver.resolve(userId, email), callbackUrl,
+                Map.of("purpose", PaymentPurpose.WALLET_TOPUP.name(), "userId", userId));
 
         paymentTransactionRepository.save(PaymentTransaction.builder()
                 .riderId(userId)
@@ -76,7 +89,7 @@ public class WalletService {
     /** Called from the Paystack webhook on charge.success for a WALLET_TOPUP transaction. */
     @Transactional
     public void creditFromTopUp(PaymentTransaction transaction) {
-        Wallet wallet = getOrCreateWallet(transaction.getRiderId());
+        Wallet wallet = lockWallet(transaction.getRiderId());
         wallet.setAvailableBalance(wallet.getAvailableBalance().add(transaction.getAmount()));
         walletRepository.save(wallet);
 
@@ -93,7 +106,7 @@ public class WalletService {
     /** Debits synchronously - the "pay from wallet" alternative to a Paystack redirect. */
     @Transactional
     public void debitForBooking(String userId, String bookingId, BigDecimal amount, String reference) {
-        Wallet wallet = getOrCreateWallet(userId);
+        Wallet wallet = lockWallet(userId);
         if (wallet.getAvailableBalance().compareTo(amount) < 0) {
             throw new BadRequestException("Insufficient wallet balance");
         }
@@ -114,7 +127,7 @@ public class WalletService {
     /** Every cancellation refund lands here regardless of how the booking was paid - see EarningsService.refund. */
     @Transactional
     public void creditRefund(String userId, String bookingId, BigDecimal amount, String reason) {
-        Wallet wallet = getOrCreateWallet(userId);
+        Wallet wallet = lockWallet(userId);
         wallet.setAvailableBalance(wallet.getAvailableBalance().add(amount));
         walletRepository.save(wallet);
 

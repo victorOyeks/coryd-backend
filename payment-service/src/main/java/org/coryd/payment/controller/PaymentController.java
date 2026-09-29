@@ -2,17 +2,20 @@ package org.coryd.payment.controller;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.service.PaymentService;
 import org.coryd.payment.service.PayoutService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,8 +43,9 @@ public class PaymentController {
     private final ObjectMapper objectMapper;
 
     @PostMapping("/initiate")
-    public ApiResponse<InitiatePaymentResponse> initiate(@Valid @RequestBody InitiatePaymentRequest request) {
-        return ApiResponse.ok(paymentService.initiate(request));
+    public ApiResponse<InitiatePaymentResponse> initiate(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                          @Valid @RequestBody InitiatePaymentRequest request) {
+        return ApiResponse.ok(paymentService.initiate(request, principal.getUserId()));
     }
 
     @GetMapping("/bookings/{bookingId}")
@@ -70,7 +74,8 @@ public class PaymentController {
         }
 
         switch (event.event()) {
-            case EVENT_CHARGE_SUCCESS -> paymentService.handleWebhookSuccess(event.data().reference());
+            case EVENT_CHARGE_SUCCESS -> paymentService.handleWebhookSuccess(event.data().reference(),
+                    event.data().bookingId(), event.data().amount());
             case EVENT_CHARGE_FAILED -> paymentService.handleWebhookFailure(event.data().reference(),
                     event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Charge failed");
             case EVENT_TRANSFER_SUCCESS -> payoutService.handleTransferSuccess(event.data().reference());
@@ -87,7 +92,12 @@ public class PaymentController {
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record WebhookPayload(String event, Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Data(String reference, @JsonProperty("gateway_response") String gatewayResponse) {
+        private record Data(String reference, @JsonProperty("gateway_response") String gatewayResponse,
+                            Long amount, JsonNode metadata) {
+            /** Paystack sends metadata as an object when we set it and as "" when we didn't - read it loosely. */
+            String bookingId() {
+                return metadata != null && metadata.hasNonNull("bookingId") ? metadata.get("bookingId").asText() : null;
+            }
         }
     }
 }

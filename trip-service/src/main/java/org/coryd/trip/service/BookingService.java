@@ -26,6 +26,7 @@ import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.policy.CancellationPolicy;
 import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
+import org.coryd.trip.dto.BookingPaymentView;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.event.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
@@ -120,12 +121,25 @@ public class BookingService {
     private static final int SHARE_LINK_VALID_HOURS = 4;
 
     /** Last 5 bookings, newest first - powers the Home screen's "Recent Routes" list. */
-    public List<Booking> getRecentRoutesForRider(String riderId) {
-        return bookingRepository.findTop5ByRiderIdOrderByCreatedAtDesc(riderId);
+    public List<Booking> getRecentRoutesForRider(String riderId, String callerId) {
+        requireSelf(riderId, callerId);
+        return bookingRepository.findTop5ByRiderIdAndConfirmedAtIsNotNullOrderByCreatedAtDesc(riderId);
     }
 
     private static final List<BookingStatus> ACTIVE_TRIP_STATUSES =
             List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+    /** A rider holding any of these can't start another booking - one trip at a time. */
+    private static final List<BookingStatus> OPEN_BOOKING_STATUSES = Stream.concat(
+            Stream.of(BookingStatus.HELD), ACTIVE_TRIP_STATUSES.stream()).toList();
+    /** Bookings the driver is carrying or has carried - what a route's seatsBooked/totalEarned are made of.
+     * Cancellations and no-shows paid the driver nothing, and unpaid holds never were bookings. */
+    private static final List<BookingStatus> CARRIED_STATUSES = Stream.concat(
+            ACTIVE_TRIP_STATUSES.stream(), Stream.of(BookingStatus.COMPLETED)).toList();
+    private static final List<BookingStatus> RIDER_CANCELLABLE_STATUSES =
+            List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
+    private static final List<BookingStatus> AWAITING_PICKUP_STATUSES =
+            List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
+    private static final List<RouteStatus> FINISHED_ROUTE_STATUSES = List.of(RouteStatus.CANCELLED, RouteStatus.COMPLETED);
     private static final List<BookingStatus> CANCELLED_TRIP_STATUSES =
             List.of(BookingStatus.CANCELLED_RIDER, BookingStatus.CANCELLED_DRIVER, BookingStatus.NO_SHOW);
     /** Every status that belongs in Trip History at all - HELD bookings never got confirmed, so they're excluded. */
@@ -134,9 +148,10 @@ public class BookingService {
             .flatMap(s -> s).toList();
 
     /** Powers the Home screen's "Go back to your current trip" banner - empty if the rider has no trip in flight. */
-    public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId) {
+    public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId, String callerId) {
+        requireSelf(riderId, callerId);
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
-                .map(booking -> getBookingDetails(booking.getId()));
+                .map(this::buildDetails);
     }
 
     /** The RESERVED counterpart to getActiveBookingForRider() above - lets the app proactively show
@@ -146,11 +161,12 @@ public class BookingService {
      * unanswered reservation offer must never count as a trip the rider is already "on". */
     public Optional<BookingDetailsResponse> getReservedSeatForRider(String riderId) {
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, List.of(BookingStatus.RESERVED))
-                .map(booking -> getBookingDetails(booking.getId()));
+                .map(this::buildDetails);
     }
 
     /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route, empty if they have none posted. Returns everything trip-service has on it (route + full booking list), not just the card's headline count, so the client can also build a tap-through detail view from this one call. */
-    public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId) {
+    public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId, String callerId) {
+        requireSelf(driverId, callerId);
         List<RoutePost> candidates = routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
                 driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS), startOfToday());
         if (candidates.isEmpty()) {
@@ -179,8 +195,9 @@ public class BookingService {
 
     /** "View Passenger Manifest" after publishing (or any time after) - who's booked on this specific route.
      * Visible to the route's driver, or to any rider actively booked on it - not to anyone else, since this
-     * carries every passenger's name/photo/pickup location. Excludes only HELD (payment-pending, not a real
-     * booking yet) - cancellations and no-shows stay visible so the driver sees the full picture. */
+     * carries every passenger's name/photo/pickup location. Only bookings that were ever paid for -
+     * paid-then-cancelled and no-shows stay visible so the driver sees the full picture, but a hold
+     * that expired or failed payment never was a passenger. */
     public List<BookingSummary> getManifestForRoute(String routePostId, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
@@ -194,14 +211,17 @@ public class BookingService {
         }
 
         List<Booking> manifest = bookings.stream()
-                .filter(b -> b.getStatus() != BookingStatus.HELD)
+                .filter(b -> b.getConfirmedAt() != null)
                 .toList();
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(manifest);
         Map<String, ProfileServiceClient.RiderSummaryItem> riders = ridersFor(manifest);
         return manifest.stream().map(b -> toSummary(b, riderRatings, riders)).toList();
     }
 
-    /** The Receipt screen - ownership-gated same as the manifest. totalEarned/seatsBooked come from every non-HELD booking regardless of status, same reasoning as the trip-history list; receiptReference is derived deterministically (not random) so the same trip always shows the same reference number, not a new one per view. */
+    /** The Receipt screen - ownership-gated same as the manifest. Passengers are the riders actually
+     * carried (plus no-shows, so the driver sees who didn't turn up); seatsBooked/totalEarned count only
+     * the carried ones, since a no-show or cancellation paid the driver nothing. receiptReference is
+     * derived deterministically so the same trip always shows the same reference number. */
     public TripReceiptResponse getTripReceipt(String routePostId, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
@@ -210,8 +230,9 @@ public class BookingService {
         }
 
         List<Booking> booked = bookingRepository.findByRoutePostId(routePostId).stream()
-                .filter(b -> b.getStatus() != BookingStatus.HELD)
+                .filter(b -> CARRIED_STATUSES.contains(b.getStatus()) || b.getStatus() == BookingStatus.NO_SHOW)
                 .toList();
+        List<Booking> carried = booked.stream().filter(b -> CARRIED_STATUSES.contains(b.getStatus())).toList();
 
         List<String> riderIds = booked.stream().map(Booking::getRiderId).distinct().toList();
         List<String> bookingIds = booked.stream().map(Booking::getId).toList();
@@ -231,8 +252,8 @@ public class BookingService {
             );
         }).toList();
 
-        int seatsBooked = booked.stream().mapToInt(Booking::getSeatCount).sum();
-        BigDecimal totalEarned = booked.stream().map(Booking::getFareTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        int seatsBooked = carried.stream().mapToInt(Booking::getSeatCount).sum();
+        BigDecimal totalEarned = carried.stream().map(Booking::getFareTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         Integer durationMinutes = (route.getStartedAt() != null && route.getCompletedAt() != null)
                 ? (int) Duration.between(route.getStartedAt(), route.getCompletedAt()).toMinutes()
                 : null;
@@ -279,7 +300,8 @@ public class BookingService {
     }
 
     /** Dashboard's "Trips this week" tile - completed bookings on routes that departed Monday through now. */
-    public DriverTripStatsResponse getStatsForDriver(String driverId) {
+    public DriverTripStatsResponse getStatsForDriver(String driverId, String callerId) {
+        requireSelf(driverId, callerId);
         List<String> routeIdsThisWeek = routePostRepository
                 .findByDriverIdAndDepartureTimeBetween(driverId, startOfWeek(), Instant.now())
                 .stream().map(RoutePost::getId).toList();
@@ -296,8 +318,9 @@ public class BookingService {
         return new DriverTripStatsResponse((int) tripsThisWeek, completed, reliabilityPercent);
     }
 
-    /** Driver Trip History screen - one row per posted route (not per booking), newest first, optionally filtered by status bucket and searched by origin/destination. No status picked means every route regardless of status (including still-upcoming PUBLISHED/FULL ones), not just the "already happened" ONGOING/COMPLETED/CANCELLED buckets. seatsBooked/totalEarned are summed from every non-HELD booking regardless of the route's own status, so a cancelled route still shows what it actually had booked, not zeros. */
-    public PagedResponse<DriverTripHistoryItem> getHistoryForDriver(String driverId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
+    /** Driver Trip History screen - one row per posted route (not per booking), newest first, optionally filtered by status bucket and searched by origin/destination. No status picked means every route regardless of status (including still-upcoming PUBLISHED/FULL ones), not just the "already happened" ONGOING/COMPLETED/CANCELLED buckets. seatsBooked/totalEarned count only riders carried or still booked, the same as the receipt - a cancelled route shows zeros because it earned nothing. */
+    public PagedResponse<DriverTripHistoryItem> getHistoryForDriver(String driverId, String callerId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
+        requireSelf(driverId, callerId);
         List<RouteStatus> statuses = statusBucket == null ? List.of(RouteStatus.values()) : switch (statusBucket) {
             case ONGOING -> List.of(RouteStatus.IN_PROGRESS);
             case COMPLETED -> List.of(RouteStatus.COMPLETED);
@@ -313,7 +336,7 @@ public class BookingService {
 
         List<DriverTripHistoryItem> items = routes.getContent().stream().map(route -> {
             List<Booking> booked = bookingsByRoute.getOrDefault(route.getId(), List.of()).stream()
-                    .filter(b -> b.getStatus() != BookingStatus.HELD)
+                    .filter(b -> CARRIED_STATUSES.contains(b.getStatus()))
                     .toList();
             int seatsBooked = booked.stream().mapToInt(Booking::getSeatCount).sum();
             BigDecimal totalEarned = booked.stream().map(Booking::getFareTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -342,7 +365,8 @@ public class BookingService {
     }
 
     /** Trip History screen - null statusBucket means "All". */
-    public PagedResponse<TripHistoryItem> getHistory(String riderId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
+    public PagedResponse<TripHistoryItem> getHistory(String riderId, String callerId, TripHistoryStatus statusBucket, String search, Pageable pageable) {
+        requireSelf(riderId, callerId);
         List<BookingStatus> statuses = statusBucket == null ? ALL_HISTORY_STATUSES : switch (statusBucket) {
             case ONGOING -> ACTIVE_TRIP_STATUSES;
             case COMPLETED -> List.of(BookingStatus.COMPLETED);
@@ -378,10 +402,12 @@ public class BookingService {
 
     /** Rider taps "Share trip details" - generates the signed link and hands off to notification-service (via Kafka) to actually SMS the emergency contact, not a direct HTTP call. */
     @Transactional
-    public String shareTrip(String bookingId) {
+    public String shareTrip(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this booking's rider can share it");
+        }
+        RoutePost route = routeOf(booking);
 
         List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchRiderContacts(booking.getRiderId());
         if (contacts.isEmpty()) {
@@ -432,10 +458,14 @@ public class BookingService {
     }
 
     /** Serves both Pay Now (status=HELD) and Booking Confirmed (status=CONFIRMED) - see BookingDetailsResponse. */
-    public BookingDetailsResponse getBookingDetails(String bookingId) {
+    public BookingDetailsResponse getBookingDetails(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        requireParticipant(booking, routeOf(booking), callerId);
+        return buildDetails(booking);
+    }
+
+    private BookingDetailsResponse buildDetails(Booking booking) {
+        RoutePost route = routeOf(booking);
 
         ProfileServiceClient.DriverSummaryItem driver = profileServiceClient
                 .fetchDriverSummaries(List.of(route.getDriverId()))
@@ -461,7 +491,7 @@ public class BookingService {
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
-                booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(bookingId) : null,
+                booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(booking.getId()) : null,
                 overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng())
         );
     }
@@ -480,7 +510,9 @@ public class BookingService {
     }
 
     /** Track Live Trip's status timeline - kept off BookingDetailsResponse since Pay Now/Booking Confirmed don't render it. */
-    public List<BookingStatusHistoryEntry> getStatusHistory(String bookingId) {
+    public List<BookingStatusHistoryEntry> getStatusHistory(String bookingId, String callerId) {
+        Booking booking = getOrThrow(bookingId);
+        requireParticipant(booking, routeOf(booking), callerId);
         return historyRepository.findByBookingIdOrderByCreatedAtAsc(bookingId).stream()
                 .map(h -> new BookingStatusHistoryEntry(h.getStatus(), h.getCreatedAt()))
                 .toList();
@@ -501,16 +533,42 @@ public class BookingService {
         return (int) Duration.between(startedAt, completedAt).toMinutes();
     }
 
+    /** One open booking per rider at a time. A retry of the same request (a flaky network resending
+     * the tap) gets back the hold it already made instead of a second one; a hold left on another
+     * route or another seat count is released, since the rider has clearly moved on from it. */
     @Transactional
-    public Booking reserveSeats(String routePostId, BookSeatsRequest request) {
+    public Booking reserveSeats(String routePostId, String riderId, BookSeatsRequest request) {
+        bookingRepository.lockRider(riderId);
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
-        if (bookingRepository.findFirstByRiderIdAndRoutePostIdAndStatus(request.riderId(), routePostId, BookingStatus.RESERVED).isPresent()) {
+        if (riderId.equals(route.getDriverId())) {
+            throw new BadRequestException("You can't book a seat on your own route");
+        }
+        if (route.getStatus() == RouteStatus.FULL) {
+            throw new BadRequestException("This ride is full");
+        }
+        if (route.getStatus() != RouteStatus.PUBLISHED) {
+            throw new BadRequestException("This ride is no longer taking bookings");
+        }
+        if (!route.getDepartureTime().isAfter(Instant.now())) {
+            throw new BadRequestException("This ride has already departed");
+        }
+        if (bookingRepository.findFirstByRiderIdAndRoutePostIdAndStatus(riderId, routePostId, BookingStatus.RESERVED).isPresent()) {
             throw new BadRequestException("Your favourite driver already reserved you a seat on this route - accept or decline that reservation instead of booking a fresh one");
         }
-        if (bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(request.riderId(), ACTIVE_TRIP_STATUSES).isPresent()) {
+        if (bookingRepository.existsByRiderIdAndStatusIn(riderId, ACTIVE_TRIP_STATUSES)) {
             throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before booking another");
+        }
+
+        for (Booking held : bookingRepository.findByRiderIdAndStatus(riderId, BookingStatus.HELD)) {
+            boolean sameAttempt = held.getRoutePostId().equals(routePostId)
+                    && held.getSeatCount().equals(request.seatCount())
+                    && held.getHoldExpiresAt().isAfter(Instant.now());
+            if (sameAttempt) {
+                return held;
+            }
+            releaseUnpaid(held, BookingStatus.HELD, "Replaced by a newer booking attempt - seat released");
         }
 
         int updated = routePostRepository.holdSeats(routePostId, request.seatCount());
@@ -525,7 +583,7 @@ public class BookingService {
 
         Booking booking = Booking.builder()
                 .routePostId(routePostId)
-                .riderId(request.riderId())
+                .riderId(riderId)
                 .seatCount(request.seatCount())
                 .fareTotal(fareTotal)
                 .status(BookingStatus.HELD)
@@ -545,25 +603,24 @@ public class BookingService {
     }
 
     /**
-     * PAYMENT_SUCCEEDED can arrive well after the 4-minute hold window if a Paystack webhook is
-     * delayed - by then SeatHoldExpiryJob may have already released the seat and cancelled the
-     * booking out from under it. Blindly setting CONFIRMED here would resurrect a booking whose
-     * seat may already be back in inventory (or resold to someone else), with no seat re-hold to
-     * back it up. So this only ever confirms a booking that's still HELD; anything else means the
-     * rider's payment succeeded for a reservation that's already gone, and the right outcome is a
-     * refund, not a fake confirmation - reusing the existing cancellation-refund pipeline (payment-
-     * service's EarningsService.refund() is keyed off bookingId, not the booking's current status,
-     * so republishing BookingCancelledEvent here is enough to trigger it).
+     * PAYMENT_SUCCEEDED can arrive after SeatHoldExpiryJob has already released the seat, and
+     * Paystack resends webhooks, so this confirms only a booking that is still HELD - atomically, so
+     * the expiry sweep and this can't both win. A payment for a booking already gone is refunded
+     * through the normal cancellation pipeline; a repeat for one already confirmed is ignored.
      */
     @Transactional
     public void confirm(String bookingId) {
         Booking booking = getOrThrow(bookingId);
-        if (booking.getStatus() == BookingStatus.CONFIRMED) {
+        if (booking.getConfirmedAt() != null) {
             return;
         }
-        if (booking.getStatus() != BookingStatus.HELD) {
-            log.warn("Payment succeeded for booking {} but it's no longer HELD (status={}) - seat hold must have "
-                            + "already expired before the webhook arrived. Refunding instead of confirming.",
+        // A route cancelled between the hold and the payment can't take the rider anywhere.
+        boolean routeGone = FINISHED_ROUTE_STATUSES.contains(routeOf(booking).getStatus());
+        if (routeGone) {
+            moveStatus(booking, BookingStatus.CANCELLED_DRIVER, List.of(BookingStatus.HELD));
+        }
+        if (routeGone || !moveStatus(booking, BookingStatus.CONFIRMED, List.of(BookingStatus.HELD))) {
+            log.warn("Payment succeeded for booking {} but it's no longer HELD (status={}) - refunding instead of confirming",
                     bookingId, booking.getStatus());
             kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                     .bookingId(booking.getId())
@@ -576,7 +633,7 @@ public class BookingService {
             return;
         }
 
-        booking.setStatus(BookingStatus.CONFIRMED);
+        booking.setConfirmedAt(Instant.now());
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Payment succeeded");
 
@@ -590,60 +647,52 @@ public class BookingService {
                 .build());
     }
 
+    /** A failure webhook can land after the hold already expired, or after a retry on another
+     * method paid - only a still-HELD booking is released, otherwise its seat would go back twice. */
     @Transactional
     public void releaseOnPaymentFailure(String bookingId) {
-        Booking booking = getOrThrow(bookingId);
-        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
-        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
-        booking.setStatus(BookingStatus.CANCELLED_RIDER);
-        bookingRepository.save(booking);
-        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Payment failed - seat released");
+        releaseUnpaid(getOrThrow(bookingId), BookingStatus.HELD, "Payment failed - seat released");
+    }
+
+    /** SeatHoldExpiryJob's per-booking step - HELD past its payment window, or RESERVED past its answer window. */
+    @Transactional
+    public void expireUnpaid(Booking booking) {
+        releaseUnpaid(booking, booking.getStatus(), booking.getStatus() == BookingStatus.RESERVED
+                ? "Reservation not answered in time - seat released"
+                : "Payment not completed in time - seat released");
     }
 
     /** Rider backs out of the booking flow before paying - the same outcome SeatHoldExpiryJob
-     * reaches on its own once holdExpiresAt passes, just immediate instead of waiting up to 4
-     * minutes. Only ever touches a booking still HELD - once paid, this is the wrong endpoint
-     * (see cancelByRider, which applies the cancellation-fee window and notifies the driver a
-     * confirmed seat opened up). No fee, no BOOKING_CANCELLED event, no driver notification here -
-     * the driver was never aware this booking existed while it was only HELD, same as when a hold
-     * simply times out unpaid. */
+     * reaches on its own once holdExpiresAt passes, just immediate. No fee, no BOOKING_CANCELLED
+     * event, no driver notification - the driver never saw a booking that was only HELD. */
     @Transactional
     public void releaseHold(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
         if (!callerId.equals(booking.getRiderId())) {
             throw new UnauthorizedException("Only this booking's rider can release its hold");
         }
-        if (booking.getStatus() != BookingStatus.HELD) {
+        if (!releaseUnpaid(booking, BookingStatus.HELD, "Rider backed out before paying - seat released")) {
             throw new BadRequestException("This booking is no longer held - current status is " + booking.getStatus());
         }
-
-        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
-        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
-        booking.setStatus(BookingStatus.CANCELLED_RIDER);
-        bookingRepository.save(booking);
-        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Rider backed out before paying - seat released");
     }
 
     /** A favourite rider taking the driver's offer - converts the reservation into a normal HELD
      * booking with a fresh 4-minute payment window, exactly as if the rider had just booked it
-     * themselves. From here it's indistinguishable from any other HELD booking - same payment
-     * endpoint, same SeatHoldExpiryJob sweep if payment doesn't follow in time. pickup fields are
-     * required here because they never existed on the RESERVED row - the driver reserved the seat
-     * without knowing where this rider wants picking up. */
+     * themselves. pickup fields are required here because they never existed on the RESERVED row. */
     @Transactional
     public Booking acceptReservation(String bookingId, String callerId, AcceptReservationRequest request) {
+        bookingRepository.lockRider(callerId);
         Booking booking = getOrThrow(bookingId);
         if (!callerId.equals(booking.getRiderId())) {
             throw new UnauthorizedException("Only this reservation's rider can accept it");
         }
-        if (booking.getStatus() != BookingStatus.RESERVED) {
-            throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
-        }
-        if (bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(callerId, ACTIVE_TRIP_STATUSES).isPresent()) {
+        if (bookingRepository.existsByRiderIdAndStatusIn(callerId, OPEN_BOOKING_STATUSES)) {
             throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before accepting this reservation");
         }
+        if (!moveStatus(booking, BookingStatus.HELD, List.of(BookingStatus.RESERVED))) {
+            throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
+        }
 
-        booking.setStatus(BookingStatus.HELD);
         booking.setHoldExpiresAt(Instant.now().plus(SEAT_HOLD_MINUTES, ChronoUnit.MINUTES));
         booking.setPickupLabel(request.pickupLabel());
         booking.setPickupLat(request.pickupLat());
@@ -655,41 +704,39 @@ public class BookingService {
     }
 
     /** A favourite rider turning down the driver's offer - releases the seat immediately instead
-     * of making everyone wait out the full 15 minutes for a "no." Same no-fee, no-notification
-     * shape as releaseHold() - the driver already knows they made the offer, they don't need a
-     * second push telling them it was declined versus simply timing out. */
+     * of making everyone wait out the full 15 minutes for a "no." */
     @Transactional
     public void declineReservation(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
         if (!callerId.equals(booking.getRiderId())) {
             throw new UnauthorizedException("Only this reservation's rider can decline it");
         }
-        if (booking.getStatus() != BookingStatus.RESERVED) {
+        if (!releaseUnpaid(booking, BookingStatus.RESERVED, "Reservation declined - seat released")) {
             throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
         }
-
-        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
-        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
-        booking.setStatus(BookingStatus.CANCELLED_RIDER);
-        bookingRepository.save(booking);
-        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, "Reservation declined - seat released");
     }
 
+    /** A still-unpaid booking (HELD or RESERVED) is simply released - there is nothing to refund and
+     * the driver was never told about it. A paid one goes through the fee window and the refund. */
     @Transactional
     public void cancelByRider(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
         if (!callerId.equals(booking.getRiderId())) {
             throw new UnauthorizedException("Only this booking's rider can cancel it");
         }
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (booking.getStatus() == BookingStatus.HELD || booking.getStatus() == BookingStatus.RESERVED) {
+            if (releaseUnpaid(booking, booking.getStatus(), "Cancelled by rider before paying - seat released")) {
+                return;
+            }
+        }
+        RoutePost route = routeOf(booking);
 
+        if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
+            throw new BadRequestException("This booking can no longer be cancelled - current status is " + booking.getStatus());
+        }
         boolean feeApplies = cancellationPolicy.isFeeApplicable(route.getDepartureTime(), Instant.now());
         routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
         routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
-
-        booking.setStatus(BookingStatus.CANCELLED_RIDER);
-        bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window" : "Cancelled free of charge");
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
@@ -703,17 +750,16 @@ public class BookingService {
                 .build());
     }
 
-    /** Driver taps "I'm on my way" - Track Live Trip's "Driver en route to pickup" phase. */
+    /** Driver taps "I'm on my way" - Track Live Trip's "Driver en route to pickup" phase. A repeat
+     * tap is a no-op, not a second push to the rider. */
     @Transactional
     public void markEnRouteToPickup(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
-        if (!callerId.equals(route.getDriverId())) {
-            throw new UnauthorizedException("Only this trip's driver can mark it en route");
+        requireDriverOfLiveRoute(booking, callerId, "mark it en route");
+        if (booking.getStatus() == BookingStatus.EN_ROUTE_TO_PICKUP) {
+            return;
         }
-        booking.setStatus(BookingStatus.EN_ROUTE_TO_PICKUP);
-        bookingRepository.save(booking);
+        requireMove(booking, BookingStatus.EN_ROUTE_TO_PICKUP, List.of(BookingStatus.CONFIRMED));
         recordHistory(bookingId, BookingStatus.EN_ROUTE_TO_PICKUP, "Driver en route to pickup");
 
         kafkaTemplate.send(KafkaTopics.DRIVER_EN_ROUTE, DriverEnRouteEvent.builder()
@@ -728,13 +774,11 @@ public class BookingService {
     @Transactional
     public void markArrivedAtPickup(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
-        if (!callerId.equals(route.getDriverId())) {
-            throw new UnauthorizedException("Only this trip's driver can mark it arrived at pickup");
+        requireDriverOfLiveRoute(booking, callerId, "mark it arrived at pickup");
+        if (booking.getStatus() == BookingStatus.AT_PICKUP) {
+            return;
         }
-        booking.setStatus(BookingStatus.AT_PICKUP);
-        bookingRepository.save(booking);
+        requireMove(booking, BookingStatus.AT_PICKUP, List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP));
         recordHistory(bookingId, BookingStatus.AT_PICKUP, "Driver arrived at pickup point");
 
         kafkaTemplate.send(KafkaTopics.DRIVER_ARRIVED, DriverArrivedEvent.builder()
@@ -749,13 +793,16 @@ public class BookingService {
     @Transactional
     public void markPickedUp(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        RoutePost route = routeOf(booking);
         if (!callerId.equals(booking.getRiderId()) && !callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this booking's rider or the route's driver can mark it picked up");
         }
+        requireLive(route);
+        if (booking.getStatus() == BookingStatus.IN_PROGRESS) {
+            return;
+        }
+        requireMove(booking, BookingStatus.IN_PROGRESS, AWAITING_PICKUP_STATUSES);
         booking.setPickupConfirmedAt(Instant.now());
-        booking.setStatus(BookingStatus.IN_PROGRESS);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.IN_PROGRESS, "Rider picked up - trip in progress");
     }
@@ -763,13 +810,11 @@ public class BookingService {
     @Transactional
     public void markNoShow(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
-        if (!callerId.equals(route.getDriverId())) {
-            throw new UnauthorizedException("Only this trip's driver can mark it as a no-show");
+        requireDriverOfLiveRoute(booking, callerId, "mark it as a no-show");
+        if (booking.getStatus() == BookingStatus.NO_SHOW) {
+            return;
         }
-        booking.setStatus(BookingStatus.NO_SHOW);
-        bookingRepository.save(booking);
+        requireMove(booking, BookingStatus.NO_SHOW, AWAITING_PICKUP_STATUSES);
         recordHistory(bookingId, BookingStatus.NO_SHOW, "Rider did not show up within the grace period");
     }
 
@@ -777,18 +822,10 @@ public class BookingService {
     @Transactional
     public void undoManifestMark(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
-        if (!callerId.equals(route.getDriverId())) {
-            throw new UnauthorizedException("Only this trip's driver can reset a manifest mark");
-        }
-        if (route.getStatus() == RouteStatus.COMPLETED) {
-            throw new BadRequestException("This trip is already completed - manifest marks can no longer be changed");
-        }
-        if (booking.getStatus() != BookingStatus.IN_PROGRESS && booking.getStatus() != BookingStatus.NO_SHOW) {
+        requireDriverOfLiveRoute(booking, callerId, "reset a manifest mark");
+        if (!moveStatus(booking, BookingStatus.CONFIRMED, List.of(BookingStatus.IN_PROGRESS, BookingStatus.NO_SHOW))) {
             throw new BadRequestException("This booking hasn't been marked yet");
         }
-        booking.setStatus(BookingStatus.CONFIRMED);
         booking.setPickupConfirmedAt(null);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Manifest mark reset by driver");
@@ -802,33 +839,36 @@ public class BookingService {
         if (!callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this route's driver can reset its manifest");
         }
-        if (route.getStatus() == RouteStatus.COMPLETED) {
-            throw new BadRequestException("This trip is already completed - manifest marks can no longer be changed");
+        requireLive(route);
+        for (Booking b : bookingRepository.findByRoutePostId(routePostId)) {
+            if (moveStatus(b, BookingStatus.CONFIRMED, List.of(BookingStatus.IN_PROGRESS, BookingStatus.NO_SHOW))) {
+                b.setPickupConfirmedAt(null);
+                bookingRepository.save(b);
+                recordHistory(b.getId(), BookingStatus.CONFIRMED, "Manifest mark reset by driver");
+            }
         }
-        bookingRepository.findByRoutePostId(routePostId).stream()
-                .filter(b -> b.getStatus() == BookingStatus.IN_PROGRESS || b.getStatus() == BookingStatus.NO_SHOW)
-                .forEach(b -> {
-                    b.setStatus(BookingStatus.CONFIRMED);
-                    b.setPickupConfirmedAt(null);
-                    bookingRepository.save(b);
-                    recordHistory(b.getId(), BookingStatus.CONFIRMED, "Manifest mark reset by driver");
-                });
     }
 
     @Transactional
     public void completeTrip(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
-        RoutePost route = routePostRepository.findById(booking.getRoutePostId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        RoutePost route = routeOf(booking);
         if (!callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this trip's driver can complete it");
         }
-        completeBookingInternal(booking, route);
+        if (route.getStatus() != RouteStatus.IN_PROGRESS) {
+            throw new BadRequestException("This trip hasn't been started yet");
+        }
+        if (booking.getStatus() == BookingStatus.COMPLETED) {
+            return;
+        }
+        if (!completeBookingInternal(booking, route)) {
+            throw new BadRequestException("Only a picked-up passenger's trip can be completed - current status is " + booking.getStatus());
+        }
     }
 
     /** Statuses that still need a Picked Up/No Show decision before a route-level Complete Trip is allowed. */
-    private static final List<BookingStatus> UNRESOLVED_MANIFEST_STATUSES =
-            List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
+    private static final List<BookingStatus> UNRESOLVED_MANIFEST_STATUSES = AWAITING_PICKUP_STATUSES;
 
     /** "Complete Trip" button - completes every picked-up passenger on the route in one call, gated on every booking having been marked Picked Up or No Show first (the manifest's "Mark all passengers before completing" banner). No-shows are left as-is; they never had a trip to complete or settle. */
     @Transactional
@@ -849,9 +889,7 @@ public class BookingService {
         }
 
         for (Booking booking : bookings) {
-            if (booking.getStatus() == BookingStatus.IN_PROGRESS) {
-                completeBookingInternal(booking, route);
-            }
+            completeBookingInternal(booking, route);
         }
 
         route.setStatus(RouteStatus.COMPLETED);
@@ -867,9 +905,12 @@ public class BookingService {
         return finalBookings.stream().map(b -> toSummary(b, riderRatings, riders)).toList();
     }
 
-    private void completeBookingInternal(Booking booking, RoutePost route) {
-        booking.setStatus(BookingStatus.COMPLETED);
-        bookingRepository.save(booking);
+    /** TRIP_COMPLETED is what pays the driver, so it goes out only from the call that actually moved
+     * the booking - a double-tapped Complete can't publish it twice. */
+    private boolean completeBookingInternal(Booking booking, RoutePost route) {
+        if (!moveStatus(booking, BookingStatus.COMPLETED, List.of(BookingStatus.IN_PROGRESS))) {
+            return false;
+        }
         recordHistory(booking.getId(), BookingStatus.COMPLETED, "Trip completed");
 
         kafkaTemplate.send(KafkaTopics.TRIP_COMPLETED, TripCompletedEvent.builder()
@@ -880,25 +921,113 @@ public class BookingService {
                 .fareTotal(booking.getFareTotal())
                 .completedAt(LocalDateTime.now())
                 .build());
+        return true;
     }
 
+    /** Rater, ratee and direction all come from the booking, not the request - the caller is either
+     * its rider rating the driver or its driver rating the rider, once per side, after the trip. */
     @Transactional
-    public Rating rate(String bookingId, RateRequest request) {
-        getOrThrow(bookingId); // validates the booking exists before accepting a rating
+    public Rating rate(String bookingId, String callerId, RateRequest request) {
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routeOf(booking);
+        RatingDirection direction;
+        String rateeId;
+        if (callerId.equals(booking.getRiderId())) {
+            direction = RatingDirection.RIDER_TO_DRIVER;
+            rateeId = route.getDriverId();
+        } else if (callerId.equals(route.getDriverId())) {
+            direction = RatingDirection.DRIVER_TO_RIDER;
+            rateeId = booking.getRiderId();
+        } else {
+            throw new UnauthorizedException("Only this booking's rider or driver can rate it");
+        }
+        if (booking.getStatus() != BookingStatus.COMPLETED) {
+            throw new BadRequestException("A trip can only be rated once it's completed");
+        }
+        if (ratingRepository.existsByBookingIdAndDirection(bookingId, direction)) {
+            throw new BadRequestException("You've already rated this trip");
+        }
         Rating rating = Rating.builder()
                 .bookingId(bookingId)
-                .raterId(request.raterId())
-                .rateeId(request.rateeId())
-                .direction(request.direction())
+                .raterId(callerId)
+                .rateeId(rateeId)
+                .direction(direction)
                 .stars(request.stars())
                 .comment(request.comment())
                 .build();
         return ratingRepository.save(rating);
     }
 
-    @Transactional
-    public SosIncident triggerSos(String bookingId, String triggeredBy, Double latitude, Double longitude) {
+    /** Ends an unpaid booking and returns its seat - only if this call is the one that moved it, so
+     * the expiry sweep, a failure webhook and the rider backing out can't each release the same seat. */
+    private boolean releaseUnpaid(Booking booking, BookingStatus from, String note) {
+        if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, List.of(from))) {
+            return false;
+        }
+        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
+        recordHistory(booking.getId(), BookingStatus.CANCELLED_RIDER, note);
+        return true;
+    }
+
+    /** Compare-and-set, mirrored onto the loaded entity so a later save() doesn't write the old status back. */
+    private boolean moveStatus(Booking booking, BookingStatus to, List<BookingStatus> from) {
+        if (bookingRepository.transitionStatus(booking.getId(), from, to) == 0) {
+            return false;
+        }
+        booking.setStatus(to);
+        return true;
+    }
+
+    private void requireMove(Booking booking, BookingStatus to, List<BookingStatus> from) {
+        if (!moveStatus(booking, to, from)) {
+            throw new BadRequestException("This booking can't move to " + to + " from " + booking.getStatus());
+        }
+    }
+
+    private RoutePost requireDriverOfLiveRoute(Booking booking, String callerId, String action) {
+        RoutePost route = routeOf(booking);
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this trip's driver can " + action);
+        }
+        requireLive(route);
+        return route;
+    }
+
+    private static void requireLive(RoutePost route) {
+        if (FINISHED_ROUTE_STATUSES.contains(route.getStatus())) {
+            throw new BadRequestException("This trip is already " + route.getStatus().name().toLowerCase() + " - it can no longer be changed");
+        }
+    }
+
+    private static void requireParticipant(Booking booking, RoutePost route, String callerId) {
+        if (!callerId.equals(booking.getRiderId()) && !callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this booking's rider or driver can access it");
+        }
+    }
+
+    private static void requireSelf(String userId, String callerId) {
+        if (!userId.equals(callerId)) {
+            throw new UnauthorizedException("You can only access your own trips");
+        }
+    }
+
+    private RoutePost routeOf(Booking booking) {
+        return routePostRepository.findById(booking.getRoutePostId())
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+    }
+
+    /** What payment-service checks a payment against - never the client's own figures. */
+    public BookingPaymentView getPaymentView(String bookingId) {
         Booking booking = getOrThrow(bookingId);
+        return new BookingPaymentView(booking.getId(), booking.getRiderId(), routeOf(booking).getDriverId(),
+                booking.getStatus(), booking.getFareTotal(), booking.getHoldExpiresAt());
+    }
+
+    @Transactional
+    public SosIncident triggerSos(String bookingId, String callerId, String triggeredBy, Double latitude, Double longitude) {
+        Booking booking = getOrThrow(bookingId);
+        requireParticipant(booking, routeOf(booking), callerId);
 
         SosIncident incident = sosIncidentRepository.save(SosIncident.builder()
                 .bookingId(bookingId)
@@ -935,11 +1064,15 @@ public class BookingService {
     }
 
     @Transactional
-    public IssueReport reportIssue(IssueReportRequest request) {
+    public IssueReport reportIssue(IssueReportRequest request, String callerId) {
+        if (request.bookingId() != null) {
+            Booking booking = getOrThrow(request.bookingId());
+            requireParticipant(booking, routeOf(booking), callerId);
+        }
         String referenceNumber = "ISS-" + String.format("%08d", RANDOM.nextInt(100_000_000));
         IssueReport issue = issueReportRepository.save(IssueReport.builder()
                 .bookingId(request.bookingId())
-                .reportedBy(request.reportedBy())
+                .reportedBy(callerId)
                 .category(request.category())
                 .description(request.description())
                 .referenceNumber(referenceNumber)
@@ -949,7 +1082,7 @@ public class BookingService {
         kafkaTemplate.send(KafkaTopics.ISSUE_REPORTED, IssueReportedEvent.builder()
                 .issueId(issue.getId())
                 .bookingId(request.bookingId())
-                .reportedBy(request.reportedBy())
+                .reportedBy(callerId)
                 .category(request.category())
                 .referenceNumber(referenceNumber)
                 .reportedAt(LocalDateTime.now())

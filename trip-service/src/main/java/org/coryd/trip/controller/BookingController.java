@@ -47,14 +47,14 @@ public class BookingController {
     private final BookingService bookingService;
 
     @GetMapping("/riders/{riderId}/recent-routes")
-    public ApiResponse<List<Booking>> recentRoutes(@PathVariable String riderId) {
-        return ApiResponse.ok(bookingService.getRecentRoutesForRider(riderId));
+    public ApiResponse<List<Booking>> recentRoutes(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String riderId) {
+        return ApiResponse.ok(bookingService.getRecentRoutesForRider(riderId, principal.getUserId()));
     }
 
     /** Powers the Home screen's "Go back to your current trip" banner. */
     @GetMapping("/riders/{riderId}/active")
-    public ApiResponse<Optional<BookingDetailsResponse>> activeTrip(@PathVariable String riderId) {
-        return ApiResponse.ok(bookingService.getActiveBookingForRider(riderId));
+    public ApiResponse<Optional<BookingDetailsResponse>> activeTrip(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String riderId) {
+        return ApiResponse.ok(bookingService.getActiveBookingForRider(riderId, principal.getUserId()));
     }
 
     /** Home screen's "your favourite driver reserved you a seat" banner - lets the app find an
@@ -68,36 +68,36 @@ public class BookingController {
 
     /** Trip History screen - status is omitted entirely for the "All" tab. */
     @GetMapping("/riders/{riderId}/history")
-    public ApiResponse<PagedResponse<TripHistoryItem>> history(@PathVariable String riderId,
+    public ApiResponse<PagedResponse<TripHistoryItem>> history(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String riderId,
                                                                  @RequestParam(required = false) TripHistoryStatus status,
                                                                  @RequestParam(required = false) String search,
                                                                  @RequestParam(defaultValue = "0") int page,
                                                                  @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
-        return ApiResponse.ok(bookingService.getHistory(riderId, status, search, pageable));
+        return ApiResponse.ok(bookingService.getHistory(riderId, principal.getUserId(), status, search, pageable));
     }
 
     /** Dashboard's "Active Trip" card. */
     @GetMapping("/drivers/{driverId}/active")
-    public ApiResponse<Optional<DriverActiveTripResponse>> activeTripForDriver(@PathVariable String driverId) {
-        return ApiResponse.ok(bookingService.getActiveTripForDriver(driverId));
+    public ApiResponse<Optional<DriverActiveTripResponse>> activeTripForDriver(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String driverId) {
+        return ApiResponse.ok(bookingService.getActiveTripForDriver(driverId, principal.getUserId()));
     }
 
     /** Dashboard's "Trips this week" tile. */
     @GetMapping("/drivers/{driverId}/stats")
-    public ApiResponse<DriverTripStatsResponse> statsForDriver(@PathVariable String driverId) {
-        return ApiResponse.ok(bookingService.getStatsForDriver(driverId));
+    public ApiResponse<DriverTripStatsResponse> statsForDriver(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String driverId) {
+        return ApiResponse.ok(bookingService.getStatsForDriver(driverId, principal.getUserId()));
     }
 
     /** Driver Trip History screen - one row per posted route, not per booking. No "Scheduled" bucket - a route that hasn't started yet isn't history, it's upcoming. */
     @GetMapping("/drivers/{driverId}/history")
-    public ApiResponse<PagedResponse<DriverTripHistoryItem>> historyForDriver(@PathVariable String driverId,
+    public ApiResponse<PagedResponse<DriverTripHistoryItem>> historyForDriver(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String driverId,
                                                                                 @RequestParam(required = false) TripHistoryStatus status,
                                                                                 @RequestParam(required = false) String search,
                                                                                 @RequestParam(defaultValue = "0") int page,
                                                                                 @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
-        return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, status, search, pageable));
+        return ApiResponse.ok(bookingService.getHistoryForDriver(driverId, principal.getUserId(), status, search, pageable));
     }
 
     /** "View Passenger Manifest" - the route's driver, or a rider actively booked on it. */
@@ -121,19 +121,20 @@ public class BookingController {
     }
 
     @GetMapping("/{bookingId}")
-    public ApiResponse<BookingDetailsResponse> details(@PathVariable String bookingId) {
-        return ApiResponse.ok(bookingService.getBookingDetails(bookingId));
+    public ApiResponse<BookingDetailsResponse> details(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.getBookingDetails(bookingId, principal.getUserId()));
     }
 
     /** Track Live Trip's status timeline - each entry is a status the booking has passed through, with when it happened. */
     @GetMapping("/{bookingId}/history")
-    public ApiResponse<List<BookingStatusHistoryEntry>> history(@PathVariable String bookingId) {
-        return ApiResponse.ok(bookingService.getStatusHistory(bookingId));
+    public ApiResponse<List<BookingStatusHistoryEntry>> history(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.getStatusHistory(bookingId, principal.getUserId()));
     }
 
     @PostMapping("/routes/{routePostId}")
-    public ApiResponse<Booking> reserve(@PathVariable String routePostId, @Valid @RequestBody BookSeatsRequest request) {
-        return ApiResponse.ok(bookingService.reserveSeats(routePostId, request));
+    public ApiResponse<Booking> reserve(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId,
+                                    @Valid @RequestBody BookSeatsRequest request) {
+        return ApiResponse.ok(bookingService.reserveSeats(routePostId, principal.getUserId(), request));
     }
 
     @PostMapping("/{bookingId}/cancel")
@@ -217,26 +218,26 @@ public class BookingController {
     }
 
     @PostMapping("/{bookingId}/rate")
-    public ApiResponse<Rating> rate(@PathVariable String bookingId, @Valid @RequestBody RateRequest request) {
-        return ApiResponse.ok(bookingService.rate(bookingId, request));
+    public ApiResponse<Rating> rate(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId, @Valid @RequestBody RateRequest request) {
+        return ApiResponse.ok(bookingService.rate(bookingId, principal.getUserId(), request));
     }
 
     @PostMapping("/{bookingId}/sos")
-    public ApiResponse<SosIncident> sos(@PathVariable String bookingId,
+    public ApiResponse<SosIncident> sos(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId,
                                          @RequestParam String triggeredBy,
                                          @RequestParam(required = false) Double latitude,
                                          @RequestParam(required = false) Double longitude) {
-        return ApiResponse.ok(bookingService.triggerSos(bookingId, triggeredBy, latitude, longitude));
+        return ApiResponse.ok(bookingService.triggerSos(bookingId, principal.getUserId(), triggeredBy, latitude, longitude));
     }
 
     @PostMapping("/{bookingId}/share")
-    public ApiResponse<String> share(@PathVariable String bookingId) {
-        return ApiResponse.ok(bookingService.shareTrip(bookingId));
+    public ApiResponse<String> share(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.shareTrip(bookingId, principal.getUserId()));
     }
 
     /** Account > Report an issue - bookingId lives in the body (nullable) since a trip isn't always selected. */
     @PostMapping("/report-issue")
-    public ApiResponse<IssueReport> reportIssue(@Valid @RequestBody IssueReportRequest request) {
-        return ApiResponse.ok(bookingService.reportIssue(request));
+    public ApiResponse<IssueReport> reportIssue(@AuthenticationPrincipal CoRydUserDetails principal, @Valid @RequestBody IssueReportRequest request) {
+        return ApiResponse.ok(bookingService.reportIssue(request, principal.getUserId()));
     }
 }

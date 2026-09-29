@@ -2,7 +2,6 @@ package org.coryd.payment.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.coryd.common.enums.PaymentMethod;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
@@ -66,14 +65,19 @@ public class EarningsService {
             log.warn("No releasable fare hold for booking {}", bookingId);
             return;
         }
+        if (!isPaid(bookingId)) {
+            log.error("RECONCILE: trip completed for booking {} but its payment never succeeded - driver not credited", bookingId);
+            return;
+        }
 
         BigDecimal commission = hold.getAmount().multiply(commissionProperties.getPercentage());
         BigDecimal net = hold.getAmount().subtract(commission);
 
-        hold.setReleased(true);
-        fareHoldRepository.save(hold);
+        if (fareHoldRepository.markReleased(hold.getId()) == 0) {
+            return;
+        }
 
-        DriverEarningsAccount account = earningsAccountRepository.findByDriverId(hold.getDriverId())
+        DriverEarningsAccount account = earningsAccountRepository.findForUpdate(hold.getDriverId())
                 .orElseGet(() -> DriverEarningsAccount.builder().driverId(hold.getDriverId()).build());
         account.setAvailableBalance(account.getAvailableBalance().add(net));
         account.setLifetimeGross(account.getLifetimeGross().add(hold.getAmount()));
@@ -156,19 +160,26 @@ public class EarningsService {
         return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 
+    private boolean isPaid(String bookingId) {
+        return paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId)
+                .map(t -> t.getStatus() == PayoutStatus.PAID)
+                .orElse(false);
+    }
+
     @Transactional
     public void refund(String bookingId, String reason) {
         FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
         if (hold == null || hold.isReleased() || hold.isRefunded()) {
             return;
         }
-        hold.setRefunded(true);
-        fareHoldRepository.save(hold);
 
         paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).ifPresent(transaction -> {
-            boolean hasMoneyToRefund = transaction.getPaymentMethod() == PaymentMethod.WALLET
-                    || (transaction.getPaymentMethod() == PaymentMethod.PAYSTACK && transaction.getStatus() == PayoutStatus.PAID);
-            if (!hasMoneyToRefund) {
+            // Only marked refunded once money actually goes back - a cancelled booking whose Paystack
+            // charge lands later is refunded then, not skipped because this ran first.
+            if (transaction.getStatus() != PayoutStatus.PAID) {
+                return;
+            }
+            if (fareHoldRepository.markRefunded(hold.getId()) == 0) {
                 return;
             }
             walletService.creditRefund(transaction.getRiderId(), bookingId, hold.getAmount(), reason);

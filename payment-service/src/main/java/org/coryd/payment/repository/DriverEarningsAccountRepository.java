@@ -1,6 +1,8 @@
 package org.coryd.payment.repository;
 
 import org.coryd.payment.entity.DriverEarningsAccount;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +13,12 @@ import java.util.Optional;
 
 public interface DriverEarningsAccountRepository extends JpaRepository<DriverEarningsAccount, String> {
     Optional<DriverEarningsAccount> findByDriverId(String driverId);
+
+    /** Row lock for the trip-completion credit - without it, a withdrawal's atomic debit landing
+     * between the read and the save is silently overwritten, and the driver keeps the money twice. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from DriverEarningsAccount d where d.driverId = :driverId")
+    Optional<DriverEarningsAccount> findForUpdate(@Param("driverId") String driverId);
 
     /** Atomic conditional debit - same last-seat/race-condition fix as RoutePostRepository.holdSeats: 0 rows affected means insufficient balance, resolved in one statement instead of a check-then-update race. */
     @Modifying

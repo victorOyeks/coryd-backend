@@ -15,5 +15,6 @@
     <include file="db/changelog/004-payout-recipients-multi.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/005-wallet-feed-details.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/006-payment-fare-hold-booking-unique.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/007-payment-authorization-url.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

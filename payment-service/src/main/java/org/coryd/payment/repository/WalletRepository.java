@@ -1,6 +1,8 @@
 package org.coryd.payment.repository;
 
 import org.coryd.payment.entity.Wallet;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -10,6 +12,12 @@ import java.util.Optional;
 
 public interface WalletRepository extends JpaRepository<Wallet, String> {
     Optional<Wallet> findByUserId(String userId);
+
+    /** Row lock for every balance change - a debit and a top-up credit landing together would
+     * otherwise each write back a balance computed from the same stale read. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select w from Wallet w where w.userId = :userId")
+    Optional<Wallet> findForUpdate(@Param("userId") String userId);
 
     /**
      * Native "insert if absent" for WalletService.getOrCreateWallet()'s race: two concurrent
