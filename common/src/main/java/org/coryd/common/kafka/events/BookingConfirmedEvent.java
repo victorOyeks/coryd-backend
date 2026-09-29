@@ -19,5 +19,6 @@ public class BookingConfirmedEvent {
     private String driverId;
     private int seatCount;
     private BigDecimal fareTotal;
+    private String pickupCode;
     private LocalDateTime confirmedAt;
 }

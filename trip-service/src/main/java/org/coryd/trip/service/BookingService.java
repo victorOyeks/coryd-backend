@@ -64,6 +64,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.DayOfWeek;
 import java.time.Duration;
@@ -140,6 +142,8 @@ public class BookingService {
     private static final List<BookingStatus> AWAITING_PICKUP_STATUSES =
             List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
     private static final List<RouteStatus> FINISHED_ROUTE_STATUSES = List.of(RouteStatus.CANCELLED, RouteStatus.COMPLETED);
+    /** Codes tried before the driver is locked out and the rider has to confirm boarding themselves. */
+    static final int MAX_PICKUP_CODE_ATTEMPTS = 5;
     private static final List<BookingStatus> CANCELLED_TRIP_STATUSES =
             List.of(BookingStatus.CANCELLED_RIDER, BookingStatus.CANCELLED_DRIVER, BookingStatus.NO_SHOW);
     /** Every status that belongs in Trip History at all - HELD bookings never got confirmed, so they're excluded. */
@@ -151,7 +155,7 @@ public class BookingService {
     public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId, String callerId) {
         requireSelf(riderId, callerId);
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
-                .map(this::buildDetails);
+                .map(booking -> buildDetails(booking, true));
     }
 
     /** The RESERVED counterpart to getActiveBookingForRider() above - lets the app proactively show
@@ -161,7 +165,7 @@ public class BookingService {
      * unanswered reservation offer must never count as a trip the rider is already "on". */
     public Optional<BookingDetailsResponse> getReservedSeatForRider(String riderId) {
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, List.of(BookingStatus.RESERVED))
-                .map(this::buildDetails);
+                .map(booking -> buildDetails(booking, true));
     }
 
     /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route, empty if they have none posted. Returns everything trip-service has on it (route + full booking list), not just the card's headline count, so the client can also build a tap-through detail view from this one call. */
@@ -461,10 +465,11 @@ public class BookingService {
     public BookingDetailsResponse getBookingDetails(String bookingId, String callerId) {
         Booking booking = getOrThrow(bookingId);
         requireParticipant(booking, routeOf(booking), callerId);
-        return buildDetails(booking);
+        return buildDetails(booking, callerId.equals(booking.getRiderId()));
     }
 
-    private BookingDetailsResponse buildDetails(Booking booking) {
+    /** forRider decides whether the pickup code is included - the driver asking must never see it. */
+    private BookingDetailsResponse buildDetails(Booking booking, boolean forRider) {
         RoutePost route = routeOf(booking);
 
         ProfileServiceClient.DriverSummaryItem driver = profileServiceClient
@@ -492,7 +497,8 @@ public class BookingService {
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
                 booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(booking.getId()) : null,
-                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng())
+                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
+                forRider && AWAITING_PICKUP_STATUSES.contains(booking.getStatus()) ? booking.getPickupCode() : null
         );
     }
 
@@ -634,6 +640,7 @@ public class BookingService {
         }
 
         booking.setConfirmedAt(Instant.now());
+        booking.setPickupCode(newPickupCode(booking.getRoutePostId()));
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Payment succeeded");
 
@@ -643,6 +650,7 @@ public class BookingService {
                 .riderId(booking.getRiderId())
                 .seatCount(booking.getSeatCount())
                 .fareTotal(booking.getFareTotal())
+                .pickupCode(booking.getPickupCode())
                 .confirmedAt(LocalDateTime.now())
                 .build());
     }
@@ -735,6 +743,7 @@ public class BookingService {
             throw new BadRequestException("This booking can no longer be cancelled - current status is " + booking.getStatus());
         }
         boolean feeApplies = cancellationPolicy.isFeeApplicable(route.getDepartureTime(), Instant.now());
+        BigDecimal fee = cancellationPolicy.applyFee(booking.getFareTotal(), feeApplies);
         routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
         routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window" : "Cancelled free of charge");
@@ -746,6 +755,7 @@ public class BookingService {
                 .driverId(route.getDriverId())
                 .cancelledBy("RIDER")
                 .feeApplied(feeApplies)
+                .feeAmount(fee)
                 .cancelledAt(LocalDateTime.now())
                 .build());
     }
@@ -789,17 +799,28 @@ public class BookingService {
                 .build());
     }
 
-    /** Rider taps "I've boarded", or the driver taps "Mark Picked Up" on the Passenger Manifest - either way advances status to IN_PROGRESS, not just a timestamp, so it drives the Track Live Trip phase timeline too. */
-    @Transactional
-    public void markPickedUp(String bookingId, String callerId) {
+    /** Rider taps "I've boarded", or the driver taps "Mark Picked Up" on the Passenger Manifest - either
+     * way advances status to IN_PROGRESS, which is what the trip is settled on. The driver has to enter
+     * the rider's pickup code, so a pickup is only ever recorded once the two have actually met; the
+     * rider confirming their own boarding needs no code. Doesn't roll back on a rejected code, so the
+     * spent attempt sticks. */
+    @Transactional(noRollbackFor = BadRequestException.class)
+    public void markPickedUp(String bookingId, String callerId, String pickupCode) {
         Booking booking = getOrThrow(bookingId);
         RoutePost route = routeOf(booking);
-        if (!callerId.equals(booking.getRiderId()) && !callerId.equals(route.getDriverId())) {
+        boolean byRider = callerId.equals(booking.getRiderId());
+        if (!byRider && !callerId.equals(route.getDriverId())) {
             throw new UnauthorizedException("Only this booking's rider or the route's driver can mark it picked up");
         }
         requireLive(route);
         if (booking.getStatus() == BookingStatus.IN_PROGRESS) {
             return;
+        }
+        if (!AWAITING_PICKUP_STATUSES.contains(booking.getStatus())) {
+            throw new BadRequestException("This booking can't be marked picked up - current status is " + booking.getStatus());
+        }
+        if (!byRider) {
+            verifyPickupCode(booking, pickupCode);
         }
         requireMove(booking, BookingStatus.IN_PROGRESS, AWAITING_PICKUP_STATUSES);
         booking.setPickupConfirmedAt(Instant.now());
@@ -956,6 +977,37 @@ public class BookingService {
                 .comment(request.comment())
                 .build();
         return ratingRepository.save(rating);
+    }
+
+    private void verifyPickupCode(Booking booking, String pickupCode) {
+        if (pickupCode == null || !pickupCode.matches("\\d{4}")) {
+            throw new BadRequestException("Enter the rider's 4-digit pickup code");
+        }
+        if (booking.getPickupCode() == null) {
+            throw new BadRequestException("This booking has no pickup code - ask the rider to tap \"I've boarded\" in their app");
+        }
+        if (bookingRepository.spendPickupCodeAttempt(booking.getId(), MAX_PICKUP_CODE_ATTEMPTS) == 0) {
+            throw new BadRequestException("Too many wrong pickup codes - ask the rider to tap \"I've boarded\" in their app");
+        }
+        boolean matches = MessageDigest.isEqual(
+                booking.getPickupCode().getBytes(StandardCharsets.UTF_8), pickupCode.getBytes(StandardCharsets.UTF_8));
+        if (!matches) {
+            throw new BadRequestException("That pickup code doesn't match this rider's booking");
+        }
+        bookingRepository.resetPickupCodeAttempts(booking.getId());
+        // The entity's own copy is still the pre-attempt count - the save that follows would write it back.
+        booking.setPickupCodeAttempts(0);
+    }
+
+    /** Distinct among the route's riders still waiting for pickup, so a driver reading codes off
+     * several riders at one stop can't board one on another's code. */
+    private String newPickupCode(String routePostId) {
+        String code;
+        int tries = 0;
+        do {
+            code = String.format("%04d", RANDOM.nextInt(10_000));
+        } while (++tries < 20 && bookingRepository.existsByRoutePostIdAndPickupCodeAndStatusIn(routePostId, code, AWAITING_PICKUP_STATUSES));
+        return code;
     }
 
     /** Ends an unpaid booking and returns its seat - only if this call is the one that moved it, so

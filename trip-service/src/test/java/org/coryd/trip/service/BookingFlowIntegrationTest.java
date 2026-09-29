@@ -314,7 +314,7 @@ class BookingFlowIntegrationTest {
         Booking booking = book(route, RIDER, 1);
         confirm(booking);
         routeService.startTrip(route.getId(), DRIVER);
-        bookingService.markPickedUp(booking.getId(), DRIVER);
+        pickUp(booking);
 
         bookingService.confirm(booking.getId());
 
@@ -347,7 +347,7 @@ class BookingFlowIntegrationTest {
         bookingService.cancelByRider(booking.getId(), RIDER);
         routeService.startTrip(route.getId(), DRIVER);
 
-        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> pickUp(booking)).isInstanceOf(BadRequestException.class);
         assertThatThrownBy(() -> bookingService.completeTrip(booking.getId(), DRIVER)).isInstanceOf(BadRequestException.class);
         assertThat(status(booking)).isEqualTo(BookingStatus.CANCELLED_RIDER);
     }
@@ -358,7 +358,7 @@ class BookingFlowIntegrationTest {
         Booking booking = book(route, RIDER, 1);
         confirm(booking);
         routeService.startTrip(route.getId(), DRIVER);
-        bookingService.markPickedUp(booking.getId(), DRIVER);
+        pickUp(booking);
 
         bookingService.completeTrip(booking.getId(), DRIVER);
         bookingService.completeTrip(booking.getId(), DRIVER);
@@ -410,7 +410,7 @@ class BookingFlowIntegrationTest {
         Booking tunde = book(route, "tunde", 2);
         confirm(tunde);
         routeService.startTrip(route.getId(), DRIVER);
-        bookingService.markPickedUp(amaka.getId(), DRIVER);
+        pickUp(amaka);
         bookingService.markNoShow(tunde.getId(), DRIVER);
         bookingService.completeRoute(route.getId(), DRIVER);
 
@@ -445,7 +445,7 @@ class BookingFlowIntegrationTest {
         assertThatThrownBy(() -> bookingService.cancelByRider(booking.getId(), OTHER_RIDER)).isInstanceOf(UnauthorizedException.class);
         assertThatThrownBy(() -> bookingService.getHistory(RIDER, OTHER_RIDER, null, null,
                 org.springframework.data.domain.PageRequest.of(0, 20))).isInstanceOf(UnauthorizedException.class);
-        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), OTHER_RIDER)).isInstanceOf(UnauthorizedException.class);
+        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), OTHER_RIDER, "0000")).isInstanceOf(UnauthorizedException.class);
     }
 
     @Test
@@ -459,13 +459,203 @@ class BookingFlowIntegrationTest {
                 .as("not before the trip").isInstanceOf(BadRequestException.class);
 
         routeService.startTrip(route.getId(), DRIVER);
-        bookingService.markPickedUp(booking.getId(), DRIVER);
+        pickUp(booking);
         bookingService.completeRoute(route.getId(), DRIVER);
 
         assertThatThrownBy(() -> bookingService.rate(booking.getId(), OTHER_RIDER, fiveStars)).isInstanceOf(UnauthorizedException.class);
         assertThat(bookingService.rate(booking.getId(), RIDER, fiveStars).getRateeId()).isEqualTo(DRIVER);
         assertThatThrownBy(() -> bookingService.rate(booking.getId(), RIDER, fiveStars)).isInstanceOf(BadRequestException.class);
         assertThat(bookingService.rate(booking.getId(), DRIVER, fiveStars).getRateeId()).isEqualTo(RIDER);
+    }
+
+    // ---- pickup code -----------------------------------------------------------------------------
+
+    @Test
+    void driverNeedsTheRidersPickupCodeToMarkThemPickedUp() {
+        RoutePost route = startedRouteWithConfirmed(RIDER);
+        Booking booking = onlyBooking(route);
+
+        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, null)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, "12a4")).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, wrongCode(booking))).isInstanceOf(BadRequestException.class);
+        assertThat(status(booking)).isEqualTo(BookingStatus.CONFIRMED);
+
+        bookingService.markPickedUp(booking.getId(), DRIVER, reload(booking).getPickupCode());
+
+        assertThat(status(booking)).isEqualTo(BookingStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void riderConfirmingTheirOwnBoardingNeedsNoCode() {
+        RoutePost route = startedRouteWithConfirmed(RIDER);
+        Booking booking = onlyBooking(route);
+
+        bookingService.markPickedUp(booking.getId(), RIDER, null);
+
+        assertThat(status(booking)).isEqualTo(BookingStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void codeFromAnotherBookingOrRouteIsRejected() {
+        RoutePost route = route(4);
+        Booking mine = book(route, RIDER, 1);
+        Booking sameRoute = book(route, OTHER_RIDER, 1);
+        confirm(mine);
+        confirm(sameRoute);
+        RoutePost otherRoute = route(4);
+        Booking otherRouteBooking = book(otherRoute, "rider-3", 1);
+        confirm(otherRouteBooking);
+        setCode(mine, "1111");
+        setCode(sameRoute, "2222");
+        setCode(otherRouteBooking, "3333");
+        routeService.startTrip(route.getId(), DRIVER);
+
+        assertThatThrownBy(() -> bookingService.markPickedUp(mine.getId(), DRIVER, "2222")).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> bookingService.markPickedUp(mine.getId(), DRIVER, "3333")).isInstanceOf(BadRequestException.class);
+        assertThat(status(mine)).isEqualTo(BookingStatus.CONFIRMED);
+
+        bookingService.markPickedUp(mine.getId(), DRIVER, "1111");
+        assertThat(status(mine)).isEqualTo(BookingStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void wrongCodesLockTheDriverOutButTheRiderCanStillBoard() {
+        RoutePost route = startedRouteWithConfirmed(RIDER);
+        Booking booking = onlyBooking(route);
+        String wrong = wrongCode(booking);
+        for (int i = 0; i < BookingService.MAX_PICKUP_CODE_ATTEMPTS; i++) {
+            assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, wrong)).isInstanceOf(BadRequestException.class);
+        }
+
+        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, reload(booking).getPickupCode()))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Too many");
+
+        bookingService.markPickedUp(booking.getId(), RIDER, null);
+        assertThat(status(booking)).isEqualTo(BookingStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void correctCodeAfterAFewTyposStillWorks() {
+        RoutePost route = startedRouteWithConfirmed(RIDER);
+        Booking booking = onlyBooking(route);
+        for (int i = 0; i < BookingService.MAX_PICKUP_CODE_ATTEMPTS - 1; i++) {
+            assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, wrongCode(booking))).isInstanceOf(BadRequestException.class);
+        }
+
+        bookingService.markPickedUp(booking.getId(), DRIVER, reload(booking).getPickupCode());
+
+        assertThat(status(booking)).isEqualTo(BookingStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void attemptsResetOnceTheRightCodeIsEntered() {
+        RoutePost route = startedRouteWithConfirmed(RIDER);
+        Booking booking = onlyBooking(route);
+        String code = reload(booking).getPickupCode();
+        for (int i = 0; i < BookingService.MAX_PICKUP_CODE_ATTEMPTS - 1; i++) {
+            assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, wrongCode(booking))).isInstanceOf(BadRequestException.class);
+        }
+        bookingService.markPickedUp(booking.getId(), DRIVER, code);
+        bookingService.undoManifestMark(booking.getId(), DRIVER);
+
+        assertThat(reload(booking).getPickupCodeAttempts()).isZero();
+        for (int i = 0; i < BookingService.MAX_PICKUP_CODE_ATTEMPTS - 1; i++) {
+            assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, wrongCode(booking))).isInstanceOf(BadRequestException.class);
+        }
+        bookingService.markPickedUp(booking.getId(), DRIVER, code);
+        assertThat(status(booking)).isEqualTo(BookingStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void parallelGuessingCannotGetPastTheAttemptCap() throws Exception {
+        RoutePost route = startedRouteWithConfirmed(RIDER);
+        Booking booking = onlyBooking(route);
+        String code = reload(booking).getPickupCode();
+        List<String> guesses = new ArrayList<>();
+        for (int g = 0; guesses.size() < 40; g++) {
+            String guess = String.format("%04d", g);
+            if (!guess.equals(code)) {
+                guesses.add(guess);
+            }
+        }
+
+        List<Callable<Object>> attempts = new ArrayList<>();
+        for (String guess : guesses) {
+            attempts.add(() -> {
+                bookingService.markPickedUp(booking.getId(), DRIVER, guess);
+                return null;
+            });
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(attempts.size());
+        for (Future<Object> f : pool.invokeAll(attempts)) {
+            assertThatThrownBy(f::get).hasCauseInstanceOf(BadRequestException.class);
+        }
+        pool.shutdown();
+
+        assertThat(reload(booking).getPickupCodeAttempts()).isEqualTo(BookingService.MAX_PICKUP_CODE_ATTEMPTS);
+        assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), DRIVER, code)).hasMessageContaining("Too many");
+    }
+
+    @Test
+    void onlyTheRiderIsShownThePickupCode() throws Exception {
+        RoutePost route = route(4);
+        Booking booking = book(route, RIDER, 1);
+        assertThat(bookingService.getBookingDetails(booking.getId(), RIDER).pickupCode()).as("no code before payment").isNull();
+        confirm(booking);
+        String code = reload(booking).getPickupCode();
+
+        assertThat(code).matches("\\d{4}");
+        assertThat(bookingService.getBookingDetails(booking.getId(), RIDER).pickupCode()).isEqualTo(code);
+        assertThat(bookingService.getBookingDetails(booking.getId(), DRIVER).pickupCode()).isNull();
+        assertThat(bookingService.getManifestForRoute(route.getId(), DRIVER).toString()).doesNotContain(code);
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().writeValueAsString(reload(booking)))
+                .doesNotContain("pickupCode");
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CONFIRMED),
+                argThat(e -> code.equals(((org.coryd.common.kafka.events.BookingConfirmedEvent) e).getPickupCode())));
+    }
+
+    @Test
+    void ridersOnOneRouteGetDistinctCodes() {
+        RoutePost route = route(8);
+        List<String> codes = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            Booking b = book(route, "rider-" + i, 1);
+            confirm(b);
+            codes.add(reload(b).getPickupCode());
+        }
+
+        assertThat(codes).doesNotHaveDuplicates();
+    }
+
+    // ---- late cancellation fee -------------------------------------------------------------------
+
+    @Test
+    void cancellingInsideTheWindowCarriesATwentyFivePercentFee() {
+        RoutePost soon = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(1, ChronoUnit.HOURS)).build());
+        Booking booking = book(soon, RIDER, 1);
+        confirm(booking);
+
+        bookingService.cancelByRider(booking.getId(), RIDER);
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e -> {
+            BookingCancelledEvent event = (BookingCancelledEvent) e;
+            return event.isFeeApplied() && event.getFeeAmount().compareTo(new BigDecimal("300.00")) == 0;
+        }));
+    }
+
+    @Test
+    void cancellingOutsideTheWindowIsFree() {
+        RoutePost later = route(4);
+        Booking booking = book(later, RIDER, 1);
+        confirm(booking);
+
+        bookingService.cancelByRider(booking.getId(), RIDER);
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e -> {
+            BookingCancelledEvent event = (BookingCancelledEvent) e;
+            return !event.isFeeApplied() && event.getFeeAmount().signum() == 0;
+        }));
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
@@ -496,6 +686,32 @@ class BookingFlowIntegrationTest {
 
     private void confirm(Booking booking) {
         bookingService.confirm(booking.getId());
+    }
+
+    private void pickUp(Booking booking) {
+        bookingService.markPickedUp(booking.getId(), DRIVER, reload(booking).getPickupCode());
+    }
+
+    private RoutePost startedRouteWithConfirmed(String riderId) {
+        RoutePost route = route(4);
+        confirm(book(route, riderId, 1));
+        routeService.startTrip(route.getId(), DRIVER);
+        return route;
+    }
+
+    private Booking onlyBooking(RoutePost route) {
+        return bookingRepository.findByRoutePostId(route.getId()).get(0);
+    }
+
+    private String wrongCode(Booking booking) {
+        String code = reload(booking).getPickupCode();
+        return code.equals("0000") ? "0001" : "0000";
+    }
+
+    private void setCode(Booking booking, String code) {
+        Booking b = reload(booking);
+        b.setPickupCode(code);
+        bookingRepository.save(b);
     }
 
     private Booking reload(Booking booking) {

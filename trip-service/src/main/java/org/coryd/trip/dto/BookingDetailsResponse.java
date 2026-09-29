@@ -31,6 +31,7 @@ public record BookingDetailsResponse(
         String vehiclePlate,
         boolean vehicleHasAC,
         Integer durationMinutes,
-        String overviewPolyline
+        String overviewPolyline,
+        String pickupCode
 ) {
 }

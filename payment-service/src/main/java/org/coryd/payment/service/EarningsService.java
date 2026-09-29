@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -70,26 +71,30 @@ public class EarningsService {
             return;
         }
 
-        BigDecimal commission = hold.getAmount().multiply(commissionProperties.getPercentage());
-        BigDecimal net = hold.getAmount().subtract(commission);
-
         if (fareHoldRepository.markReleased(hold.getId()) == 0) {
             return;
         }
+        creditDriver(hold.getDriverId(), bookingId, event.getRoutePostId(), event.getRiderId(), hold.getAmount());
+    }
 
-        DriverEarningsAccount account = earningsAccountRepository.findForUpdate(hold.getDriverId())
-                .orElseGet(() -> DriverEarningsAccount.builder().driverId(hold.getDriverId()).build());
+    /** Commission comes off the driver's side, same for a trip fare or a late-cancellation fee. */
+    private void creditDriver(String driverId, String bookingId, String routePostId, String riderId, BigDecimal gross) {
+        BigDecimal commission = gross.multiply(commissionProperties.getPercentage()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal net = gross.subtract(commission);
+
+        DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
+                .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
         account.setAvailableBalance(account.getAvailableBalance().add(net));
-        account.setLifetimeGross(account.getLifetimeGross().add(hold.getAmount()));
+        account.setLifetimeGross(account.getLifetimeGross().add(gross));
         account.setLifetimeCommission(account.getLifetimeCommission().add(commission));
         earningsAccountRepository.save(account);
 
         earningsTransactionRepository.save(EarningsTransaction.builder()
-                .driverId(hold.getDriverId())
+                .driverId(driverId)
                 .bookingId(bookingId)
-                .routePostId(event.getRoutePostId())
-                .riderId(event.getRiderId())
-                .grossFare(hold.getAmount())
+                .routePostId(routePostId)
+                .riderId(riderId)
+                .grossFare(gross)
                 .commissionAmount(commission)
                 .netCredit(net)
                 .build());
@@ -168,6 +173,13 @@ public class EarningsService {
 
     @Transactional
     public void refund(String bookingId, String reason) {
+        refund(bookingId, reason, null, null);
+    }
+
+    /** A late rider cancellation keeps fee out of the refund and pays it to the driver instead - the
+     * hold is still settled exactly once, split between the two. */
+    @Transactional
+    public void refund(String bookingId, String reason, BigDecimal fee, String routePostId) {
         FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
         if (hold == null || hold.isReleased() || hold.isRefunded()) {
             return;
@@ -182,12 +194,20 @@ public class EarningsService {
             if (fareHoldRepository.markRefunded(hold.getId()) == 0) {
                 return;
             }
-            walletService.creditRefund(transaction.getRiderId(), bookingId, hold.getAmount(), reason);
+            BigDecimal kept = fee == null ? BigDecimal.ZERO : fee.max(BigDecimal.ZERO).min(hold.getAmount());
+            BigDecimal refunded = hold.getAmount().subtract(kept);
+            if (kept.signum() > 0) {
+                creditDriver(hold.getDriverId(), bookingId, routePostId, transaction.getRiderId(), kept);
+            }
+            if (refunded.signum() == 0) {
+                return;
+            }
+            walletService.creditRefund(transaction.getRiderId(), bookingId, refunded, reason);
 
             kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
                     .bookingId(bookingId)
                     .riderId(transaction.getRiderId())
-                    .amount(hold.getAmount())
+                    .amount(refunded)
                     .reason(reason)
                     .refundedAt(LocalDateTime.now())
                     .build());

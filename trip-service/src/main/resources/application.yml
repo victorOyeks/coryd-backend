@@ -87,7 +87,7 @@ driver:
 
 cancellation:
   free-cancellation-window-hours: 2
-  late-fee-percentage: 0.50
+  late-fee-percentage: 0.25
 
 share:
   link:

@@ -304,6 +304,22 @@ class PaymentFlowIntegrationTest {
         assertThat(earningsAccountRepository.findByDriverId(DRIVER)).isEmpty();
     }
 
+    @Test
+    void lateCancellationRefundsSeventyFivePercentAndPaysTheFeeToTheDriver() {
+        String booking = heldBooking();
+        fundWallet(RIDER, "1200.00");
+        paymentService.initiate(walletPay(booking), RIDER);
+
+        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1");
+        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1");
+        earningsService.onTripCompleted(tripCompleted(booking));
+
+        assertThat(walletService.getBalance(RIDER)).isEqualByComparingTo("900.00");
+        DriverEarningsAccount account = earningsAccountRepository.findByDriverId(DRIVER).orElseThrow();
+        assertThat(account.getAvailableBalance()).isEqualByComparingTo("285.00");
+        assertThat(account.getLifetimeCommission()).isEqualByComparingTo("15.00");
+    }
+
     // ---- driver earnings -------------------------------------------------------------------------
 
     @Test

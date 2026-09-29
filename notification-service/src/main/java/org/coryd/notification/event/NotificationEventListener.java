@@ -50,8 +50,10 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CONFIRMED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onBookingConfirmed(BookingConfirmedEvent event) {
-        dispatchService.sendPush(event.getRiderId(), "Booking confirmed",
-                "Your seat is confirmed. See you at pickup!", "BOOKING_CONFIRMED", event.getBookingId());
+        String body = event.getPickupCode() == null
+                ? "Your seat is confirmed. See you at pickup!"
+                : "Your seat is confirmed. Your pickup code is " + event.getPickupCode() + " - give it to your driver when you board.";
+        dispatchService.sendPush(event.getRiderId(), "Booking confirmed", body, "BOOKING_CONFIRMED", event.getBookingId());
     }
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)

@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -22,7 +23,7 @@ import java.time.Instant;
 public class CancellationPolicy {
 
     private int freeCancellationWindowHours = 2;
-    private BigDecimal lateFeePercentage = new BigDecimal("0.50");
+    private BigDecimal lateFeePercentage = new BigDecimal("0.25");
 
     public boolean isFeeApplicable(Instant departureTime, Instant now) {
         Duration untilDeparture = Duration.between(now, departureTime);
@@ -30,6 +31,6 @@ public class CancellationPolicy {
     }
 
     public BigDecimal applyFee(BigDecimal fareTotal, boolean feeApplicable) {
-        return feeApplicable ? fareTotal.multiply(lateFeePercentage) : BigDecimal.ZERO;
+        return feeApplicable ? fareTotal.multiply(lateFeePercentage).setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
     }
 }

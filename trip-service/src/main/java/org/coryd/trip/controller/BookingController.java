@@ -15,6 +15,7 @@ import org.coryd.trip.dto.DriverActiveTripResponse;
 import org.coryd.trip.dto.DriverTripHistoryItem;
 import org.coryd.trip.dto.DriverTripStatsResponse;
 import org.coryd.trip.dto.IssueReportRequest;
+import org.coryd.trip.dto.PickupRequest;
 import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
 import org.coryd.trip.dto.TripHistoryItem;
@@ -179,9 +180,11 @@ public class BookingController {
         return ApiResponse.ok("Driver marked arrived at pickup", null);
     }
 
+    /** The driver sends the rider's 4-digit pickupCode; a rider confirming their own boarding sends no body. */
     @PostMapping("/{bookingId}/picked-up")
-    public ApiResponse<Void> pickedUp(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId) {
-        bookingService.markPickedUp(bookingId, principal.getUserId());
+    public ApiResponse<Void> pickedUp(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId,
+                                      @Valid @RequestBody(required = false) PickupRequest request) {
+        bookingService.markPickedUp(bookingId, principal.getUserId(), request == null ? null : request.pickupCode());
         return ApiResponse.ok("Rider marked as picked up", null);
     }
 

@@ -40,6 +40,18 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
 
     List<Booking> findByRiderIdAndStatus(String riderId, BookingStatus status);
 
+    /** Spends one pickup-code attempt before the code is compared, so parallel guesses can't
+     * outrun the cap - 0 means the attempts are used up. */
+    @Modifying(flushAutomatically = true)
+    @Query("update Booking b set b.pickupCodeAttempts = b.pickupCodeAttempts + 1 where b.id = :id and b.pickupCodeAttempts < :max")
+    int spendPickupCodeAttempt(@Param("id") String id, @Param("max") int max);
+
+    @Modifying(flushAutomatically = true)
+    @Query("update Booking b set b.pickupCodeAttempts = 0 where b.id = :id")
+    int resetPickupCodeAttempts(@Param("id") String id);
+
+    boolean existsByRoutePostIdAndPickupCodeAndStatusIn(String routePostId, String pickupCode, Collection<BookingStatus> statuses);
+
     boolean existsByRiderIdAndStatusIn(String riderId, Collection<BookingStatus> statuses);
 
     /** Powers the Home screen's "Go back to your current trip" banner. */

@@ -1,5 +1,6 @@
 package org.coryd.trip.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -50,6 +51,16 @@ public class Booking extends BaseEntity {
 
     /** Set when payment confirms the booking - null means it never became a real booking. */
     private Instant confirmedAt;
+
+    /** Only the rider ever sees this, through BookingDetailsResponse - never serialised with the entity. */
+    @JsonIgnore
+    @Column(length = 4)
+    private String pickupCode;
+
+    @JsonIgnore
+    @Builder.Default
+    @Column(nullable = false)
+    private int pickupCodeAttempts = 0;
 
     // Snapshotted at booking time so history survives later profile/route edits.
     private String driverNameSnapshot;
