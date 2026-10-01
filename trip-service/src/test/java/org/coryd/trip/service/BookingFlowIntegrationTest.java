@@ -628,6 +628,21 @@ class BookingFlowIntegrationTest {
         assertThat(codes).doesNotHaveDuplicates();
     }
 
+    // ---- departure reminder ----------------------------------------------------------------------
+
+    @Test
+    void departureReminderGoesOutOnceForARouteAboutToLeave() {
+        RoutePost soon = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
+        confirm(book(soon, RIDER, 1));
+        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate);
+
+        job.sendUpcomingDepartureReminders();
+        job.sendUpcomingDepartureReminders();
+
+        assertThat(routePostRepository.findById(soon.getId()).orElseThrow().getReminderSentAt()).isNotNull();
+        verify(kafkaTemplate, times(1)).send(eq(KafkaTopics.ROUTE_DEPARTURE_REMINDER), any());
+    }
+
     // ---- late cancellation fee -------------------------------------------------------------------
 
     @Test

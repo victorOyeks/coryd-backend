@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -151,7 +152,9 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     /** Atomic claim on the reminder, same shape as lockOnFirstBooking - the "where reminder_sent_at
      * is null" guard means a route can only ever be claimed once, even if the sweep somehow overlaps
-     * itself across runs. */
+     * itself across runs. Its own transaction - RouteDepartureReminderJob calls it outside one, and the
+     * claim has to commit before the reminder goes out anyway. */
+    @Transactional
     @Modifying
     @Query("update RoutePost r set r.reminderSentAt = :now where r.id = :id and r.reminderSentAt is null")
     int markReminderSent(@Param("id") String id, @Param("now") Instant now);
