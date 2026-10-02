@@ -33,12 +33,14 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
     @Query("update Booking b set b.status = :to, b.updatedAt = CURRENT_TIMESTAMP where b.id = :id and b.status in :from")
     int transitionStatus(@Param("id") String id, @Param("from") Collection<BookingStatus> from, @Param("to") BookingStatus to);
 
-    /** Serializes booking attempts per rider for the rest of the transaction - two taps landing at
-     * once would otherwise both pass the "no open booking" check. */
+    /** Serializes a user's bookings and route posts for the rest of the transaction - two taps landing
+     * at once would otherwise both pass the overlap check. */
     @Query(value = "select 1 from (select pg_advisory_xact_lock(hashtext(:riderId))) l", nativeQuery = true)
-    Integer lockRider(@Param("riderId") String riderId);
+    Integer lockUser(@Param("riderId") String userId);
 
     List<Booking> findByRiderIdAndStatus(String riderId, BookingStatus status);
+
+    List<Booking> findByRiderIdAndStatusIn(String riderId, Collection<BookingStatus> statuses);
 
     /** Spends one pickup-code attempt before the code is compared, so parallel guesses can't
      * outrun the cap - 0 means the attempts are used up. */
@@ -52,7 +54,6 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
 
     boolean existsByRoutePostIdAndPickupCodeAndStatusIn(String routePostId, String pickupCode, Collection<BookingStatus> statuses);
 
-    boolean existsByRiderIdAndStatusIn(String riderId, Collection<BookingStatus> statuses);
 
     /** Powers the Home screen's "Go back to your current trip" banner. */
     Optional<Booking> findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(String riderId, List<BookingStatus> statuses);

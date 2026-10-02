@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 
 @Component
 @RequiredArgsConstructor
@@ -58,9 +60,8 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onBookingCancelled(BookingCancelledEvent event) {
-        dispatchService.sendPush(event.getRiderId(), "Booking cancelled",
-                "Your booking was cancelled by " + event.getCancelledBy().toLowerCase() + ".", "BOOKING_CANCELLED",
-                event.getBookingId());
+        dispatchService.sendPush(event.getRiderId(), "Booking cancelled", cancellationCopy(event.getCancelledBy()),
+                "BOOKING_CANCELLED", event.getBookingId());
 
         // Only tell the driver when the RIDER was the one who cancelled - a seat just freed up on
         // their route and they'd otherwise have no way to know. A driver- or system-initiated
@@ -108,25 +109,61 @@ public class NotificationEventListener {
     public void onRouteCancelled(RouteCancelledEvent event) {
         // Per-rider notification for R-704 is handled by the booking-cancelled listener above,
         // which trip-service publishes once per affected booking. This just confirms to the driver.
-        dispatchService.sendPush(event.getDriverId(), "Route cancelled",
-                "Your route post was cancelled and " + event.getAffectedBookingIds().size() + " booking(s) were refunded.",
-                "ROUTE_CANCELLED", null);
+        int refunded = event.getAffectedBookingIds() == null ? 0 : event.getAffectedBookingIds().size();
+        String body = "NOT_STARTED".equals(event.getCancelledBy())
+                ? "Your route wasn't started within 45 minutes of departure, so it was cancelled and " + refunded + " booking(s) were refunded."
+                : "Your route post was cancelled and " + refunded + " booking(s) were refunded.";
+        dispatchService.sendPush(event.getDriverId(), "Route cancelled", body, "ROUTE_CANCELLED", null);
     }
 
+    /** Driver reminders deep-link by routePostId (manifest), rider reminders by bookingId (trip details). */
     @KafkaListener(topics = KafkaTopics.ROUTE_DEPARTURE_REMINDER, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onRouteDepartureReminder(RouteDepartureReminderEvent event) {
         String routeSummary = event.getOriginLabel() + " -> " + event.getDestinationLabel();
+        int riderCount = event.getRiders() == null ? 0 : event.getRiders().size();
+        String kind = event.getKind() == null ? "RIDER_GET_READY" : event.getKind();
 
-        dispatchService.sendPush(event.getDriverId(), "Almost time to depart",
-                "Your route " + routeSummary + " departs in 15 minutes - "
-                        + event.getRiders().size() + " rider(s) booked.",
-                "ROUTE_DEPARTURE_REMINDER", null);
-
-        for (RouteDepartureReminderEvent.RiderBooking rider : event.getRiders()) {
-            dispatchService.sendPush(rider.getRiderId(), "Almost time for your ride",
-                    "Your ride " + routeSummary + " departs in 15 minutes - be at your pickup point.",
-                    "ROUTE_DEPARTURE_REMINDER", rider.getBookingId());
+        switch (kind) {
+            case "DRIVER_GET_READY" -> dispatchService.sendPush(event.getDriverId(), "Get ready to depart",
+                    "Your route " + routeSummary + " departs " + inMinutes(event.getDepartureTime()) + " - "
+                            + riderCount + " rider(s) booked.",
+                    "DRIVER_DEPARTURE_REMINDER", event.getRoutePostId());
+            case "DRIVER_START_OVERDUE" -> dispatchService.sendPush(event.getDriverId(), "Your trip was due to leave",
+                    "Start your route " + routeSummary + " or cancel it - it's cancelled automatically 45 minutes after departure"
+                            + (riderCount == 0 ? "." : " and " + riderCount + " rider(s) will be refunded."),
+                    "ROUTE_START_OVERDUE", event.getRoutePostId());
+            default -> {
+                if (event.getRiders() == null) {
+                    return;
+                }
+                for (RouteDepartureReminderEvent.RiderBooking rider : event.getRiders()) {
+                    dispatchService.sendPush(rider.getRiderId(), "Almost time for your ride",
+                            "Your ride " + routeSummary + " departs " + inMinutes(event.getDepartureTime())
+                                    + " - be at your pickup point with your pickup code ready.",
+                            "ROUTE_DEPARTURE_REMINDER", rider.getBookingId());
+                }
+            }
         }
+    }
+
+    private static String inMinutes(Instant departure) {
+        if (departure == null) {
+            return "soon";
+        }
+        long minutes = Math.max(1, Duration.between(Instant.now(), departure).toMinutes());
+        return "in " + minutes + " minute" + (minutes == 1 ? "" : "s");
+    }
+
+    private static String cancellationCopy(String cancelledBy) {
+        if (cancelledBy == null) {
+            return "Your booking was cancelled.";
+        }
+        return switch (cancelledBy) {
+            case "NOT_STARTED" -> "Your driver didn't start this trip. You've been fully refunded.";
+            case "DRIVER" -> "Your driver cancelled this trip. You've been fully refunded.";
+            case "RIDER" -> "Your booking was cancelled.";
+            default -> "Your booking couldn't go ahead and has been cancelled. Any payment has been refunded.";
+        };
     }
 
     @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID_TRIP)

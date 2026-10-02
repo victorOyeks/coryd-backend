@@ -20,6 +20,8 @@ import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
 import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.dto.TripReceiptResponse;
+import org.coryd.trip.dto.UpcomingRideItem;
+import org.coryd.trip.dto.UpcomingRouteItem;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
@@ -65,6 +67,18 @@ public class BookingController {
     @GetMapping("/riders/me/reserved-seat")
     public ApiResponse<Optional<BookingDetailsResponse>> reservedSeat(@AuthenticationPrincipal CoRydUserDetails principal) {
         return ApiResponse.ok(bookingService.getReservedSeatForRider(principal.getUserId()));
+    }
+
+    /** Home's "Upcoming trips" card - paid rides booked for later, outside the active window. */
+    @GetMapping("/riders/me/upcoming")
+    public ApiResponse<List<UpcomingRideItem>> upcomingForRider(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(bookingService.getUpcomingForRider(principal.getUserId()));
+    }
+
+    /** Driver Home's "Upcoming routes" - routes scheduled for later, outside the active window. */
+    @GetMapping("/drivers/me/upcoming")
+    public ApiResponse<List<UpcomingRouteItem>> upcomingForDriver(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(bookingService.getUpcomingRoutesForDriver(principal.getUserId()));
     }
 
     /** Trip History screen - status is omitted entirely for the "All" tab. */

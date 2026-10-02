@@ -83,15 +83,17 @@ public class RouteController {
     }
 
     @GetMapping("/nearby")
-    public ApiResponse<NearbyActivityResponse> nearby(@RequestParam double lat, @RequestParam double lng,
+    public ApiResponse<NearbyActivityResponse> nearby(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                        @RequestParam double lat, @RequestParam double lng,
                                                         @RequestParam(defaultValue = "5") double radiusKm) {
-        return ApiResponse.ok(routeService.getNearbyActivity(lat, lng, radiusKm));
+        return ApiResponse.ok(routeService.getNearbyActivity(lat, lng, radiusKm, principal.getUserId()));
     }
 
     @GetMapping("/{routePostId}")
-    public ApiResponse<RideDetailsResponse> details(@PathVariable String routePostId,
+    public ApiResponse<RideDetailsResponse> details(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                      @PathVariable String routePostId,
                                                       @RequestParam double riderLat, @RequestParam double riderLng) {
-        return ApiResponse.ok(routeService.getRouteDetails(routePostId, riderLat, riderLng));
+        return ApiResponse.ok(routeService.getRouteDetails(routePostId, riderLat, riderLng, principal.getUserId()));
     }
 
     /** Multi-stop road-following line for the driver's Ready to Depart / Live Trip map and the

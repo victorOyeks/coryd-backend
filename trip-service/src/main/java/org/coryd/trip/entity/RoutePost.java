@@ -72,6 +72,15 @@ public class RoutePost extends BaseEntity {
     private Instant startedAt;
     private Instant completedAt;
 
-    /** Set once RouteDepartureReminderJob has pushed the "15 minutes to departure" reminder - never reset, guards against re-sending it on a later sweep. */
+    /** Set once RouteDepartureReminderJob has pushed the riders' "15 minutes to departure" reminder - never reset, guards against re-sending it on a later sweep. */
     private Instant reminderSentAt;
+
+    /** The driver's own get-ready reminder, sent when the route enters the active window. */
+    private Instant driverReminderSentAt;
+
+    /** "Start it or cancel it" push once departure passes with the route still not started. */
+    private Instant startNudgeSentAt;
+
+    /** Google's driving time at posting - null on older routes and when Maps was unavailable. */
+    private Integer estimatedDurationMinutes;
 }

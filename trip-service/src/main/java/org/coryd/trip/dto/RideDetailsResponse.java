@@ -35,6 +35,8 @@ public record RideDetailsResponse(
         Integer pickupEtaMinutes,
         int seatHoldMinutes,
         String routeNote,
-        String overviewPolyline
+        String overviewPolyline,
+        boolean bookable,
+        String unavailableReason
 ) {
 }

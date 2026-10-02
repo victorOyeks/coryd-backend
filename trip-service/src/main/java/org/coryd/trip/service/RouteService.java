@@ -22,9 +22,9 @@ import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.dto.DriverPostingEligibilityResponse;
 import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
-import org.coryd.trip.dto.GeoPin;
 import org.coryd.trip.dto.MultiStopRoutePreview;
 import org.coryd.trip.dto.NearbyActivityResponse;
+import org.coryd.trip.dto.NearbyRidePin;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
@@ -108,19 +108,24 @@ public class RouteService {
     private final ChatService chatService;
     private final LiveSearchSessionRegistry liveSearchSessionRegistry;
     private final ApplicationEventPublisher eventPublisher;
+    private final TripScheduleService tripScheduleService;
+
+    /** cancelledBy for a route auto-cancelled because its driver never started it. */
+    public static final String CANCELLED_NOT_STARTED = "NOT_STARTED";
+
+    /** A "leave now" post can land a few seconds after the departure the app filled in. */
+    private static final Duration DEPARTURE_PAST_TOLERANCE = Duration.ofMinutes(5);
 
     @Transactional
     public RoutePost post(String driverId, String callerId, PostRouteRequest request) {
         if (!callerId.equals(driverId)) {
             throw new UnauthorizedException("Only this driver can post their own route");
         }
-        requirePostingEligibility(driverId);
-
-        boolean hasActiveTrip = !routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
-                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS), startOfToday()).isEmpty();
-        if (hasActiveTrip) {
-            throw new BadRequestException("You already have an active route - it must depart and complete, or be cancelled, before you can post another");
+        if (!request.departureTime().isAfter(Instant.now().minus(DEPARTURE_PAST_TOLERANCE))) {
+            throw new BadRequestException("Departure time has already passed");
         }
+        requirePostingEligibility(driverId);
+        bookingRepository.lockUser(driverId);
 
         if (request.vehicleId() != null) {
             ProfileServiceClient.VehicleSummaryItem vehicle = profileServiceClient
@@ -150,6 +155,7 @@ public class RouteService {
         }
 
         RoutePost route = RoutePost.builder()
+                .estimatedDurationMinutes(estimateDurationMinutes(request))
                 .driverId(driverId)
                 .vehicleId(request.vehicleId())
                 .originLabel(request.originLabel())
@@ -165,6 +171,7 @@ public class RouteService {
                 .status(RouteStatus.PUBLISHED)
                 .routeNote(request.routeNote())
                 .build();
+        tripScheduleService.requireNoOverlap(driverId, route);
         routePostRepository.save(route);
 
         fareReportRepository.save(FareReport.builder()
@@ -199,6 +206,19 @@ public class RouteService {
         eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(route.getId()));
 
         return route;
+    }
+
+    /** Driving time for the overlap window - a Maps failure falls back to the default rather than
+     * blocking the post. Same cached preview the route screen already uses. */
+    private Integer estimateDurationMinutes(PostRouteRequest request) {
+        try {
+            RoutePreview preview = mapsService.getRoutePreview(request.originLat(), request.originLng(),
+                    request.destinationLat(), request.destinationLng());
+            return preview == null || preview.durationMinutes() <= 0 ? null : preview.durationMinutes();
+        } catch (Exception e) {
+            log.warn("No driving time for new route {} -> {}: {}", request.originLabel(), request.destinationLabel(), e.getMessage());
+            return null;
+        }
     }
 
     /** Reserves a seat for each favourite the driver picked while posting this route - the same
@@ -341,9 +361,10 @@ public class RouteService {
     }
 
     /** The Ride Details screen - one enriched route plus its coordinates and road-following route line. */
-    public RideDetailsResponse getRouteDetails(String routePostId, double riderLat, double riderLng) {
+    public RideDetailsResponse getRouteDetails(String routePostId, double riderLat, double riderLng, String callerId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        String unavailableReason = unavailableReason(route, callerId);
 
         RideSearchResult base = enrich(List.of(route), riderLat, riderLng).getFirst();
 
@@ -355,8 +376,28 @@ public class RouteService {
                 base.driverVerified(), base.vehicleMake(), base.vehicleModel(), base.vehiclePlate(), base.vehicleHasAC(),
                 base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
                 BookingService.SEAT_HOLD_MINUTES, base.routeNote(),
-                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng())
+                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
+                unavailableReason == null, unavailableReason
         );
+    }
+
+    /** Why this rider can't book this route right now, in words the app shows as-is - null when they can.
+     * Mirrors reserveSeats()'s checks; the overlap rule is left to the reserve call itself. */
+    private static String unavailableReason(RoutePost route, String callerId) {
+        if (callerId != null && callerId.equals(route.getDriverId())) {
+            return "This is your own route";
+        }
+        return switch (route.getStatus()) {
+            case CANCELLED -> "This ride has been cancelled";
+            case IN_PROGRESS, COMPLETED -> "This ride has already left";
+            case FULL -> "This ride is full";
+            default -> {
+                if (!route.getDepartureTime().isAfter(Instant.now())) {
+                    yield "This ride has already departed";
+                }
+                yield route.getSeatsAvailable() == null || route.getSeatsAvailable() <= 0 ? "This ride is full" : null;
+            }
+        };
     }
 
     /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern as pickupEtaMinutesBatch() - a Directions failure means no line on the map, not a broken screen. Cached 7 days in MapsService keyed by rounded coordinates, so this is a fresh Directions call only the first time any two points are looked up. Boxed params (not primitives) - unboxing a null before this method's own try/catch could see it would throw uncaught, not degrade gracefully. */
@@ -465,9 +506,12 @@ public class RouteService {
             List<double[]> origins = routes.stream()
                     .map(r -> new double[]{r.getOriginLat(), r.getOriginLng()})
                     .toList();
-            return mapsService.getDistanceMatrixBatch(riderLat, riderLng, origins).stream()
-                    .map(DistanceMatrixResult::durationMinutes)
-                    .toList();
+            List<DistanceMatrixResult> results = mapsService.getDistanceMatrixBatch(riderLat, riderLng, origins);
+            // enrich() zips this by index - a short or missing answer must blank the ETAs, not crash the search.
+            if (results == null || results.size() != routes.size()) {
+                throw new IllegalStateException("expected " + routes.size() + " ETAs, got " + (results == null ? 0 : results.size()));
+            }
+            return results.stream().map(DistanceMatrixResult::durationMinutes).toList();
         } catch (Exception e) {
             log.warn("Pickup-ETA batch unavailable for {} results: {}", routes.size(), e.getMessage());
             return routes.stream().map(r -> (Integer) null).toList();
@@ -496,11 +540,36 @@ public class RouteService {
                 .toList();
     }
 
-    public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm) {
-        List<RoutePost> nearby = routePostRepository.findNearbyOrigins(lat, lng, radiusKm, Instant.now());
-        List<GeoPin> pins = nearby.stream()
-                .map(r -> new GeoPin(r.getOriginLat(), r.getOriginLng()))
-                .toList();
+    /** "Rides nearby" map - each pin is a bookable route the app hands to getRouteDetails(). lat/lng is
+     * the route's origin, which is a public meeting point by product decision. No pickup ETA here -
+     * that's a Maps call per pin; the details screen computes it for the one route tapped. */
+    public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm, String callerId) {
+        Instant now = Instant.now();
+        List<RoutePost> nearby = routePostRepository.findNearbyOrigins(lat, lng, radiusKm, now,
+                now.plus(NEARBY_OPTIONS_TIME_WINDOW_HOURS, ChronoUnit.HOURS), callerId);
+        if (nearby.isEmpty()) {
+            return new NearbyActivityResponse(0, List.of());
+        }
+
+        List<String> driverIds = nearby.stream().map(RoutePost::getDriverId).distinct().toList();
+        List<String> vehicleIds = nearby.stream().map(RoutePost::getVehicleId).filter(Objects::nonNull).distinct().toList();
+        Map<String, ProfileServiceClient.DriverSummaryItem> drivers = profileServiceClient.fetchDriverSummaries(driverIds);
+        Map<String, ProfileServiceClient.VehicleSummaryItem> vehicles = profileServiceClient.fetchVehicleSummaries(vehicleIds);
+        Map<String, RatingRepository.RatingSummary> ratings = ratingRepository.summarize(driverIds).stream()
+                .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, r -> r));
+
+        List<NearbyRidePin> pins = nearby.stream().map(r -> {
+            ProfileServiceClient.DriverSummaryItem driver = drivers.get(r.getDriverId());
+            ProfileServiceClient.VehicleSummaryItem vehicle = r.getVehicleId() == null ? null : vehicles.get(r.getVehicleId());
+            RatingRepository.RatingSummary rating = ratings.get(r.getDriverId());
+            return new NearbyRidePin(r.getOriginLat(), r.getOriginLng(), r.getId(),
+                    r.getOriginLabel(), r.getDestinationLabel(), r.getDepartureTime(), r.getSeatsAvailable(), r.getFarePerSeat(),
+                    driver == null ? null : driver.firstName(),
+                    driver == null ? null : driver.photoUrl(),
+                    rating == null ? null : rating.getAvgStars(),
+                    vehicle == null ? null : vehicle.make(),
+                    vehicle == null ? null : vehicle.model());
+        }).toList();
         return new NearbyActivityResponse(pins.size(), pins);
     }
 
@@ -674,9 +743,8 @@ public class RouteService {
         cancel(routePostId, callerId, "DRIVER");
     }
 
-    /** cancelledBy also drives the rider's push copy ("Your booking was cancelled by ...") - RouteExpiryJob
-     * passes "SYSTEM" for a never-started route so a driver who simply never showed up isn't reported to
-     * the rider as having actively cancelled. */
+    /** cancelledBy also drives the push copy - RouteExpiryJob passes CANCELLED_NOT_STARTED so riders are
+     * told the driver never started the trip, rather than that the driver actively cancelled it. */
     @Transactional
     public void cancel(String routePostId, String callerId, String cancelledBy) {
         RoutePost route = routePostRepository.findById(routePostId)
@@ -717,6 +785,7 @@ public class RouteService {
                 .routePostId(routePostId)
                 .driverId(route.getDriverId())
                 .affectedBookingIds(affectedIds)
+                .cancelledBy(cancelledBy)
                 .cancelledAt(LocalDateTime.now())
                 .build());
 
@@ -743,7 +812,4 @@ public class RouteService {
         return label.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
 
-    private static Instant startOfToday() {
-        return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
-    }
 }

@@ -11,27 +11,15 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 
 public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     Page<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId, Pageable pageable);
 
-    /** Dashboard "Active Trip" card (and RouteService.post()'s one-active-route-at-a-time guard) -
-     * candidates for the driver's current/next trip, soonest first. The departureTime filter only
-     * makes sense for PUBLISHED/FULL (excludes stale not-yet-expired routes) - an IN_PROGRESS route
-     * is active by definition regardless of how long ago it departed, so it must never be filtered
-     * out by this, or a trip still running past midnight (or several days, if it's stuck) would
-     * vanish from both the dashboard and the double-booking guard. */
-    @Query("""
-            select r from RoutePost r
-            where r.driverId = :driverId
-              and r.status in :statuses
-              and (r.status = 'IN_PROGRESS' or r.departureTime > :after)
-            order by r.departureTime asc
-            """)
-    List<RoutePost> findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
-            @Param("driverId") String driverId, @Param("statuses") List<RouteStatus> statuses, @Param("after") Instant after);
+    /** A driver's routes that still occupy them - the overlap rule and the active/upcoming split. */
+    List<RoutePost> findByDriverIdAndStatusIn(String driverId, Collection<RouteStatus> statuses);
 
     /** Dashboard "Trips this week" count - the routes to check bookings against. */
     List<RoutePost> findByDriverIdAndDepartureTimeBetween(String driverId, Instant start, Instant end);
@@ -82,25 +70,30 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
                             @Param("radiusKm") double radiusKm);
 
     /**
-     * Powers the "Area Activity" map - active, seat-having, not-yet-departed routes
-     * whose origin sits within radiusKm of the given point. Same Haversine expression
-     * as search() (see its comment), matched on origin only since this is about "where
-     * are rides starting near me," not a bookable search result.
+     * Powers the "Rides nearby" map - bookable routes (published, seats left, departing between now
+     * and latest, not the caller's own) whose origin sits within radiusKm of the given point. Same
+     * Haversine expression as search() (see its comment), matched on origin only since this is about
+     * "where are rides starting near me."
      */
     @Query(value = """
             select * from trip.route_posts r
             where r.status = 'PUBLISHED'
               and r.seats_available > 0
               and r.departure_time > :now
+              and r.departure_time <= :latest
+              and r.driver_id <> :excludeDriverId
               and (6371 * acos(least(1.0, greatest(-1.0,
                     cos(radians(:lat)) * cos(radians(r.origin_lat)) * cos(radians(r.origin_lng) - radians(:lng))
                     + sin(radians(:lat)) * sin(radians(r.origin_lat))
                   )))) <= :radiusKm
+            order by r.departure_time asc
             """, nativeQuery = true)
     List<RoutePost> findNearbyOrigins(@Param("lat") double lat,
                                        @Param("lng") double lng,
                                        @Param("radiusKm") double radiusKm,
-                                       @Param("now") Instant now);
+                                       @Param("now") Instant now,
+                                       @Param("latest") Instant latest,
+                                       @Param("excludeDriverId") String excludeDriverId);
 
     /**
      * Atomic seat hold - the conditional WHERE clause is what resolves the
@@ -158,4 +151,23 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
     @Modifying
     @Query("update RoutePost r set r.reminderSentAt = :now where r.id = :id and r.reminderSentAt is null")
     int markReminderSent(@Param("id") String id, @Param("now") Instant now);
+
+    /** The driver's get-ready sweep - routes entering the active window that haven't had it yet. */
+    List<RoutePost> findByStatusInAndDepartureTimeBetweenAndDriverReminderSentAtIsNull(
+            List<RouteStatus> statuses, Instant windowStart, Instant windowEnd);
+
+    /** Departure has passed and the driver still hasn't started - the "start or cancel" sweep. */
+    List<RoutePost> findByStatusInAndDepartureTimeBetweenAndStartNudgeSentAtIsNull(
+            List<RouteStatus> statuses, Instant windowStart, Instant windowEnd);
+
+    /** Same once-only claim as markReminderSent. */
+    @Transactional
+    @Modifying
+    @Query("update RoutePost r set r.driverReminderSentAt = :now where r.id = :id and r.driverReminderSentAt is null")
+    int markDriverReminderSent(@Param("id") String id, @Param("now") Instant now);
+
+    @Transactional
+    @Modifying
+    @Query("update RoutePost r set r.startNudgeSentAt = :now where r.id = :id and r.startNudgeSentAt is null")
+    int markStartNudgeSent(@Param("id") String id, @Param("now") Instant now);
 }

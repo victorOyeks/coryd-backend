@@ -16,5 +16,6 @@ public class RouteCancelledEvent {
     private String routePostId;
     private String driverId;
     private List<String> affectedBookingIds;
+    private String cancelledBy;
     private LocalDateTime cancelledAt;
 }

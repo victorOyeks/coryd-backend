@@ -26,5 +26,6 @@
     <include file="db/changelog/015-route-departure-reminder.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/016-booking-confirmed-at.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/017-booking-pickup-code.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/018-route-schedule-fields.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

@@ -34,7 +34,7 @@ import java.util.List;
 public class RouteExpiryJob {
 
     private static final List<RouteStatus> NEVER_STARTED_STATUSES = List.of(RouteStatus.PUBLISHED, RouteStatus.FULL);
-    private static final Duration NEVER_STARTED_GRACE = Duration.ofMinutes(45);
+    static final Duration NEVER_STARTED_GRACE = Duration.ofMinutes(45);
     private static final Duration STUCK_IN_PROGRESS_THRESHOLD = Duration.ofHours(6);
 
     private final RoutePostRepository routePostRepository;
@@ -51,7 +51,7 @@ public class RouteExpiryJob {
         List<RoutePost> overdue = routePostRepository.findByStatusInAndDepartureTimeBefore(NEVER_STARTED_STATUSES, cutoff);
         for (RoutePost route : overdue) {
             try {
-                routeService.cancel(route.getId(), route.getDriverId(), "SYSTEM");
+                routeService.cancel(route.getId(), route.getDriverId(), RouteService.CANCELLED_NOT_STARTED);
                 log.warn("Auto-cancelled route {} (driver {}) - never started, departure was {}",
                         route.getId(), route.getDriverId(), route.getDepartureTime());
             } catch (Exception e) {

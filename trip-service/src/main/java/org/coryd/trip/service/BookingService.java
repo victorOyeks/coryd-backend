@@ -41,6 +41,8 @@ import org.coryd.trip.dto.ReceiptPassenger;
 import org.coryd.trip.dto.SharedTripResponse;
 import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.dto.TripReceiptResponse;
+import org.coryd.trip.dto.UpcomingRideItem;
+import org.coryd.trip.dto.UpcomingRouteItem;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.DriverVerificationCache;
 import org.coryd.trip.entity.BookingStatusHistory;
@@ -76,6 +78,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -117,6 +120,7 @@ public class BookingService {
     private final MapsService mapsService;
     private final ChatService chatService;
     private final RouteService routeService;
+    private final TripScheduleService tripScheduleService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -130,9 +134,6 @@ public class BookingService {
 
     private static final List<BookingStatus> ACTIVE_TRIP_STATUSES =
             List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
-    /** A rider holding any of these can't start another booking - one trip at a time. */
-    private static final List<BookingStatus> OPEN_BOOKING_STATUSES = Stream.concat(
-            Stream.of(BookingStatus.HELD), ACTIVE_TRIP_STATUSES.stream()).toList();
     /** Bookings the driver is carrying or has carried - what a route's seatsBooked/totalEarned are made of.
      * Cancellations and no-shows paid the driver nothing, and unpaid holds never were bookings. */
     private static final List<BookingStatus> CARRIED_STATUSES = Stream.concat(
@@ -151,32 +152,69 @@ public class BookingService {
                     ACTIVE_TRIP_STATUSES.stream(), Stream.of(BookingStatus.COMPLETED), CANCELLED_TRIP_STATUSES.stream())
             .flatMap(s -> s).toList();
 
-    /** Powers the Home screen's "Go back to your current trip" banner - empty if the rider has no trip in flight. */
+    /** Home's trip mode - the rider's soonest booking that is under way or departs within the active
+     * window. A ride booked for later doesn't count; that's getUpcomingForRider(). */
     public Optional<BookingDetailsResponse> getActiveBookingForRider(String riderId, String callerId) {
         requireSelf(riderId, callerId);
-        return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, ACTIVE_TRIP_STATUSES)
-                .map(booking -> buildDetails(booking, true));
+        Instant now = Instant.now();
+        return seatsWithRoutes(riderId).stream()
+                .filter(s -> s.booking().getStatus() != BookingStatus.CONFIRMED || TripScheduleService.isActive(s.route(), now))
+                .min(Comparator.comparing(s -> s.route().getDepartureTime()))
+                .map(s -> buildDetails(s.booking(), true));
+    }
+
+    /** Home's "Upcoming trips" card - paid rides still outside the active window, soonest first. */
+    public List<UpcomingRideItem> getUpcomingForRider(String riderId) {
+        Instant now = Instant.now();
+        return seatsWithRoutes(riderId).stream()
+                .filter(s -> s.booking().getStatus() == BookingStatus.CONFIRMED && !TripScheduleService.isActive(s.route(), now))
+                .sorted(Comparator.comparing(s -> s.route().getDepartureTime()))
+                .map(s -> new UpcomingRideItem(s.booking().getId(), s.route().getId(), s.booking().getStatus(),
+                        s.route().getOriginLabel(), s.route().getDestinationLabel(), s.route().getDepartureTime(),
+                        s.booking().getSeatCount(), s.booking().getFareTotal(), s.booking().getPickupLabel(),
+                        s.booking().getDriverNameSnapshot(), s.booking().getVehiclePlateSnapshot()))
+                .toList();
+    }
+
+    private record SeatOnRoute(Booking booking, RoutePost route) {
+    }
+
+    private List<SeatOnRoute> seatsWithRoutes(String riderId) {
+        List<Booking> seats = bookingRepository.findByRiderIdAndStatusIn(riderId, ACTIVE_TRIP_STATUSES);
+        if (seats.isEmpty()) {
+            return List.of();
+        }
+        Map<String, RoutePost> routes = routePostRepository.findAllById(seats.stream().map(Booking::getRoutePostId).distinct().toList())
+                .stream().collect(Collectors.toMap(RoutePost::getId, r -> r));
+
+        return seats.stream()
+                .filter(b -> routes.containsKey(b.getRoutePostId()))
+                .map(b -> new SeatOnRoute(b, routes.get(b.getRoutePostId())))
+                .toList();
     }
 
     /** The RESERVED counterpart to getActiveBookingForRider() above - lets the app proactively show
      * "your favourite driver reserved you a seat" on Home for a rider who missed the push (or didn't
-     * tap it), without already knowing a bookingId. Deliberately a separate call rather than folding
-     * RESERVED into ACTIVE_TRIP_STATUSES - that list is the one-active-trip-at-a-time guard, and an
-     * unanswered reservation offer must never count as a trip the rider is already "on". */
+     * tap it), without already knowing a bookingId. An unanswered offer is never a trip the rider is
+     * "on", so it stays out of the active/upcoming lists. */
     public Optional<BookingDetailsResponse> getReservedSeatForRider(String riderId) {
         return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, List.of(BookingStatus.RESERVED))
                 .map(booking -> buildDetails(booking, true));
     }
 
-    /** Dashboard's "Active Trip" card - the driver's soonest not-yet-departed route, empty if they have none posted. Returns everything trip-service has on it (route + full booking list), not just the card's headline count, so the client can also build a tap-through detail view from this one call. */
+    /** Dashboard's "Live - Active Trip" card - the driver's route that is under way or departs within the
+     * active window, empty otherwise. Routes scheduled for later are getUpcomingRoutesForDriver(). Returns
+     * the route plus its full booking list, so the client can build the passenger screen from this one call. */
     public Optional<DriverActiveTripResponse> getActiveTripForDriver(String driverId, String callerId) {
         requireSelf(driverId, callerId);
-        List<RoutePost> candidates = routePostRepository.findByDriverIdAndStatusInAndDepartureTimeAfterOrderByDepartureTimeAsc(
-                driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS), startOfToday());
-        if (candidates.isEmpty()) {
+        Instant now = Instant.now();
+        Optional<RoutePost> active = routePostRepository.findByDriverIdAndStatusIn(driverId, TripScheduleService.LIVE_ROUTE_STATUSES).stream()
+                .filter(r -> TripScheduleService.isActive(r, now))
+                .min(Comparator.comparing(RoutePost::getDepartureTime));
+        if (active.isEmpty()) {
             return Optional.empty();
         }
-        RoutePost route = candidates.get(0);
+        RoutePost route = active.get();
         List<Booking> activeBookings = bookingRepository.findByRoutePostId(route.getId()).stream()
                 .filter(b -> ACTIVE_TRIP_STATUSES.contains(b.getStatus()))
                 .toList();
@@ -195,6 +233,26 @@ public class BookingService {
                 route.getDepartureTime(), route.getFarePerSeat(),
                 route.getSeatCapacity(), route.getSeatsAvailable(), seatsBooked, route.getStatus(),
                 bookingSummaries));
+    }
+
+    /** Driver Home's "Upcoming routes" - published routes still outside the active window, soonest first.
+     * Tapping one opens the existing passenger manifest. */
+    public List<UpcomingRouteItem> getUpcomingRoutesForDriver(String driverId) {
+        Instant now = Instant.now();
+        List<RoutePost> upcoming = routePostRepository.findByDriverIdAndStatusIn(driverId, List.of(RouteStatus.PUBLISHED, RouteStatus.FULL)).stream()
+                .filter(r -> !TripScheduleService.isActive(r, now))
+                .sorted(Comparator.comparing(RoutePost::getDepartureTime))
+                .toList();
+        if (upcoming.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Integer> seatsBooked = bookingRepository.findByRoutePostIdIn(upcoming.stream().map(RoutePost::getId).toList()).stream()
+                .filter(b -> CARRIED_STATUSES.contains(b.getStatus()))
+                .collect(Collectors.groupingBy(Booking::getRoutePostId, Collectors.summingInt(Booking::getSeatCount)));
+        return upcoming.stream()
+                .map(r -> new UpcomingRouteItem(r.getId(), r.getOriginLabel(), r.getDestinationLabel(), r.getDepartureTime(),
+                        r.getStatus(), r.getSeatCapacity(), r.getSeatsAvailable(), seatsBooked.getOrDefault(r.getId(), 0), r.getFarePerSeat()))
+                .toList();
     }
 
     /** "View Passenger Manifest" after publishing (or any time after) - who's booked on this specific route.
@@ -351,9 +409,6 @@ public class BookingService {
         return PagedResponse.from(new PageImpl<>(items, pageable, routes.getTotalElements()));
     }
 
-    private static Instant startOfToday() {
-        return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
-    }
 
     private static Instant startOfWeek() {
         return LocalDate.now(ZoneOffset.UTC).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
@@ -539,12 +594,13 @@ public class BookingService {
         return (int) Duration.between(startedAt, completedAt).toMinutes();
     }
 
-    /** One open booking per rider at a time. A retry of the same request (a flaky network resending
-     * the tap) gets back the hold it already made instead of a second one; a hold left on another
-     * route or another seat count is released, since the rider has clearly moved on from it. */
+    /** A rider can hold several bookings as long as the trips don't overlap (TripScheduleService), but
+     * only one unpaid checkout at a time. A retry of the same request (a flaky network resending the tap)
+     * gets back the hold it already made; a hold left on another route or seat count is released, since
+     * the rider has clearly moved on from it. */
     @Transactional
     public Booking reserveSeats(String routePostId, String riderId, BookSeatsRequest request) {
-        bookingRepository.lockRider(riderId);
+        bookingRepository.lockUser(riderId);
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
@@ -563,10 +619,6 @@ public class BookingService {
         if (bookingRepository.findFirstByRiderIdAndRoutePostIdAndStatus(riderId, routePostId, BookingStatus.RESERVED).isPresent()) {
             throw new BadRequestException("Your favourite driver already reserved you a seat on this route - accept or decline that reservation instead of booking a fresh one");
         }
-        if (bookingRepository.existsByRiderIdAndStatusIn(riderId, ACTIVE_TRIP_STATUSES)) {
-            throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before booking another");
-        }
-
         for (Booking held : bookingRepository.findByRiderIdAndStatus(riderId, BookingStatus.HELD)) {
             boolean sameAttempt = held.getRoutePostId().equals(routePostId)
                     && held.getSeatCount().equals(request.seatCount())
@@ -574,8 +626,9 @@ public class BookingService {
             if (sameAttempt) {
                 return held;
             }
-            releaseUnpaid(held, BookingStatus.HELD, "Replaced by a newer booking attempt - seat released");
         }
+        tripScheduleService.requireNoOverlap(riderId, route);
+        releaseOtherHolds(riderId, null);
 
         int updated = routePostRepository.holdSeats(routePostId, request.seatCount());
         if (updated == 0) {
@@ -689,13 +742,14 @@ public class BookingService {
      * themselves. pickup fields are required here because they never existed on the RESERVED row. */
     @Transactional
     public Booking acceptReservation(String bookingId, String callerId, AcceptReservationRequest request) {
-        bookingRepository.lockRider(callerId);
+        bookingRepository.lockUser(callerId);
         Booking booking = getOrThrow(bookingId);
         if (!callerId.equals(booking.getRiderId())) {
             throw new UnauthorizedException("Only this reservation's rider can accept it");
         }
-        if (bookingRepository.existsByRiderIdAndStatusIn(callerId, OPEN_BOOKING_STATUSES)) {
-            throw new BadRequestException("You already have a booked or ongoing trip - complete or cancel it before accepting this reservation");
+        if (booking.getStatus() == BookingStatus.RESERVED) {
+            tripScheduleService.requireNoOverlap(callerId, routeOf(booking));
+            releaseOtherHolds(callerId, bookingId);
         }
         if (!moveStatus(booking, BookingStatus.HELD, List.of(BookingStatus.RESERVED))) {
             throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
@@ -1008,6 +1062,15 @@ public class BookingService {
             code = String.format("%04d", RANDOM.nextInt(10_000));
         } while (++tries < 20 && bookingRepository.existsByRoutePostIdAndPickupCodeAndStatusIn(routePostId, code, AWAITING_PICKUP_STATUSES));
         return code;
+    }
+
+    /** One unpaid checkout per rider - starting another releases whatever they left on the Pay Now screen. */
+    private void releaseOtherHolds(String riderId, String keepBookingId) {
+        for (Booking held : bookingRepository.findByRiderIdAndStatus(riderId, BookingStatus.HELD)) {
+            if (!held.getId().equals(keepBookingId)) {
+                releaseUnpaid(held, BookingStatus.HELD, "Replaced by a newer booking attempt - seat released");
+            }
+        }
     }
 
     /** Ends an unpaid booking and returns its seat - only if this call is the one that moved it, so

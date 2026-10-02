@@ -18,7 +18,10 @@ public class BookingEventListener {
     @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID)
     public void onBookingCancelled(BookingCancelledEvent event) {
         // R-704/D-703: driver- or rider-initiated cancellation triggers a full automatic refund.
-        earningsService.refund(event.getBookingId(), "Booking cancelled by " + event.getCancelledBy(),
+        String reason = "NOT_STARTED".equals(event.getCancelledBy())
+                ? "Booking cancelled - driver didn't start the trip"
+                : "Booking cancelled by " + event.getCancelledBy();
+        earningsService.refund(event.getBookingId(), reason,
                 event.isFeeApplied() ? event.getFeeAmount() : null, event.getRoutePostId());
     }
 }

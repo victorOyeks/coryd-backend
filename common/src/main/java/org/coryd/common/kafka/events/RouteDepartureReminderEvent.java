@@ -13,6 +13,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class RouteDepartureReminderEvent {
+    private String kind;
     private String routePostId;
     private String driverId;
     private String originLabel;
