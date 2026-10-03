@@ -182,6 +182,73 @@ would leave a refund with nothing to recover from.
 
 ---
 
+## The payment flow, end to end
+
+The API surface the app calls is **unchanged** — same endpoint, same request, same response. What
+changed is where the money goes behind it, and that surfaces as two new error cases plus a
+different refund destination.
+
+### Paying for a booking
+
+```
+POST /payment/payments/initiate
+{
+  "bookingId": "...",
+  "paymentMethod": "PAYSTACK",     // or "WALLET"
+  "riderEmail": "rider@example.com",
+  "callbackUrl": "coryd://payment-return"
+}
+```
+
+Response is as before:
+
+| | Means |
+|---|---|
+| `status: "PENDING"` + `authorizationUrl` | Open the Paystack checkout. Confirmation arrives by webhook, not from this call |
+| `status: "PAID"` + `authorizationUrl: null` | Wallet paid synchronously — show success immediately |
+
+**Amount, rider and driver are read from the booking, never from your request.** `amount`, `riderId`
+and `driverId` in the body are ignored. Send them or don't; they cannot change what is charged.
+
+### What now happens behind it
+
+On a card payment, Paystack divides the fare the moment it is charged — our commission to us, the
+driver's share straight to the driver's own Paystack account. It never passes through CoRyd. The
+driver is then paid by Paystack on a fixed weekly schedule.
+
+Nothing about that is visible to the rider. The checkout looks identical.
+
+### Two new failures to handle
+
+**1. The driver hasn't set up payouts** — 400 on `initiate`:
+
+> This driver has not finished setting up payouts, so this trip cannot be booked yet
+
+The driver has no bank account registered, so there is nowhere to send their share. **Treat it as a
+route-level problem, not a payment problem.** The rider did nothing wrong and retrying will not
+help. Take them back to search and, ideally, stop showing that route.
+
+**2. Nothing else changed in the happy path.** Webhook confirmation, retries returning the same
+checkout, double-tap protection — all as they were.
+
+### Refunds now depend on how the rider paid
+
+| Paid with | Refund goes to |
+|---|---|
+| Card (`PAYSTACK`) | **Back to the card**, via Paystack |
+| Wallet (`WALLET`) | **Back to the wallet**, as before |
+
+This is new. Previously every refund became wallet credit regardless of how the rider paid. A card
+refund now reverses the original charge, which is the only thing that can reclaim the driver's
+share.
+
+**Don't tell the rider to check their wallet after a card refund.** Say "refunded to your card,
+allow a few working days" — bank timelines, not ours. The wallet balance will not move.
+
+`REFUND_ISSUED` still fires the same push either way.
+
+---
+
 ## Driver earnings: the Withdraw button goes away
 
 This is a screen redesign, not a field change. It only takes effect when the backend flag
@@ -261,6 +328,8 @@ See [live-route-search-fe-guide.md](live-route-search-fe-guide.md) for the full 
 - [ ] Bank-account setup moved into driver onboarding
 - [ ] `posting-eligibility` re-fetched shortly after a licence save
 - [ ] Live search replaces the list wholesale on every frame
+- [ ] "Driver has not finished setting up payouts" handled as a route problem, not a retryable payment error
+- [ ] Card refunds described as going back to the card, not the wallet
 
 ---
 

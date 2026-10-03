@@ -20,17 +20,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PayoutRecipientService {
 
-    private static final BigDecimal HUNDRED = new BigDecimal("100");
-
     private final PayoutRecipientRepository payoutRecipientRepository;
     private final PaystackGatewayClient paystackGatewayClient;
     private final CommissionProperties commissionProperties;
-
-    /** Paystack's percentage_charge is the driver's share, so it is 100 minus our commission. */
-    private BigDecimal driverSharePercentage() {
-        return HUNDRED.subtract(commissionProperties.getPercentage().multiply(HUNDRED))
-                .setScale(2, RoundingMode.HALF_UP);
-    }
 
 
     public List<PaystackGatewayClient.BankOption> listBanks() {
@@ -62,7 +54,8 @@ public class PayoutRecipientService {
         // The subaccount is what earnings are split to; the transfer recipient stays for refunds
         // and any manual payout ops still needs to make.
         String subaccountCode = paystackGatewayClient.createSubaccount(
-                resolved.accountName(), request.accountNumber(), request.bankCode(), driverSharePercentage());
+                resolved.accountName(), request.accountNumber(), request.bankCode(),
+                commissionProperties.driverSharePercentage());
 
         boolean isFirstAccount = !payoutRecipientRepository.existsByDriverId(driverId);
         PayoutRecipient recipient = PayoutRecipient.builder()

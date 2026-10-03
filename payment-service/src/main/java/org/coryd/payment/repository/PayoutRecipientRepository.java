@@ -20,6 +20,9 @@ public interface PayoutRecipientRepository extends JpaRepository<PayoutRecipient
 
     boolean existsByDriverId(String driverId);
 
+    /** Backfill: bank account already verified with Paystack, but no subaccount to split to yet. */
+    List<PayoutRecipient> findByGatewaySubaccountCodeIsNullAndGatewayRecipientCodeIsNotNull();
+
     /** The subaccount a booking's fare is split to - the default account, if it has one. */
     Optional<PayoutRecipient> findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(String driverId);
 

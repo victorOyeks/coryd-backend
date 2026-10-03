@@ -65,7 +65,7 @@ import static org.mockito.Mockito.when;
 @Testcontainers
 @TestPropertySource(properties = "payment.split.enabled=true")
 @Import({PaymentService.class, WalletService.class, EarningsService.class, PayoutService.class,
-        CommissionProperties.class, DriverSplitResolver.class})
+        CommissionProperties.class, DriverSplitResolver.class, SubaccountBackfill.class})
 class SplitPaymentIntegrationTest {
 
     @Container
@@ -89,6 +89,7 @@ class SplitPaymentIntegrationTest {
     @Autowired EarningsTransactionRepository earningsTransactionRepository;
     @Autowired PayoutRepository payoutRepository;
     @Autowired PayoutRecipientRepository payoutRecipientRepository;
+    @Autowired SubaccountBackfill subaccountBackfill;
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockBean TripServiceClient tripServiceClient;
@@ -198,6 +199,43 @@ class SplitPaymentIntegrationTest {
 
         assertThat(walletService.getBalance(RIDER)).isEqualByComparingTo(FARE);
         verify(gatewayClient, never()).refund(anyString(), any(), any());
+    }
+
+    // ---- backfill ---------------------------------------------------------------------------------
+
+    @Test
+    void driversWhoAddedABankAccountBeforeSplitsExistedGetASubaccount() {
+        payoutRecipientRepository.save(PayoutRecipient.builder()
+                .driverId(DRIVER).bankName("Test Bank").bankCode("058").accountNumber("0123456789")
+                .accountName("Test Driver").gatewayRecipientCode("RCP_test")
+                .gatewaySubaccountCode(null).isDefault(true).build());
+        when(gatewayClient.createSubaccount(anyString(), anyString(), anyString(), any())).thenReturn(SUBACCOUNT);
+
+        subaccountBackfill.run(null);
+
+        assertThat(payoutRecipientRepository.findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(DRIVER))
+                .as("without this the driver cannot be booked at all")
+                .isPresent();
+    }
+
+    @Test
+    void aDriverPaystackRejectsDoesNotStopTheRest() {
+        payoutRecipientRepository.save(PayoutRecipient.builder()
+                .driverId("bad-details").bankName("Test Bank").bankCode("058").accountNumber("0000000000")
+                .accountName("Bad Details").gatewayRecipientCode("RCP_bad").isDefault(true).build());
+        payoutRecipientRepository.save(PayoutRecipient.builder()
+                .driverId(DRIVER).bankName("Test Bank").bankCode("058").accountNumber("0123456789")
+                .accountName("Test Driver").gatewayRecipientCode("RCP_test").isDefault(true).build());
+        when(gatewayClient.createSubaccount(anyString(), eq("0000000000"), anyString(), any()))
+                .thenThrow(new BadRequestException("Could not register that bank account"));
+        when(gatewayClient.createSubaccount(anyString(), eq("0123456789"), anyString(), any())).thenReturn(SUBACCOUNT);
+
+        subaccountBackfill.run(null);
+
+        assertThat(payoutRecipientRepository.findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(DRIVER))
+                .isPresent();
+        assertThat(payoutRecipientRepository.findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull("bad-details"))
+                .isEmpty();
     }
 
     // ---- settlement debt -------------------------------------------------------------------------
