@@ -89,6 +89,17 @@ jobs:
               - 'common/src/main/java/org/coryd/common/enums/OtpChannel.java'
               - 'common/src/main/java/org/coryd/common/enums/OtpPurpose.java'
 
+            ops-service:
+              - 'ops-service/**'
+              - 'common/src/main/java/org/coryd/common/exception/**'
+              - 'common/src/main/java/org/coryd/common/response/**'
+              - 'common/src/main/java/org/coryd/common/security/**'
+              - 'common/src/main/java/org/coryd/common/instrumentation/**'
+              - 'common/src/main/java/org/coryd/common/config/**'
+              - 'common/src/main/java/org/coryd/common/http/**'
+              - 'common/src/main/java/org/coryd/common/kafka/**'
+              - 'common/src/main/java/org/coryd/common/enums/UserRole.java'
+
   build:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.services != '[]' }}
@@ -143,7 +154,7 @@ jobs:
           envs: CHANGED_SERVICES
           command_timeout: 30m
           # Restart order matches dependency order: identity -> profile -> trip -> payment ->
-          # notification -> api-gateway last (so the gateway only ever routes to backends
+          # notification -> ops -> api-gateway last (so the gateway only ever routes to backends
           # that are already on the new version). Each service gets a health-checked
           # restart with automatic rollback if it doesn't come back up.
           script: |
@@ -157,6 +168,7 @@ jobs:
             health_urls["trip-service"]="http://localhost:9103/trip/actuator/health"
             health_urls["payment-service"]="http://localhost:9104/payment/actuator/health"
             health_urls["notification-service"]="http://localhost:9105/notification/actuator/health"
+            health_urls["ops-service"]="http://localhost:9106/ops/actuator/health"
             health_urls["api-gateway"]="http://localhost:9100/actuator/health"
 
             ordered=(
@@ -165,6 +177,7 @@ jobs:
               trip-service
               payment-service
               notification-service
+              ops-service
               api-gateway
             )
 

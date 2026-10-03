@@ -39,6 +39,12 @@ spring:
           predicates:
             - Path=/notification/**
 
+        # ── Ops (Ops Console backend - OPS_ADMIN only, no database) ──────────
+        - id: ops-service
+          uri: http://${OPS_HOST:localhost}:9106
+          predicates:
+            - Path=/ops/**
+
 # No separate /docs/<service>/** rewrite routes: every service's context-path
 # already equals its route prefix (/identity, /profile, ...), so the plain
 # routes above already forward /identity/v3/api-docs straight through
@@ -60,6 +66,8 @@ springdoc:
         url: /payment/v3/api-docs
       - name: notification-service
         url: /notification/v3/api-docs
+      - name: ops-service
+        url: /ops/v3/api-docs
 
 management:
   endpoints:

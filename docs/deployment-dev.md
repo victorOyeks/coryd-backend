@@ -37,13 +37,13 @@ ssh devoyeks@<vps-ip>
 # Confirm CoRyd's app ports are actually free before relying on them -
 # marketrun uses 9000-9007, but hospio360/his-BE-staging ports aren't known
 # from here.
-sudo ss -tlnp | grep -E ':(9100|9101|9102|9103|9104|9105) '
+sudo ss -tlnp | grep -E ':(9100|9101|9102|9103|9104|9105|9106) '
 # ^ should print nothing. If it prints something, pick different ports and
 # update application.yml (6 modules) and the nginx site file accordingly.
 
 # App directory - one subfolder per service (including the gateway),
 # matching marketrun's layout
-sudo mkdir -p /opt/coryd-dev/{api-gateway,identity-service,profile-service,trip-service,payment-service,notification-service,incoming}
+sudo mkdir -p /opt/coryd-dev/{api-gateway,identity-service,profile-service,trip-service,payment-service,notification-service,ops-service,incoming}
 sudo chown -R devoyeks:devoyeks /opt/coryd-dev
 
 # Postgres already runs on this box (marketrun/his-BE use it) - no new
@@ -130,7 +130,7 @@ scp systemd/coryd-*.service devoyeks@<vps-ip>:/tmp/
 # On the VPS
 sudo mv /tmp/coryd-*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable coryd-identity-service coryd-profile-service coryd-trip-service coryd-payment-service coryd-notification-service coryd-api-gateway
+sudo systemctl enable coryd-identity-service coryd-profile-service coryd-trip-service coryd-payment-service coryd-notification-service coryd-ops-service coryd-api-gateway
 ```
 
 Don't `start` them yet — there's no `app.jar` in place until CI ships one in Phase 7. `enable` just means "start on boot once one exists" — it won't error out running against an empty service.
@@ -187,7 +187,7 @@ Watch it run under the repo's **Actions** tab. If the `deploy` job fails on the 
 
 To confirm from the VPS side once it's green:
 ```bash
-sudo systemctl status coryd-identity-service coryd-profile-service coryd-trip-service coryd-payment-service coryd-notification-service coryd-api-gateway
+sudo systemctl status coryd-identity-service coryd-profile-service coryd-trip-service coryd-payment-service coryd-notification-service coryd-ops-service coryd-api-gateway
 journalctl -u coryd-trip-service -f   # tail logs for any service that isn't "active (running)"
 ```
 
@@ -225,6 +225,7 @@ curl https://coryd-api-dev.marketrunn.com/profile/actuator/health
 curl https://coryd-api-dev.marketrunn.com/trip/actuator/health
 curl https://coryd-api-dev.marketrunn.com/payment/actuator/health
 curl https://coryd-api-dev.marketrunn.com/notification/actuator/health
+curl https://coryd-api-dev.marketrunn.com/ops/actuator/health
 ```
 
 Each should return `{"status":"UP"}` — the gateway forwards the same path prefixes through unchanged, so these URLs are identical to what they'd be without a gateway in front.
@@ -236,6 +237,42 @@ https://coryd-api-dev.marketrunn.com/swagger-ui.html
 This should show a dropdown listing all 5 services, each backed by its own `/docs/<service>/v3/api-docs` route.
 
 Also worth a spot-check the first time: `docker exec` into marketrun-ng's Kafka container (or use `kafka-consumer-groups.sh --list`) and confirm you see `coryd-identity-service`, `coryd-profile-service`, etc. as their own distinct consumer groups, separate from marketrun-ng's `identity-service`, `profile-service`, etc.
+
+---
+
+## ops-service (the Ops Console backend)
+
+`ops-service` (:9106, `/ops/**`) is the backend for the Ops Console. It **has no database of its own** -
+every read and every approve/reject goes through the service that owns the data, carrying the ops
+admin's own token, so that service's `OPS_ADMIN` checks still apply. Every endpoint requires an
+`OPS_ADMIN` session. It needs only what is already in `.env.dev` (`JWT_SECRET`, `INTERNAL_API_KEY`,
+`KAFKA_SERVERS`, the `*_SERVICE_URL` defaults) - no Postgres user, schema or Liquibase.
+
+### Rolling it out to a VPS that's already running the other services
+
+Do this **before** pushing the commit that adds it - CI's deploy step restarts `coryd-ops-service`,
+and that fails if the unit file isn't installed yet:
+
+```bash
+# From your local machine
+scp systemd/coryd-ops-service.service devoyeks@<vps-ip>:/tmp/
+
+# On the VPS
+sudo ss -tlnp | grep ':9106 '          # should print nothing
+sudo mkdir -p /opt/coryd-dev/ops-service && sudo chown devoyeks:devoyeks /opt/coryd-dev/ops-service
+sudo mv /tmp/coryd-ops-service.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable coryd-ops-service
+```
+
+No sudoers change - Phase 6's `coryd-*` wildcard already covers it. Nginx needs nothing either: it
+forwards everything to the gateway, and the gateway routes `/ops/**`. Then push; CI builds and starts
+it (it restarts before `api-gateway`, which picks up the new route on its own restart). Check with:
+
+```bash
+curl https://coryd-api-dev.marketrunn.com/ops/actuator/health     # {"status":"UP",...}
+curl -i https://coryd-api-dev.marketrunn.com/ops/drivers/verification/queue   # 401 without a token
+```
 
 ---
 
