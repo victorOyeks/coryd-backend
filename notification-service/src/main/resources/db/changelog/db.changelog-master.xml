@@ -13,5 +13,6 @@
     <include file="db/changelog/002-user-notifications.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/003-user-notification-booking-id.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/004-notification-log-email.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/005-user-notification-route-post-id.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

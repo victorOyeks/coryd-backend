@@ -26,6 +26,7 @@ public class DriverProfileService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final IdentityServiceClient identityServiceClient;
     private final PremblyVerificationService premblyVerificationService;
+    private final EmergencyContactService emergencyContactService;
 
     /** Internal/batch use (InternalDriverController, getBatch below) - no phone, no extra cross-service call. */
     public DriverProfile get(String userId) {
@@ -66,8 +67,13 @@ public class DriverProfileService {
 
         profile.setFirstName(request.firstName());
         profile.setLastName(request.lastName());
-        profile.setPhotoUrl(request.photoUrl());
-        profile.setEmail(request.email());
+        // Only optional fields actually sent are changed - an older app that leaves one out must not wipe it.
+        if (request.photoUrl() != null) {
+            profile.setPhotoUrl(request.photoUrl());
+        }
+        if (request.email() != null) {
+            profile.setEmail(request.email());
+        }
         profile.setDateOfBirth(request.dateOfBirth());
         profile.setIdNumber(request.idNumber());
 
@@ -81,6 +87,7 @@ public class DriverProfileService {
         }
 
         DriverProfile saved = driverProfileRepository.save(profile);
+        emergencyContactService.applyFromProfileForm(userId, request.emergencyContactName(), request.emergencyContactPhone());
         identityServiceClient.syncName(userId, saved.getFirstName(), saved.getLastName());
         // Off-thread and idempotent - re-saving an unchanged licence number spends no lookup.
         premblyVerificationService.checkDriversLicence(
@@ -92,6 +99,7 @@ public class DriverProfileService {
     }
 
     private DriverProfileResponse toResponse(DriverProfile profile) {
-        return DriverProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()));
+        return DriverProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()),
+                emergencyContactService.getPrimary(profile.getUserId()).orElse(null));
     }
 }

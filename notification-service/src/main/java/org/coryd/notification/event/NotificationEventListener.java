@@ -113,7 +113,7 @@ public class NotificationEventListener {
         String body = "NOT_STARTED".equals(event.getCancelledBy())
                 ? "Your route wasn't started within 45 minutes of departure, so it was cancelled and " + refunded + " booking(s) were refunded."
                 : "Your route post was cancelled and " + refunded + " booking(s) were refunded.";
-        dispatchService.sendPush(event.getDriverId(), "Route cancelled", body, "ROUTE_CANCELLED", null);
+        dispatchService.sendRoutePush(event.getDriverId(), "Route cancelled", body, "ROUTE_CANCELLED", event.getRoutePostId());
     }
 
     /** Driver reminders deep-link by routePostId (manifest), rider reminders by bookingId (trip details). */
@@ -124,11 +124,11 @@ public class NotificationEventListener {
         String kind = event.getKind() == null ? "RIDER_GET_READY" : event.getKind();
 
         switch (kind) {
-            case "DRIVER_GET_READY" -> dispatchService.sendPush(event.getDriverId(), "Get ready to depart",
+            case "DRIVER_GET_READY" -> dispatchService.sendRoutePush(event.getDriverId(), "Get ready to depart",
                     "Your route " + routeSummary + " departs " + inMinutes(event.getDepartureTime()) + " - "
                             + riderCount + " rider(s) booked.",
                     "DRIVER_DEPARTURE_REMINDER", event.getRoutePostId());
-            case "DRIVER_START_OVERDUE" -> dispatchService.sendPush(event.getDriverId(), "Your trip was due to leave",
+            case "DRIVER_START_OVERDUE" -> dispatchService.sendRoutePush(event.getDriverId(), "Your trip was due to leave",
                     "Start your route " + routeSummary + " or cancel it - it's cancelled automatically 45 minutes after departure"
                             + (riderCount == 0 ? "." : " and " + riderCount + " rider(s) will be refunded."),
                     "ROUTE_START_OVERDUE", event.getRoutePostId());
@@ -247,8 +247,9 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.SOS_TRIGGERED, groupId = KafkaConfig.GROUP_ID_SAFETY)
     public void onSosTriggered(SosTriggeredEvent event) {
-        if (event.getContacts() == null || event.getContacts().isEmpty()) {
-            log.warn("SOS triggered for booking {} but rider has no emergency contacts set - no SMS sent", event.getBookingId());
+        boolean anyContact = event.getContacts() != null && !event.getContacts().isEmpty();
+        if (!anyContact) {
+            log.warn("SOS triggered for booking {} by {} with no emergency contacts set - no SMS sent", event.getBookingId(), event.getTriggeredBy());
         } else {
             String locationText = event.getLatitude() == null ? ""
                     : " Last known location: " + event.getLatitude() + "," + event.getLongitude() + ".";
@@ -263,7 +264,10 @@ public class NotificationEventListener {
         // Confirmation push to whoever triggered it, once - regardless of how many contacts were
         // just alerted - matches the app's own "will be shared immediately" promise with a single
         // acknowledgement, not silence (or a flood) after tapping the button.
-        dispatchService.sendPush(event.getTriggeredBy(), "Emergency alert sent",
-                "Your emergency contact has been notified.", "SOS_TRIGGERED", event.getBookingId());
+        // Only claims a contact was alerted when one actually was.
+        dispatchService.sendPush(event.getTriggeredBy(), anyContact ? "Emergency alert sent" : "No emergency contact set",
+                anyContact ? "Your emergency contact has been notified by SMS."
+                        : "We couldn't alert anyone - add an emergency contact in your profile.",
+                "SOS_TRIGGERED", event.getBookingId());
     }
 }

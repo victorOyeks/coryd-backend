@@ -148,15 +148,15 @@ public class ProfileServiceClient {
     }
 
     /** Every emergency contact the rider has saved (Share Trip, SOS alert all of them, not just the primary). */
-    public List<RiderContact> fetchRiderContacts(String riderId) {
+    public List<RiderContact> fetchEmergencyContacts(String userId) {
         try {
             RiderContactBatchResponse response = restClient.get()
-                    .uri("/internal/riders/{userId}/emergency-contacts", riderId)
+                    .uri("/internal/riders/{userId}/emergency-contacts", userId)
                     .retrieve()
                     .body(RiderContactBatchResponse.class);
             return response == null || response.data() == null ? List.of() : response.data();
         } catch (Exception e) {
-            log.warn("Could not fetch emergency contacts for {}: {}", riderId, e.getMessage());
+            log.warn("Could not fetch emergency contacts for {}: {}", userId, e.getMessage());
             return List.of();
         }
     }

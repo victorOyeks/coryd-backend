@@ -20,6 +20,7 @@ import org.coryd.common.entity.BaseEntity;
 @AllArgsConstructor
 public class EmergencyContact extends BaseEntity {
 
+    /** The person this contact belongs to - rider or driver, one set per user. */
     @Column(nullable = false)
     private String riderId;
 
@@ -29,7 +30,7 @@ public class EmergencyContact extends BaseEntity {
     @Column(nullable = false, length = 20)
     private String phone;
 
-    /** Exactly one contact per rider is primary at a time - this is who Share Trip/SOS actually alerts. */
+    /** Exactly one contact per user is primary - the one shown on both profiles. SOS alerts every contact. */
     @Builder.Default
     @Column(name = "is_primary", nullable = false)
     private boolean primary = false;

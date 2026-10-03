@@ -1,5 +1,6 @@
 package org.coryd.profile.dto;
 
+import org.coryd.profile.entity.EmergencyContact;
 import org.coryd.profile.entity.RiderProfile;
 
 import java.time.Instant;
@@ -20,11 +21,12 @@ public record RiderProfileResponse(
         String emergencyContactName,
         String emergencyContactPhone
 ) {
-    public static RiderProfileResponse from(RiderProfile profile, String phone) {
+    public static RiderProfileResponse from(RiderProfile profile, String phone, EmergencyContact primaryContact) {
         return new RiderProfileResponse(
                 profile.getId(), profile.getCustomId(), profile.getCreatedAt(), profile.getUpdatedAt(),
                 profile.getUserId(), profile.getFirstName(), profile.getLastName(), profile.getEmail(), phone, profile.getPhotoUrl(),
-                profile.getEmergencyContactName(), profile.getEmergencyContactPhone()
+                primaryContact == null ? null : primaryContact.getName(),
+                primaryContact == null ? null : primaryContact.getPhone()
         );
     }
 }

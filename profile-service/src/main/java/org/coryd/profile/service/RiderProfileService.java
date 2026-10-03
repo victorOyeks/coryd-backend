@@ -24,6 +24,7 @@ public class RiderProfileService {
     private final RiderProfileRepository riderProfileRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final IdentityServiceClient identityServiceClient;
+    private final EmergencyContactService emergencyContactService;
 
     /** Internal/batch use (RiderProfileController.get, getBatch below) - no phone, no extra cross-service call. */
     public RiderProfile get(String userId) {
@@ -62,14 +63,20 @@ public class RiderProfileService {
             profile = RiderProfile.builder().userId(userId).build();
         }
 
+        // Only fields sent are changed - an older app that leaves one out must not wipe it.
         profile.setFirstName(request.firstName());
-        profile.setLastName(request.lastName());
-        profile.setEmail(request.email());
-        profile.setPhotoUrl(request.photoUrl());
-        profile.setEmergencyContactName(request.emergencyContactName());
-        profile.setEmergencyContactPhone(request.emergencyContactPhone());
+        if (request.lastName() != null) {
+            profile.setLastName(request.lastName());
+        }
+        if (request.email() != null) {
+            profile.setEmail(request.email());
+        }
+        if (request.photoUrl() != null) {
+            profile.setPhotoUrl(request.photoUrl());
+        }
 
         RiderProfile saved = riderProfileRepository.save(profile);
+        emergencyContactService.applyFromProfileForm(userId, request.emergencyContactName(), request.emergencyContactPhone());
         identityServiceClient.syncName(userId, saved.getFirstName(), saved.getLastName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.RIDER_PROFILE_CREATED, RiderProfileCreatedEvent.builder().riderId(userId).build());
@@ -78,6 +85,7 @@ public class RiderProfileService {
     }
 
     private RiderProfileResponse toResponse(RiderProfile profile) {
-        return RiderProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()));
+        return RiderProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()),
+                emergencyContactService.getPrimary(profile.getUserId()).orElse(null));
     }
 }

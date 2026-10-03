@@ -468,7 +468,7 @@ public class BookingService {
         }
         RoutePost route = routeOf(booking);
 
-        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchRiderContacts(booking.getRiderId());
+        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchEmergencyContacts(booking.getRiderId());
         if (contacts.isEmpty()) {
             throw new BadRequestException("Add an emergency contact to your profile before sharing a trip");
         }
@@ -1140,29 +1140,27 @@ public class BookingService {
     }
 
     @Transactional
-    public SosIncident triggerSos(String bookingId, String callerId, String triggeredBy, Double latitude, Double longitude) {
+    public SosIncident triggerSos(String bookingId, String callerId, Double latitude, Double longitude) {
         Booking booking = getOrThrow(bookingId);
         requireParticipant(booking, routeOf(booking), callerId);
 
         SosIncident incident = sosIncidentRepository.save(SosIncident.builder()
                 .bookingId(bookingId)
-                .triggeredBy(triggeredBy)
+                .triggeredBy(callerId)
                 .latitude(latitude)
                 .longitude(longitude)
                 .opsNotifiedAt(Instant.now())
                 .build());
 
-        // Every emergency contact the rider has saved, regardless of who triggered SOS - it's a
-        // rider-safety feature. Looked up here (not in notification-service) since this service
-        // already has the profile-service client for Share Trip - no new cross-service
-        // dependency needed there.
-        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchRiderContacts(booking.getRiderId());
+        // Every emergency contact of whoever pressed SOS - the rider's people for a rider, the driver's
+        // for a driver. Contacts belong to the person, whichever role they're in.
+        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchEmergencyContacts(callerId);
 
         // Fan-out only, never the primary path - the incident is already saved above.
         kafkaTemplate.send(KafkaTopics.SOS_TRIGGERED, SosTriggeredEvent.builder()
                 .incidentId(incident.getId())
                 .bookingId(bookingId)
-                .triggeredBy(triggeredBy)
+                .triggeredBy(callerId)
                 .latitude(latitude)
                 .longitude(longitude)
                 .triggeredAt(LocalDateTime.now())

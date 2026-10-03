@@ -90,6 +90,10 @@ public class TripScheduleService {
         }
     }
 
+    public static String formatLagos(Instant instant) {
+        return WHEN.format(instant);
+    }
+
     private static BadRequestException clash(String what, RoutePost other) {
         return new BadRequestException("This overlaps " + what + " - " + other.getOriginLabel() + " to "
                 + other.getDestinationLabel() + " on " + WHEN.format(other.getDepartureTime()) + ". Trips can't overlap.");

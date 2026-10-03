@@ -316,7 +316,7 @@ class BookingFlowIntegrationTest {
         RoutePost route = route(4);
         Booking booking = book(route, RIDER, 1);
         confirm(booking);
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
         pickUp(booking);
 
         bookingService.confirm(booking.getId());
@@ -348,7 +348,7 @@ class BookingFlowIntegrationTest {
         Booking booking = book(route, RIDER, 1);
         confirm(booking);
         bookingService.cancelByRider(booking.getId(), RIDER);
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
 
         assertThatThrownBy(() -> pickUp(booking)).isInstanceOf(BadRequestException.class);
         assertThatThrownBy(() -> bookingService.completeTrip(booking.getId(), DRIVER)).isInstanceOf(BadRequestException.class);
@@ -360,7 +360,7 @@ class BookingFlowIntegrationTest {
         RoutePost route = route(4);
         Booking booking = book(route, RIDER, 1);
         confirm(booking);
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
         pickUp(booking);
 
         bookingService.completeTrip(booking.getId(), DRIVER);
@@ -374,7 +374,7 @@ class BookingFlowIntegrationTest {
     void completedRouteCannotBeCancelled() {
         RoutePost route = route(4);
         confirm(book(route, RIDER, 1));
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
         bookingService.markNoShow(bookingRepository.findByRoutePostId(route.getId()).get(0).getId(), DRIVER);
         bookingService.completeRoute(route.getId(), DRIVER);
 
@@ -412,7 +412,7 @@ class BookingFlowIntegrationTest {
         // Tunde paid but never turned up.
         Booking tunde = book(route, "tunde", 2);
         confirm(tunde);
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
         pickUp(amaka);
         bookingService.markNoShow(tunde.getId(), DRIVER);
         bookingService.completeRoute(route.getId(), DRIVER);
@@ -461,7 +461,7 @@ class BookingFlowIntegrationTest {
         assertThatThrownBy(() -> bookingService.rate(booking.getId(), RIDER, fiveStars))
                 .as("not before the trip").isInstanceOf(BadRequestException.class);
 
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
         pickUp(booking);
         bookingService.completeRoute(route.getId(), DRIVER);
 
@@ -511,7 +511,7 @@ class BookingFlowIntegrationTest {
         setCode(mine, "1111");
         setCode(sameRoute, "2222");
         setCode(otherRouteBooking, "3333");
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
 
         assertThatThrownBy(() -> bookingService.markPickedUp(mine.getId(), DRIVER, "2222")).isInstanceOf(BadRequestException.class);
         assertThatThrownBy(() -> bookingService.markPickedUp(mine.getId(), DRIVER, "3333")).isInstanceOf(BadRequestException.class);
@@ -800,7 +800,7 @@ class BookingFlowIntegrationTest {
         Booking booking = book(route, RIDER, 1);
         confirm(booking);
 
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
 
         assertThat(bookingService.getActiveBookingForRider(RIDER, RIDER)).isPresent();
         assertThat(bookingService.getActiveTripForDriver(DRIVER, DRIVER)).isPresent();
@@ -818,6 +818,44 @@ class BookingFlowIntegrationTest {
         var upcoming = bookingService.getUpcomingRoutesForDriver(DRIVER);
         assertThat(upcoming).extracting(u -> u.routePostId()).containsExactly(later.getId());
         assertThat(upcoming.get(0).seatsBooked()).isEqualTo(2);
+    }
+
+    // ---- starting a trip -------------------------------------------------------------------------
+
+    @Test
+    void startOpensThirtyMinutesBeforeDeparture() {
+        RoutePost later = route(4);
+        assertThatThrownBy(() -> routeService.startTrip(later.getId(), DRIVER))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("You can start this trip from")
+                .hasMessageContaining("30 minutes before departure");
+        assertThat(routePostRepository.findById(later.getId()).orElseThrow().getStatus()).isEqualTo(RouteStatus.PUBLISHED);
+
+        RoutePost soon = routeAt(Instant.now().plus(25, ChronoUnit.MINUTES), null);
+        routeService.startTrip(soon.getId(), DRIVER);
+        assertThat(routePostRepository.findById(soon.getId()).orElseThrow().getStatus()).isEqualTo(RouteStatus.IN_PROGRESS);
+    }
+
+    // ---- SOS -------------------------------------------------------------------------------------
+
+    @Test
+    void sosAlertsTheContactsOfWhoeverPressedIt() {
+        RoutePost route = route(4);
+        Booking booking = book(route, RIDER, 1);
+        confirm(booking);
+        org.mockito.Mockito.when(profileServiceClient.fetchEmergencyContacts(DRIVER))
+                .thenReturn(List.of(new ProfileServiceClient.RiderContact("Wife", "08050000000")));
+
+        bookingService.triggerSos(booking.getId(), DRIVER, 6.45, 3.39);
+
+        verify(profileServiceClient).fetchEmergencyContacts(DRIVER);
+        verify(profileServiceClient, never()).fetchEmergencyContacts(RIDER);
+        verify(kafkaTemplate).send(eq(KafkaTopics.SOS_TRIGGERED), argThat(e -> {
+            var event = (org.coryd.common.kafka.events.SosTriggeredEvent) e;
+            return DRIVER.equals(event.getTriggeredBy()) && event.getContacts().size() == 1
+                    && "08050000000".equals(event.getContacts().get(0).getPhone());
+        }));
+        assertThatThrownBy(() -> bookingService.triggerSos(booking.getId(), OTHER_RIDER, null, null)).isInstanceOf(UnauthorizedException.class);
     }
 
     // ---- rides nearby ----------------------------------------------------------------------------
@@ -920,6 +958,12 @@ class BookingFlowIntegrationTest {
         return routePostRepository.save(routeBuilder(4).departureTime(departure).estimatedDurationMinutes(durationMinutes).build());
     }
 
+    /** Start only opens inside the active window, so bring departure into it first. */
+    private void start(RoutePost route) {
+        departAt(route, Instant.now().plus(10, ChronoUnit.MINUTES));
+        routeService.startTrip(route.getId(), DRIVER);
+    }
+
     private void departAt(RoutePost route, Instant departure) {
         RoutePost r = routePostRepository.findById(route.getId()).orElseThrow();
         r.setDepartureTime(departure);
@@ -955,7 +999,7 @@ class BookingFlowIntegrationTest {
     private RoutePost startedRouteWithConfirmed(String riderId) {
         RoutePost route = route(4);
         confirm(book(route, riderId, 1));
-        routeService.startTrip(route.getId(), DRIVER);
+        start(route);
         return route;
     }
 

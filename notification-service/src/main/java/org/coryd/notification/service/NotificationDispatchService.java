@@ -66,6 +66,17 @@ public class NotificationDispatchService {
     @Async("notificationExecutor")
     @Transactional
     public void sendPush(String userId, String title, String body, String eventType, String bookingId) {
+        push(userId, title, body, eventType, bookingId, null);
+    }
+
+    /** A notification about a route rather than one booking - the feed and the push carry routePostId. */
+    @Async("notificationExecutor")
+    @Transactional
+    public void sendRoutePush(String userId, String title, String body, String eventType, String routePostId) {
+        push(userId, title, body, eventType, null, routePostId);
+    }
+
+    private void push(String userId, String title, String body, String eventType, String bookingId, String routePostId) {
         // One feed entry per logical notification, not one per device - a rider with two
         // phones should see this once in their bell, even though it's pushed to both.
         userNotificationRepository.save(UserNotification.builder()
@@ -74,10 +85,11 @@ public class NotificationDispatchService {
                 .body(body)
                 .eventType(eventType)
                 .bookingId(bookingId)
+                .routePostId(routePostId)
                 .build());
 
         for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
-            boolean delivered = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, bookingId);
+            boolean delivered = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, bookingId, routePostId);
             notificationLogRepository.save(NotificationLog.builder()
                     .channel(NotificationChannel.PUSH)
                     .eventType(eventType)

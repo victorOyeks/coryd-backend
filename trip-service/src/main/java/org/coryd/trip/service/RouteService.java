@@ -601,6 +601,13 @@ public class RouteService {
         if (route.getStatus() != RouteStatus.PUBLISHED && route.getStatus() != RouteStatus.FULL) {
             throw new BadRequestException("This trip can't be started from its current state");
         }
+        // Start opens with the active window - earlier would pull riders into trip mode, and the route
+        // out of search, hours ahead of the time they booked.
+        Instant opensAt = route.getDepartureTime().minus(TripScheduleService.ACTIVE_WINDOW);
+        if (Instant.now().isBefore(opensAt)) {
+            throw new BadRequestException("You can start this trip from " + TripScheduleService.formatLagos(opensAt)
+                    + ", " + TripScheduleService.ACTIVE_WINDOW.toMinutes() + " minutes before departure");
+        }
         route.setStatus(RouteStatus.IN_PROGRESS);
         route.setStartedAt(Instant.now());
         routePostRepository.save(route);

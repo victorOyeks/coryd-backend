@@ -43,6 +43,9 @@ public class UserNotification extends BaseEntity {
     /** Nullable - what "View details" deep-links to. Null for notification types with no single related booking (e.g. document expiring). */
     private String bookingId;
 
+    /** Set instead of bookingId for notifications about a route rather than one booking. */
+    private String routePostId;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean read = false;

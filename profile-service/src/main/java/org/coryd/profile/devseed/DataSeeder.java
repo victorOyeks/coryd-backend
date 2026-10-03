@@ -80,7 +80,9 @@ public class DataSeeder implements ApplicationRunner {
                 LocalDate.of(1995, 1, 1),
                 "https://example.com/coryd-seed/gov-id-" + index + ".jpg",
                 "coryd-seed/gov-id-" + index,
-                "SEED-ID-" + index
+                "SEED-ID-" + index,
+                null,
+                null
         ));
 
         Vehicle vehicle = vehicleRepository.findByDriverId(driverId).stream().findFirst()

@@ -21,7 +21,8 @@ public class FcmService {
 
     private final DeviceTokenRepository deviceTokenRepository;
 
-    public boolean sendPush(String userId, String fcmToken, String title, String body, String eventType, String referenceId) {
+    public boolean sendPush(String userId, String fcmToken, String title, String body, String eventType, String referenceId,
+                            String routePostId) {
         if (FirebaseApp.getApps().isEmpty()) {
             log.warn("Firebase not initialized - skipping push for userId={}", userId);
             return false;
@@ -53,6 +54,9 @@ public class FcmService {
 
             if (referenceId != null) {
                 builder.putData("referenceId", referenceId);
+            }
+            if (routePostId != null) {
+                builder.putData("routePostId", routePostId);
             }
 
             String response = FirebaseMessaging.getInstance().send(builder.build());

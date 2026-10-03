@@ -131,6 +131,14 @@ New `400` messages on posting:
 
 The old message `You already have an active route…` no longer exists.
 
+### Starting a route
+
+Start (`POST /trip/routes/{routePostId}/start`) opens **30 minutes before departure**, the same moment the route becomes active. Tapping it earlier, for example from "Upcoming routes", returns `400`:
+
+> `You can start this trip from Fri 3 Oct, 3:30 PM, 30 minutes before departure`
+
+Show the message as-is. You can also grey out Start until the route appears in `/drivers/{id}/active`.
+
 ### A route that's never started
 
 - At departure time, if the driver hasn't tapped Start, they get a **"Your trip was due to leave"** push (`ROUTE_START_OVERDUE`) asking them to start or cancel.
@@ -140,14 +148,22 @@ The old message `You already have an active route…` no longer exists.
 
 ## 3. Reminder pushes and deep links
 
-Every push carries `type` and `referenceId` in its FCM data payload. In the in-app notification feed, the same values are `eventType` and `bookingId`.
+Notifications are about either **one booking** or **one route**, and each kind has its own field:
 
-| `type` | Who | When | `referenceId` | Open |
+| | FCM data payload | In-app feed (`GET /notification/notifications/{userId}`) |
+|---|---|---|
+| About a booking | `type`, `referenceId` (= bookingId) | `eventType`, `bookingId` |
+| About a route | `type`, `routePostId` | `eventType`, `routePostId` |
+
+**`referenceId` and the feed's `bookingId` only ever hold a booking ID.** Route notifications leave them empty and use `routePostId`.
+
+| `type` | Who | When | Id field | Open |
 |---|---|---|---|---|
 | `DRIVER_DEPARTURE_REMINDER` | Driver | 30 min before departure (when the route turns active) | `routePostId` | Passenger manifest / ready-to-depart |
-| `ROUTE_DEPARTURE_REMINDER` | Each confirmed rider | 15 min before departure | `bookingId` | Trip details (shows the pickup code) |
 | `ROUTE_START_OVERDUE` | Driver | At departure, if not started | `routePostId` | Passenger manifest, with Start / Cancel |
-| `ROUTE_CANCELLED` | Driver | Route cancelled (by them or automatically) | none (unchanged) | Upcoming routes / history |
+| `ROUTE_CANCELLED` | Driver | Route cancelled (by them or automatically) | `routePostId` | Upcoming routes / history |
+| `ROUTE_DEPARTURE_REMINDER` | Each confirmed rider | 15 min before departure | `bookingId` | Trip details (shows the pickup code) |
+| `BOOKING_CANCELLED` | Rider | Their booking was cancelled (by the driver, automatically, or by them) | `bookingId` | Trip details |
 
 - The driver's 30-minute reminder replaces sending them to the passenger screen straight after posting.
 - A "leave now" route (posted already inside the 30 minutes) doesn't get the driver reminder, because the driver is already on that screen.
@@ -168,4 +184,5 @@ Every push carries `type` and `referenceId` in its FCM data payload. In the in-a
 - [ ] Home: keep "Post a Route" always visible; add "Upcoming routes" from `/drivers/me/upcoming`
 - [ ] After publish: call `/active`, open ready-to-depart only if it returns the new route, otherwise go Home with "Route scheduled for …"
 - [ ] Show the overlap / "already passed" messages on post failures
-- [ ] Deep-link `DRIVER_DEPARTURE_REMINDER` and `ROUTE_START_OVERDUE` (routePostId) to the manifest
+- [ ] Deep-link `DRIVER_DEPARTURE_REMINDER` and `ROUTE_START_OVERDUE` to the manifest using `routePostId` (FCM data and feed)
+- [ ] Show the server's message when Start is tapped more than 30 minutes before departure
