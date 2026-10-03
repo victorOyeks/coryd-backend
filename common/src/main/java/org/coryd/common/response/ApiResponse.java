@@ -21,4 +21,3 @@ public record ApiResponse<T>(String responseId, Instant timestamp, boolean succe
         return new ApiResponse<>(UUID.randomUUID().toString(), Instant.now(), false, message, data);
     }
 }
-
