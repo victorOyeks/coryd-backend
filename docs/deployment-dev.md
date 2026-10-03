@@ -11,19 +11,18 @@ from naming, not separate infrastructure:
 - Every CoRyd Kafka topic is prefixed `coryd-` (e.g. `coryd-booking-confirmed`), and every consumer group ID is prefixed `coryd-<service-name>` (e.g. `coryd-identity-service`) — both baked into the code already. Without this, CoRyd's `identity-service` consumer group would collide with marketrun-ng's own `identity-service` consumer group on the same broker and the two unrelated apps would fight over each other's partitions.
 - `trip-service` (the only service that touches Redis, for live driver location) uses logical DB index `1`, leaving marketrun-ng's default DB `0` untouched.
 
-Domain: `coryd-api-dev.marketrunn.com` → Nginx → `api-gateway` (:9100) → the 5 services (:9101-9105), mirroring marketrun-ng's own gateway pattern. This also gives a single unified Swagger UI instead of 5 separate ones.
+Domain: `api-dev.coryd.ng` → Nginx → `api-gateway` (:9100) → the services (:9101-9106), mirroring marketrun-ng's own gateway pattern. This also gives a single unified Swagger UI instead of 5 separate ones.
 
 **Everything after Phase 6 is CI-driven** — GitHub Actions builds, ships, and starts all 6 (5 services + gateway) on the first push to `develop`, and every push after that. Phases 1-6 are one-time setup that only you can do (DNS/GitHub/VPS access), since I have none of those from here.
 
 ---
 
-## Phase 1 — DNS (Cloudflare)
+## Phase 1 — DNS (`coryd.ng` zone)
 
-1. Log into the Cloudflare dashboard for the `marketrunn.com` zone.
-2. Go to **DNS → Records → Add record**.
-3. Type: `A`. Name: `coryd-api-dev`. IPv4 address: the VPS's public IP (same one `api-dev.marketrunn.com` already points to — check that record for the value).
-4. Proxy status: **DNS only** (grey cloud), not proxied — Certbot needs to validate directly against the origin. You can switch to proxied (orange cloud) after the certificate is issued, if you want Cloudflare's edge in front.
-5. Save. Propagation is usually near-instant on Cloudflare; confirm with `dig coryd-api-dev.marketrunn.com` from your machine before moving on.
+1. Open DNS management for `coryd.ng`, wherever the domain's nameservers point (Cloudflare or the registrar).
+2. Add a record. Type: `A`. Name: `api-dev`. IPv4 address: the VPS's public IP (`curl -4 ifconfig.me` on the VPS - currently `62.169.21.189`).
+3. If the zone is on Cloudflare: proxy status **DNS only** (grey cloud) until the certificate is issued - Certbot validates directly against the origin.
+4. Save, then confirm from your machine before moving on: `dig +short api-dev.coryd.ng` must print the VPS IP.
 
 ---
 
@@ -201,16 +200,16 @@ Nginx proxies everything to the gateway on `127.0.0.1:9100` — a single `locati
 
 ```bash
 # From your local machine
-scp nginx/coryd-api-dev.marketrunn.com devoyeks@<vps-ip>:/tmp/
+scp nginx/api-dev.coryd.ng devoyeks@<vps-ip>:/tmp/
 
 # On the VPS
-sudo mv /tmp/coryd-api-dev.marketrunn.com /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/coryd-api-dev.marketrunn.com /etc/nginx/sites-enabled/
+sudo mv /tmp/api-dev.coryd.ng /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/api-dev.coryd.ng /etc/nginx/sites-enabled/
 sudo nginx -t          # validate config before reloading
 sudo systemctl reload nginx
 
 # Issue the cert - certbot rewrites the site file in place to add the SSL block
-sudo certbot --nginx -d coryd-api-dev.marketrunn.com
+sudo certbot --nginx -d api-dev.coryd.ng
 ```
 
 If you land on this phase after already hitting `ERR_SSL_UNRECOGNIZED_NAME_ALERT` in a browser, that error means this phase was never completed (no certificate/server block exists yet for this hostname) — running the steps above resolves it.
@@ -220,23 +219,36 @@ If you land on this phase after already hitting `ERR_SSL_UNRECOGNIZED_NAME_ALERT
 ## Phase 9 — Verification
 
 ```bash
-curl https://coryd-api-dev.marketrunn.com/identity/actuator/health
-curl https://coryd-api-dev.marketrunn.com/profile/actuator/health
-curl https://coryd-api-dev.marketrunn.com/trip/actuator/health
-curl https://coryd-api-dev.marketrunn.com/payment/actuator/health
-curl https://coryd-api-dev.marketrunn.com/notification/actuator/health
-curl https://coryd-api-dev.marketrunn.com/ops/actuator/health
+curl https://api-dev.coryd.ng/identity/actuator/health
+curl https://api-dev.coryd.ng/profile/actuator/health
+curl https://api-dev.coryd.ng/trip/actuator/health
+curl https://api-dev.coryd.ng/payment/actuator/health
+curl https://api-dev.coryd.ng/notification/actuator/health
+curl https://api-dev.coryd.ng/ops/actuator/health
 ```
 
 Each should return `{"status":"UP"}` — the gateway forwards the same path prefixes through unchanged, so these URLs are identical to what they'd be without a gateway in front.
 
 Unified Swagger UI (the payoff for adding the gateway):
 ```
-https://coryd-api-dev.marketrunn.com/swagger-ui.html
+https://api-dev.coryd.ng/swagger-ui.html
 ```
 This should show a dropdown listing all 5 services, each backed by its own `/docs/<service>/v3/api-docs` route.
 
 Also worth a spot-check the first time: `docker exec` into marketrun-ng's Kafka container (or use `kafka-consumer-groups.sh --list`) and confirm you see `coryd-identity-service`, `coryd-profile-service`, etc. as their own distinct consumer groups, separate from marketrun-ng's `identity-service`, `profile-service`, etc.
+
+---
+
+## Settings outside this repo that point at `api-dev.coryd.ng`
+
+If the host ever changes again, these are the places that have to follow it:
+
+- **`.env.dev`** - `SHARE_LINK_BASE_URL=https://api-dev.coryd.ng/trip`. The trip-share links texted to
+  emergency contacts are built from it; restart `coryd-trip-service` after changing it.
+- **Paystack dashboard** (Test mode) -> Settings -> API Keys & Webhooks -> Test Webhook URL:
+  `https://api-dev.coryd.ng/payment/payments/webhook`. Card payments, wallet top-ups and driver
+  withdrawals all confirm through it.
+- **The rider/driver app and the Ops Console** - their API base URL.
 
 ---
 
@@ -270,8 +282,8 @@ forwards everything to the gateway, and the gateway routes `/ops/**`. Then push;
 it (it restarts before `api-gateway`, which picks up the new route on its own restart). Check with:
 
 ```bash
-curl https://coryd-api-dev.marketrunn.com/ops/actuator/health     # {"status":"UP",...}
-curl -i https://coryd-api-dev.marketrunn.com/ops/drivers/verification/queue   # 401 without a token
+curl https://api-dev.coryd.ng/ops/actuator/health     # {"status":"UP",...}
+curl -i https://api-dev.coryd.ng/ops/drivers/verification/queue   # 401 without a token
 ```
 
 ---

@@ -1,7 +1,11 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name coryd-api-dev.marketrunn.com;
+    server_name api-dev.coryd.ng;
+
+    # Spring accepts uploads up to 10MB (licence, vehicle and document photos); nginx's own default
+    # is 1MB, which turned a phone-camera photo into a 413 before it ever reached the app.
+    client_max_body_size 10m;
 
     location / {
         proxy_pass http://127.0.0.1:9100;
