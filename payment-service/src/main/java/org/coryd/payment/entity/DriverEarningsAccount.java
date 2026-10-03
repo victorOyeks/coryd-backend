@@ -36,4 +36,9 @@ public class DriverEarningsAccount extends BaseEntity {
     @Builder.Default
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal lifetimeCommission = BigDecimal.ZERO;
+
+    /** Owed back to us after a refund Paystack could no longer claw out of an unsettled split. */
+    @Builder.Default
+    @Column(nullable = false, precision = 12, scale = 2)
+    private BigDecimal settlementDebt = BigDecimal.ZERO;
 }

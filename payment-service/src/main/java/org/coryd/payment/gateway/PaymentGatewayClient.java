@@ -13,6 +13,17 @@ public interface PaymentGatewayClient {
     /** metadata comes back on the webhook - what ties a charge to its booking if the reference alone no longer does. */
     GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl, Map<String, String> metadata);
 
+    /**
+     * Split variant. subaccountCode routes the driver's share straight to their own account so it
+     * never lands in ours; flatChargeKobo overrides the subaccount's percentage when we need to
+     * take more than our commission, which is how a settlement debt is recovered.
+     */
+    GatewayInitResult initiateSplit(String reference, BigDecimal amount, String riderEmail, String callbackUrl,
+                                    Map<String, String> metadata, String subaccountCode, Long flatChargeKobo);
+
+    /** Returns false when the gateway declined the refund outright; a null amount refunds in full. */
+    boolean refund(String gatewayReference, BigDecimal amount, String reason);
+
     boolean verifyWebhookSignature(String payload, String signatureHeader);
 
     record GatewayInitResult(String authorizationUrl, String gatewayReference) {

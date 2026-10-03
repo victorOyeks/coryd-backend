@@ -42,6 +42,9 @@ public class PayoutRecipient extends BaseEntity {
     /** Non-null means "Verified" on the Payout Setup screen - the real Paystack transfer recipient exists, not just locally-saved bank details. */
     private String gatewayRecipientCode;
 
+    @Column(length = 100)
+    private String gatewaySubaccountCode;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean isDefault = false;

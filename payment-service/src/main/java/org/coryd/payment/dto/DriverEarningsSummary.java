@@ -6,6 +6,7 @@ public record DriverEarningsSummary(
         BigDecimal lifetimeGross,
         BigDecimal lifetimeNet,
         BigDecimal todayNet,
-        BigDecimal availableBalance
+        BigDecimal availableBalance,
+        BigDecimal settlementDebt
 ) {
 }

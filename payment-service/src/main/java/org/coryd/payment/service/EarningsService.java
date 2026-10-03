@@ -2,6 +2,8 @@ package org.coryd.payment.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.enums.PaymentMethod;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
@@ -13,6 +15,8 @@ import org.coryd.payment.dto.BookingEarningsItem;
 import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.dto.EarningsPeriod;
 import org.coryd.payment.dto.PeriodEarningsSummary;
+import org.coryd.payment.gateway.PaymentGatewayClient;
+import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
@@ -28,6 +32,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +55,11 @@ public class EarningsService {
     private final FareHoldRepository fareHoldRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final DriverEarningsAccountRepository earningsAccountRepository;
+    private final PaymentGatewayClient gatewayClient;
+
+    /** When true the driver's share never reaches our balance, so there is nothing here to hold. */
+    @Value("${payment.split.enabled:false}")
+    private boolean splitEnabled;
     private final EarningsTransactionRepository earningsTransactionRepository;
     private final WalletFeedRepository walletFeedRepository;
     private final ProfileServiceClient profileServiceClient;
@@ -77,14 +87,26 @@ public class EarningsService {
         creditDriver(hold.getDriverId(), bookingId, event.getRoutePostId(), event.getRiderId(), hold.getAmount());
     }
 
-    /** Commission comes off the driver's side, same for a trip fare or a late-cancellation fee. */
+    /**
+     * Commission comes off the driver's side, same for a trip fare or a late-cancellation fee.
+     * Under split payments the money moved at charge time, so this only keeps the books: lifetime
+     * totals, the statement row, and whatever debt the trip paid down.
+     */
     private void creditDriver(String driverId, String bookingId, String routePostId, String riderId, BigDecimal gross) {
         BigDecimal commission = gross.multiply(commissionProperties.getPercentage()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal net = gross.subtract(commission);
 
         DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
                 .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
-        account.setAvailableBalance(account.getAvailableBalance().add(net));
+        if (splitEnabled) {
+            // The charge took the whole fare while a debt was outstanding, so this trip paid it down.
+            BigDecimal recovered = account.getSettlementDebt().min(net);
+            if (recovered.signum() > 0) {
+                account.setSettlementDebt(account.getSettlementDebt().subtract(recovered));
+            }
+        } else {
+            account.setAvailableBalance(account.getAvailableBalance().add(net));
+        }
         account.setLifetimeGross(account.getLifetimeGross().add(gross));
         account.setLifetimeCommission(account.getLifetimeCommission().add(commission));
         earningsAccountRepository.save(account);
@@ -151,7 +173,8 @@ public class EarningsService {
                 .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
         BigDecimal lifetimeNet = account.getLifetimeGross().subtract(account.getLifetimeCommission());
         BigDecimal todayNet = earningsTransactionRepository.sumNetCreditByDriverIdSince(driverId, startOfToday());
-        return new DriverEarningsSummary(account.getLifetimeGross(), lifetimeNet, todayNet, account.getAvailableBalance());
+        return new DriverEarningsSummary(account.getLifetimeGross(), lifetimeNet, todayNet,
+                account.getAvailableBalance(), account.getSettlementDebt());
     }
 
     /** Earnings breakdown lookup for a specific set of bookings - e.g. trip-service's driver history page zips netCredit in per route by bookingId, and the post-trip settlement summary sums all three fields across a route's completed bookings. */
@@ -163,6 +186,39 @@ public class EarningsService {
 
     private static Instant startOfToday() {
         return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
+    }
+
+    /**
+     * A card charge goes back to the card, because under split payments the driver's share is at
+     * Paystack and only their refund can reach it. A wallet-funded booking never touched the
+     * gateway, so it goes back to the wallet it came from.
+     */
+    private void refundToSource(PaymentTransaction transaction, String bookingId, BigDecimal amount, String reason) {
+        if (!splitEnabled || transaction.getPaymentMethod() != PaymentMethod.PAYSTACK) {
+            walletService.creditRefund(transaction.getRiderId(), bookingId, amount, reason);
+            return;
+        }
+        if (!gatewayClient.refund(transaction.getGatewayReference(), amount, reason)) {
+            log.error("RECONCILE: Paystack refused the refund for booking {} - rider {} is owed {}",
+                    bookingId, transaction.getRiderId(), amount);
+        }
+    }
+
+    /**
+     * Ops records what a driver owes after Paystack reports a refund it could no longer take out of
+     * an unsettled split. It is not inferred here: the refund response does not say whether the
+     * driver had already been settled, and guessing would mean charging drivers twice.
+     */
+    @Transactional
+    public void recordSettlementDebt(String driverId, BigDecimal amount, String reason) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new BadRequestException("Debt amount must be greater than zero");
+        }
+        DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
+                .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
+        account.setSettlementDebt(account.getSettlementDebt().add(amount));
+        earningsAccountRepository.save(account);
+        log.info("Recorded settlement debt of {} against driver {}: {}", amount, driverId, reason);
     }
 
     private boolean isPaid(String bookingId) {
@@ -202,7 +258,7 @@ public class EarningsService {
             if (refunded.signum() == 0) {
                 return;
             }
-            walletService.creditRefund(transaction.getRiderId(), bookingId, refunded, reason);
+            refundToSource(transaction, bookingId, refunded, reason);
 
             kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
                     .bookingId(bookingId)

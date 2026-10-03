@@ -42,9 +42,21 @@ jwt:
   secret: ${JWT_SECRET:change-me-in-every-environment}
   expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
+# Split payments: the driver's share goes straight to their Paystack subaccount at charge time
+# instead of accruing here. Off until every active driver has a subaccount, because with it on a
+# driver without one cannot be booked at all.
+payment:
+  split:
+    enabled: ${PAYMENT_SPLIT_ENABLED:false}
+
 paystack:
   secret-key: ${PAYSTACK_SECRET_KEY:sk_test_placeholder}
   base-url: https://api.paystack.co
+  # auto (T+1), weekly or monthly - never manual, which is conditional release by another name.
+  settlement-schedule: ${PAYSTACK_SETTLEMENT_SCHEDULE:weekly}
+  # Who pays the fee on a split charge. Verify against a real test-mode split before going live -
+  # left unset, Paystack bills the main account, which is more than our commission on a 2,500 fare.
+  split-fee-bearer: ${PAYSTACK_SPLIT_FEE_BEARER:}
 
 services:
   # Rider name/photo for the Wallet feed's trip rows (ProfileServiceClient).

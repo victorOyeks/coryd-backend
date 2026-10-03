@@ -24,6 +24,7 @@ import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.policy.CancellationPolicy;
+import org.coryd.trip.dto.LocationResponse;
 import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingPaymentView;
@@ -892,7 +893,24 @@ public class BookingService {
             return;
         }
         requireMove(booking, BookingStatus.NO_SHOW, AWAITING_PICKUP_STATUSES);
-        recordHistory(bookingId, BookingStatus.NO_SHOW, "Rider did not show up within the grace period");
+        // The driver keeps the fare on a no-show, so where they were when they claimed it is the
+        // only evidence ops has when the rider says the driver never turned up.
+        recordHistory(bookingId, BookingStatus.NO_SHOW,
+                "Rider did not show up within the grace period" + driverLocationNote(booking.getRoutePostId()));
+    }
+
+    /** Best-effort - a driver with location sharing off still gets to mark a no-show, ops just has less to go on. */
+    private String driverLocationNote(String routePostId) {
+        try {
+            LocationResponse location = locationService.peekRouteLocation(routePostId);
+            if (location == null || !location.available()) {
+                return " (driver location unavailable)";
+            }
+            return " (driver at " + location.lat() + "," + location.lng() + " at " + location.recordedAt() + ")";
+        } catch (Exception e) {
+            log.warn("Could not read driver location for route {} while marking a no-show: {}", routePostId, e.getMessage());
+            return " (driver location unavailable)";
+        }
     }
 
     /** Undoes a manifest mark (Picked Up or No Show) made in error, before the trip is completed - powers the manifest's "No Show x" undo chip. */

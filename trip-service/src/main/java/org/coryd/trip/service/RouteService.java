@@ -48,6 +48,7 @@ import org.coryd.trip.repository.SuggestedFareRangeRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -117,6 +118,11 @@ public class RouteService {
     /** A "leave now" post can land a few seconds after the departure the app filled in. */
     private static final Duration DEPARTURE_PAST_TOLERANCE = Duration.ofMinutes(5);
 
+    /** Must stay inside the payout settlement cycle: a trip that departs after the driver has been
+     * settled leaves a refund with nothing to claw back. */
+    @Value("${trip.max-days-ahead:3}")
+    private int maxDaysAhead;
+
     @Transactional
     public RoutePost post(String driverId, String callerId, PostRouteRequest request) {
         if (!callerId.equals(driverId)) {
@@ -124,6 +130,9 @@ public class RouteService {
         }
         if (!request.departureTime().isAfter(Instant.now().minus(DEPARTURE_PAST_TOLERANCE))) {
             throw new BadRequestException("Departure time has already passed");
+        }
+        if (request.departureTime().isAfter(Instant.now().plus(Duration.ofDays(maxDaysAhead)))) {
+            throw new BadRequestException("Routes can only be posted up to " + maxDaysAhead + " days ahead");
         }
         requirePostingEligibility(driverId);
         bookingRepository.lockUser(driverId);

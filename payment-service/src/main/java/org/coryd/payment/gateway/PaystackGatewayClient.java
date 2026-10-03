@@ -39,6 +39,12 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
 
     @Override
     public GatewayInitResult initiate(String reference, BigDecimal amount, String riderEmail, String callbackUrl, Map<String, String> metadata) {
+        return initiateSplit(reference, amount, riderEmail, callbackUrl, metadata, null, null);
+    }
+
+    @Override
+    public GatewayInitResult initiateSplit(String reference, BigDecimal amount, String riderEmail, String callbackUrl,
+                                           Map<String, String> metadata, String subaccountCode, Long flatChargeKobo) {
         if (riderEmail == null || riderEmail.isBlank()) {
             // Map.of would NPE here; Paystack rejects the call anyway, so fail with something readable.
             throw new BadRequestException("A billing email is required to start a payment");
@@ -55,6 +61,17 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         }
         if (metadata != null && !metadata.isEmpty()) {
             body.put("metadata", metadata);
+        }
+        if (subaccountCode != null && !subaccountCode.isBlank()) {
+            body.put("subaccount", subaccountCode);
+            String bearer = paystackProperties.getSplitFeeBearer();
+            if (bearer != null && !bearer.isBlank()) {
+                body.put("bearer", bearer);
+            }
+            // Overrides the subaccount's own percentage for this one charge.
+            if (flatChargeKobo != null && flatChargeKobo > 0) {
+                body.put("transaction_charge", flatChargeKobo);
+            }
         }
 
         InitResponse response = restClient().post()
@@ -103,6 +120,57 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         return response.data();
     }
 
+    /**
+     * percentageCharge is the SUBACCOUNT's share, not ours - 95 leaves us the 5% commission. The
+     * settlement schedule must stay a fixed calendar; releasing on trip completion is what Paystack
+     * refused to approve.
+     */
+    public String createSubaccount(String businessName, String accountNumber, String bankCode, BigDecimal percentageCharge) {
+        Map<String, Object> body = Map.of(
+                "business_name", businessName,
+                "settlement_bank", bankCode,
+                "account_number", accountNumber,
+                "percentage_charge", percentageCharge,
+                "settlement_schedule", paystackProperties.getSettlementSchedule()
+        );
+        SubaccountResponse response = restClient().post()
+                .uri("/subaccount")
+                .body(body)
+                .retrieve()
+                .body(SubaccountResponse.class);
+        if (response == null || !response.status() || response.data() == null) {
+            throw new BadRequestException("Could not register that bank account for earnings. Please try again.");
+        }
+        return response.data().subaccountCode();
+    }
+
+    /**
+     * Before the driver's share settles, Paystack takes it back out of the split and we are not out
+     * of pocket. After settlement the whole refund comes off our balance and the driver's share
+     * becomes a debt we recover ourselves.
+     */
+    @Override
+    public boolean refund(String gatewayReference, BigDecimal amount, String reason) {
+        Map<String, Object> body = new HashMap<>(Map.of("transaction", gatewayReference));
+        if (amount != null) {
+            body.put("amount", amount.movePointRight(2).longValueExact());
+        }
+        if (reason != null && !reason.isBlank()) {
+            body.put("merchant_note", reason);
+        }
+        try {
+            RefundResponse response = restClient().post()
+                    .uri("/refund")
+                    .body(body)
+                    .retrieve()
+                    .body(RefundResponse.class);
+            return response != null && response.status();
+        } catch (Exception e) {
+            log.error("Paystack refund failed for {}: {}", gatewayReference, e.getMessage());
+            return false;
+        }
+    }
+
     /** Creates the Paystack-side transfer recipient once an account has been resolved - the returned recipient_code is what a later /transfer call targets. */
     public String createTransferRecipient(String accountName, String accountNumber, String bankCode) {
         Map<String, Object> body = Map.of(
@@ -147,6 +215,17 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
             throw new BadRequestException("Withdrawal could not be initiated. Please try again.");
         }
         return new TransferResult(response.data().transferCode(), response.data().status());
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record SubaccountResponse(boolean status, Data data) {
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        private record Data(@JsonProperty("subaccount_code") String subaccountCode) {
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record RefundResponse(boolean status) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

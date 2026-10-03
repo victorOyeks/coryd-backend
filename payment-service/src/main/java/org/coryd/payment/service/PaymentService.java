@@ -44,6 +44,7 @@ public class PaymentService {
     private final TripServiceClient tripServiceClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final CheckoutEmailResolver checkoutEmailResolver;
+    private final DriverSplitResolver driverSplitResolver;
 
     /** Amount, rider and driver all come from trip-service's booking - the request only says which
      * booking and how to pay, so a client can't pay less, pay from someone else's wallet, or route
@@ -82,9 +83,11 @@ public class PaymentService {
         }
 
         String reference = UUID.randomUUID().toString();
-        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(reference, booking.fareTotal(),
+        DriverSplitResolver.Split split = driverSplitResolver.resolve(booking.driverId(), booking.fareTotal());
+        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiateSplit(reference, booking.fareTotal(),
                 checkoutEmailResolver.resolve(booking.riderId(), request.riderEmail()), request.callbackUrl(),
-                Map.of("bookingId", booking.bookingId(), "purpose", PaymentPurpose.BOOKING_PAYMENT.name()));
+                Map.of("bookingId", booking.bookingId(), "purpose", PaymentPurpose.BOOKING_PAYMENT.name()),
+                split.subaccountCode(), split.flatChargeKobo());
 
         int affected = paymentTransactionRepository.upsertByBookingId(
                 UUID.randomUUID().toString(), booking.bookingId(), booking.riderId(), booking.fareTotal(),

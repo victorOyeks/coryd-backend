@@ -13,7 +13,10 @@
     <artifactId>common</artifactId>
     <packaging>jar</packaging>
     <name>common</name>
-    <description>Shared library: base entities, enums, JWT security, Kafka event contracts, exceptions</description>
+    <description>Shared library: base entities, enums, JWT security and service-to-service auth,
+        Kafka event contracts, HTTP client defaults, request instrumentation, exceptions and the
+        common API response shape. Every service depends on it, so a change here redeploys all of
+        them.</description>
 
     <dependencies>
         <dependency>

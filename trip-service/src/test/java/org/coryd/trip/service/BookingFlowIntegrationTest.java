@@ -787,6 +787,23 @@ class BookingFlowIntegrationTest {
     }
 
     @Test
+    void aRouteCannotDepartAfterTheDriverWouldAlreadyHaveBeenSettled() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(4, ChronoUnit.DAYS))))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("days ahead");
+    }
+
+    @Test
+    void aRouteInsideTheSettlementWindowStillPosts() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+
+        assertThat(routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(2, ChronoUnit.DAYS))))
+                .isNotNull();
+    }
+
+    @Test
     void driverCannotPostARouteDuringARideTheyBooked() {
         driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(RIDER, true));
         RoutePost ride = route(4);

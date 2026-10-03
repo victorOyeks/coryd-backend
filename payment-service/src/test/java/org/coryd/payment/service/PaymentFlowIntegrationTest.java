@@ -77,7 +77,8 @@ import static org.mockito.Mockito.when;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({PaymentService.class, WalletService.class, EarningsService.class, PayoutService.class, CommissionProperties.class})
+@Import({PaymentService.class, WalletService.class, EarningsService.class, PayoutService.class,
+        CommissionProperties.class, DriverSplitResolver.class})
 class PaymentFlowIntegrationTest {
 
     @Container
@@ -129,6 +130,9 @@ class PaymentFlowIntegrationTest {
         when(checkoutEmailResolver.resolve(any(), any())).thenReturn("rider@example.com");
         when(gatewayClient.initiate(anyString(), any(), anyString(), any(), anyMap()))
                 .thenAnswer(inv -> new PaymentGatewayClient.GatewayInitResult("https://checkout/" + inv.getArgument(0), inv.getArgument(0)));
+        when(gatewayClient.initiateSplit(anyString(), any(), anyString(), any(), anyMap(), any(), any()))
+                .thenAnswer(inv -> new PaymentGatewayClient.GatewayInitResult("https://checkout/" + inv.getArgument(0), inv.getArgument(0)));
+        when(gatewayClient.refund(anyString(), any(), any())).thenReturn(true);
     }
 
     // ---- the client can't set its own price, payer or payee --------------------------------------
@@ -197,7 +201,7 @@ class PaymentFlowIntegrationTest {
 
         assertThat(retry.gatewayReference()).isEqualTo(first.gatewayReference());
         assertThat(retry.authorizationUrl()).isEqualTo(first.authorizationUrl());
-        verify(gatewayClient, times(1)).initiate(anyString(), any(), anyString(), any(), anyMap());
+        verify(gatewayClient, times(1)).initiateSplit(anyString(), any(), anyString(), any(), anyMap(), any(), any());
     }
 
     @Test

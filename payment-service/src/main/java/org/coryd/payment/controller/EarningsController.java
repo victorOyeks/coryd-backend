@@ -1,7 +1,11 @@
 package org.coryd.payment.controller;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.exception.UnauthorizedException;
+import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.payment.config.CommissionProperties;
@@ -10,13 +14,17 @@ import org.coryd.payment.dto.CommissionRate;
 import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.dto.EarningsPeriod;
 import org.coryd.payment.dto.PeriodEarningsSummary;
+import org.coryd.payment.dto.RecordSettlementDebtRequest;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.repository.DriverEarningsAccountRepository;
 import org.coryd.payment.repository.EarningsTransactionRepository;
 import org.coryd.payment.service.EarningsService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,6 +46,18 @@ public class EarningsController {
     /** So the client computes gross/commission/net from the real configured rate instead of hardcoding it.
      * commission.percentage is stored as a fraction (0.05) since that's what EarningsService multiplies
      * fares by directly - scaled to a plain percentage number (5) here so the FE doesn't have to. */
+    /** Ops-only: a refund Paystack took from our balance instead of the driver's unsettled split. */
+    @PostMapping("/drivers/{driverId}/settlement-debt")
+    public ApiResponse<Void> recordSettlementDebt(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                  @PathVariable String driverId,
+                                                  @Valid @RequestBody RecordSettlementDebtRequest request) {
+        if (principal.getActiveRole() != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("Only an ops admin can record a settlement debt");
+        }
+        earningsService.recordSettlementDebt(driverId, request.amount(), request.reason());
+        return ApiResponse.ok("Recorded", null);
+    }
+
     @GetMapping("/commission-rate")
     public ApiResponse<CommissionRate> commissionRate() {
         return ApiResponse.ok(new CommissionRate(commissionProperties.getPercentage().multiply(BigDecimal.valueOf(100))));

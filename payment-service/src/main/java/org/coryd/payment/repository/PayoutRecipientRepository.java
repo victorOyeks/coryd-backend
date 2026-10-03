@@ -20,6 +20,9 @@ public interface PayoutRecipientRepository extends JpaRepository<PayoutRecipient
 
     boolean existsByDriverId(String driverId);
 
+    /** The subaccount a booking's fare is split to - the default account, if it has one. */
+    Optional<PayoutRecipient> findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(String driverId);
+
     /**
      * Clears every account's default flag before the newly-selected one is set - keeps exactly
      * one default per driver. Both this and setDefault below are bulk updates rather than

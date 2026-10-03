@@ -14,6 +14,7 @@ import org.coryd.payment.repository.DriverEarningsAccountRepository;
 import org.coryd.payment.repository.PayoutRecipientRepository;
 import org.coryd.payment.repository.PayoutRepository;
 import org.coryd.payment.util.AccountNumberMask;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,12 +33,19 @@ public class PayoutService {
 
     private final PayoutRepository payoutRepository;
     private final PayoutRecipientRepository payoutRecipientRepository;
+
+    @Value("${payment.split.enabled:false}")
+    private boolean splitEnabled;
     private final DriverEarningsAccountRepository earningsAccountRepository;
     private final PaystackGatewayClient paystackGatewayClient;
 
     /** The Withdraw Funds screen's submit action - debits eagerly (atomic, race-safe) before the gateway call, then reverses on any failure since the money never actually left. */
     @Transactional
     public Payout requestWithdrawal(String driverId, String callerId, BigDecimal amount) {
+        if (splitEnabled) {
+            throw new BadRequestException(
+                    "Earnings are paid straight to your bank account on a fixed schedule - there is nothing to withdraw");
+        }
         if (!callerId.equals(driverId)) {
             throw new UnauthorizedException("Only this driver can withdraw from their own wallet");
         }

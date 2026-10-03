@@ -107,3 +107,7 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+# Routes cannot depart further ahead than the payout settlement cycle
+trip:
+  max-days-ahead: ${TRIP_MAX_DAYS_AHEAD:3}
