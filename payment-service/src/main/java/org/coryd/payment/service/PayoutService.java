@@ -42,10 +42,8 @@ public class PayoutService {
     /** The Withdraw Funds screen's submit action - debits eagerly (atomic, race-safe) before the gateway call, then reverses on any failure since the money never actually left. */
     @Transactional
     public Payout requestWithdrawal(String driverId, String callerId, BigDecimal amount) {
-        if (splitEnabled) {
-            throw new BadRequestException(
-                    "Earnings are paid straight to your bank account on a fixed schedule - there is nothing to withdraw");
-        }
+        // Under split payments availableBalance only ever holds wallet-funded earnings - card fares
+        // were paid by Paystack directly. Refusing outright would strand that money with us.
         if (!callerId.equals(driverId)) {
             throw new UnauthorizedException("Only this driver can withdraw from their own wallet");
         }

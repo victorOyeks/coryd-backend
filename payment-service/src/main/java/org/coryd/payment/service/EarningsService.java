@@ -98,13 +98,16 @@ public class EarningsService {
 
         DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
                 .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
-        if (splitEnabled) {
-            // The charge took the whole fare while a debt was outstanding, so this trip paid it down.
+        if (settledByGateway(bookingId)) {
+            // Paystack already paid the driver at charge time, so there is nothing to hold here -
+            // only a debt this trip may have paid down.
             BigDecimal recovered = account.getSettlementDebt().min(net);
             if (recovered.signum() > 0) {
                 account.setSettlementDebt(account.getSettlementDebt().subtract(recovered));
             }
         } else {
+            // A wallet-funded fare never reached the gateway, so it was never split - we are holding
+            // the driver's share and still owe it to them.
             account.setAvailableBalance(account.getAvailableBalance().add(net));
         }
         account.setLifetimeGross(account.getLifetimeGross().add(gross));
@@ -219,6 +222,13 @@ public class EarningsService {
         account.setSettlementDebt(account.getSettlementDebt().add(amount));
         earningsAccountRepository.save(account);
         log.info("Recorded settlement debt of {} against driver {}: {}", amount, driverId, reason);
+    }
+
+    /** Only a card charge can be split, so only a card charge settles itself. */
+    private boolean settledByGateway(String bookingId) {
+        return splitEnabled && paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId)
+                .map(t -> t.getPaymentMethod() == PaymentMethod.PAYSTACK)
+                .orElse(false);
     }
 
     private boolean isPaid(String bookingId) {

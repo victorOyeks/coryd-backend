@@ -177,7 +177,7 @@ An empty array means the provider is switched off. Treat it as "no information",
 
 **Cap the date picker at 3 days** rather than letting a driver fill in the form and get a 400 back.
 
-This exists because the driver's payout settles on a fixed schedule; a trip departing after that
+This exists because drivers are paid on a fixed schedule, and a trip departing after that payout
 would leave a refund with nothing to recover from.
 
 ---
@@ -251,25 +251,48 @@ allow a few working days" — bank timelines, not ours. The wallet balance will 
 
 ## Driver earnings: the Withdraw button goes away
 
-This is a screen redesign, not a field change. It only takes effect when the backend flag
-`PAYMENT_SPLIT_ENABLED` is turned on — coordinate the release.
+This is a screen redesign, not a field rename.
 
-Earnings are no longer held by CoRyd. The driver's share goes straight from Paystack to their own
-bank account on a fixed schedule.
+Most of a driver's earnings are now paid **directly into their bank account** by our payment
+provider, on a fixed weekly schedule. They don't request it and we don't hold it. Only fares a
+rider paid from their CoRyd wallet still arrive as a withdrawable balance.
 
-| | Before | After |
-|---|---|---|
-| `GET /earnings/drivers/{id}/summary` → `availableBalance` | money they could withdraw | **always `0`** |
-| `POST /payouts/drivers/{driverId}` | initiated a withdrawal | **400** — *"Earnings are paid straight to your bank account on a fixed schedule - there is nothing to withdraw"* |
-| New: `settlementDebt` | — | what the driver owes us back, usually `0` |
+`GET /payment/earnings/drivers/{driverId}/summary`:
 
-`lifetimeGross`, `lifetimeNet` and `todayNet` are unchanged and still correct.
+```json
+{
+  "lifetimeGross": 125000.00,
+  "lifetimeNet": 118750.00,
+  "todayNet": 2375.00,
+  "availableBalance": 1140.00,
+  "settlementDebt": 0.00
+}
+```
 
-**Replace "Balance + Withdraw" with "Earnings statement + next settlement date".** The transaction
-feed (`GET /earnings/drivers/{id}/transactions`) is unchanged and remains the statement.
+| Field | What it means now |
+|---|---|
+| `lifetimeGross`, `lifetimeNet`, `todayNet` | **Unchanged.** Still total earnings, however they were paid |
+| `availableBalance` | **Changed meaning.** No longer "everything you've earned" — only the part paid from rider wallets, which is all that is still withdrawable. Often `0` |
+| `settlementDebt` | **New.** What the driver owes back after a refund we couldn't recover. Usually `0` |
+
+**Stop labelling `availableBalance` as "Your earnings".** A driver who earned ₦120,000 this week
+may see `availableBalance: 0` and think they've been robbed, when in fact it has all been paid to
+their bank. Label it "Available to withdraw" and show `lifetimeNet` / `todayNet` as the earnings
+figures.
+
+Suggested shape: **total earned** (from `todayNet` / `lifetimeNet`), **paid to your bank
+automatically**, and **available to withdraw** (`availableBalance`) only when it is greater than
+zero.
+
+`POST /payment/payouts/drivers/{driverId}` still works, and still withdraws `availableBalance`. It
+now fails with *"Insufficient wallet balance"* far more often, simply because that balance is
+usually zero.
+
+The transaction feed (`GET /payment/earnings/drivers/{driverId}/transactions`) is unchanged and
+remains the full statement.
 
 If `settlementDebt` is greater than zero, say so plainly — that driver's next trips pay it off
-before they earn again, and they should not discover that from a surprise zero payout.
+before they earn again, and they should not discover it from a surprise zero payout.
 
 ### Bank details become mandatory, earlier
 
@@ -324,7 +347,8 @@ See [live-route-search-fe-guide.md](live-route-search-fe-guide.md) for the full 
 - [ ] Status mapping tolerates `IN_REVIEW` and `EXPIRED`, and never renders `IN_REVIEW` as a prompt
 - [ ] Approved items render from status, not from the presence of a URL
 - [ ] Date picker capped at 3 days ahead
-- [ ] Driver earnings screen: statement + settlement date, no Withdraw button, `settlementDebt` surfaced
+- [ ] Driver earnings screen relabelled: `availableBalance` is "available to withdraw", not "your earnings"
+- [ ] `settlementDebt` surfaced when greater than zero
 - [ ] Bank-account setup moved into driver onboarding
 - [ ] `posting-eligibility` re-fetched shortly after a licence save
 - [ ] Live search replaces the list wholesale on every frame
@@ -335,10 +359,10 @@ See [live-route-search-fe-guide.md](live-route-search-fe-guide.md) for the full 
 
 ## Release coupling
 
-Three groups, and the ones inside a group must ship together:
+Two groups:
 
-1. **Names, statuses, selfie, Prembly** — all five backend services deploy together (shared enums and
-   cross-service contracts). The app needs the same release.
-2. **Split payments** — gated behind `PAYMENT_SPLIT_ENABLED`, off by default. The earnings screen and
-   bank-details-in-onboarding changes only matter when it is switched on. Agree the date.
-3. **Everything else** — live search, notifications, posting cap — safe to ship independently.
+1. **Everything under "Breaks the app if you do nothing", plus the two new statuses** — these are
+   contract changes across several backend services that deploy together. The app needs the matching
+   release or it will show blank names and reject unknown statuses.
+2. **Everything else** — earnings relabelling, posting cap, live search, notifications — can follow
+   independently. The backend is already tolerant of an older app on these.

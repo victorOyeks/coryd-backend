@@ -163,12 +163,33 @@ class SplitPaymentIntegrationTest {
     }
 
     @Test
-    void withdrawalIsRefusedBecausePaystackSettlesOnItsOwnSchedule() {
+    void aWalletFundedTripStillOwesTheDriverBecauseItWasNeverSplit() {
         givenDriverHasASubaccount();
+        String booking = heldBooking();
+        fundWallet(RIDER, "1200.00");
+        paymentService.initiate(walletPay(booking), RIDER);
 
-        assertThatThrownBy(() -> payoutService.requestWithdrawal(DRIVER, DRIVER, new BigDecimal("500.00")))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("fixed schedule");
+        earningsService.onTripCompleted(tripCompleted(booking));
+
+        assertThat(earningsAccountRepository.findByDriverId(DRIVER).orElseThrow().getAvailableBalance())
+                .as("the gateway never saw this fare, so we are still holding the driver's share")
+                .isEqualByComparingTo("1140.00");
+    }
+
+    @Test
+    void walletFundedEarningsCanStillBeWithdrawn() {
+        givenDriverHasASubaccount();
+        String booking = heldBooking();
+        fundWallet(RIDER, "1200.00");
+        paymentService.initiate(walletPay(booking), RIDER);
+        earningsService.onTripCompleted(tripCompleted(booking));
+        when(gatewayClient.initiateTransfer(anyString(), any(), anyString(), anyString()))
+                .thenReturn(new PaystackGatewayClient.TransferResult("TRF_1", "pending"));
+
+        payoutService.requestWithdrawal(DRIVER, DRIVER, new BigDecimal("1000.00"));
+
+        assertThat(earningsAccountRepository.findByDriverId(DRIVER).orElseThrow().getAvailableBalance())
+                .isEqualByComparingTo("140.00");
     }
 
     // ---- refunds ---------------------------------------------------------------------------------
