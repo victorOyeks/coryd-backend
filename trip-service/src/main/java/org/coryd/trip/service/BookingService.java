@@ -687,6 +687,7 @@ public class BookingService {
                     .riderId(booking.getRiderId())
                     .cancelledBy("SYSTEM")
                     .feeApplied(false)
+                    .paid(true)
                     .cancelledAt(LocalDateTime.now())
                     .build());
             return;
@@ -809,6 +810,7 @@ public class BookingService {
                 .driverId(route.getDriverId())
                 .cancelledBy("RIDER")
                 .feeApplied(feeApplies)
+                .paid(true)
                 .feeAmount(fee)
                 .cancelledAt(LocalDateTime.now())
                 .build());

@@ -141,7 +141,7 @@ Show the message as-is. You can also grey out Start until the route appears in `
 
 ### A route that's never started
 
-- At departure time, if the driver hasn't tapped Start, they get a **"Your trip was due to leave"** push (`ROUTE_START_OVERDUE`) asking them to start or cancel.
+- At departure time, if the driver hasn't tapped Start, they get a **"Your trip is due to leave"** push (`ROUTE_START_OVERDUE`) asking them to start or cancel.
 - **45 minutes after departure**, an unstarted route is cancelled automatically. Every rider is fully refunded and told "Your driver didn't start this trip. You've been fully refunded." The driver gets a `ROUTE_CANCELLED` push explaining why.
 
 ---

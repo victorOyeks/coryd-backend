@@ -60,7 +60,7 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onBookingCancelled(BookingCancelledEvent event) {
-        dispatchService.sendPush(event.getRiderId(), "Booking cancelled", cancellationCopy(event.getCancelledBy()),
+        dispatchService.sendPush(event.getRiderId(), "Booking cancelled", cancellationCopy(event.getCancelledBy(), event.isPaid()),
                 "BOOKING_CANCELLED", event.getBookingId());
 
         // Only tell the driver when the RIDER was the one who cancelled - a seat just freed up on
@@ -110,9 +110,11 @@ public class NotificationEventListener {
         // Per-rider notification for R-704 is handled by the booking-cancelled listener above,
         // which trip-service publishes once per affected booking. This just confirms to the driver.
         int refunded = event.getAffectedBookingIds() == null ? 0 : event.getAffectedBookingIds().size();
-        String body = "NOT_STARTED".equals(event.getCancelledBy())
-                ? "Your route wasn't started within 45 minutes of departure, so it was cancelled and " + refunded + " booking(s) were refunded."
-                : "Your route post was cancelled and " + refunded + " booking(s) were refunded.";
+        String cancelled = "NOT_STARTED".equals(event.getCancelledBy())
+                ? "Your route wasn't started within 45 minutes of departure, so it was cancelled"
+                : "Your route was cancelled";
+        String body = refunded == 0 ? cancelled + "."
+                : cancelled + " and " + count(refunded, "booking", "bookings") + (refunded == 1 ? " was" : " were") + " refunded.";
         dispatchService.sendRoutePush(event.getDriverId(), "Route cancelled", body, "ROUTE_CANCELLED", event.getRoutePostId());
     }
 
@@ -126,11 +128,11 @@ public class NotificationEventListener {
         switch (kind) {
             case "DRIVER_GET_READY" -> dispatchService.sendRoutePush(event.getDriverId(), "Get ready to depart",
                     "Your route " + routeSummary + " departs " + inMinutes(event.getDepartureTime()) + " - "
-                            + riderCount + " rider(s) booked.",
+                            + (riderCount == 0 ? "no riders booked yet." : count(riderCount, "rider", "riders") + " booked."),
                     "DRIVER_DEPARTURE_REMINDER", event.getRoutePostId());
-            case "DRIVER_START_OVERDUE" -> dispatchService.sendRoutePush(event.getDriverId(), "Your trip was due to leave",
+            case "DRIVER_START_OVERDUE" -> dispatchService.sendRoutePush(event.getDriverId(), "Your trip is due to leave",
                     "Start your route " + routeSummary + " or cancel it - it's cancelled automatically 45 minutes after departure"
-                            + (riderCount == 0 ? "." : " and " + riderCount + " rider(s) will be refunded."),
+                            + (riderCount == 0 ? "." : " and " + count(riderCount, "rider", "riders") + " will be refunded."),
                     "ROUTE_START_OVERDUE", event.getRoutePostId());
             default -> {
                 if (event.getRiders() == null) {
@@ -154,16 +156,23 @@ public class NotificationEventListener {
         return "in " + minutes + " minute" + (minutes == 1 ? "" : "s");
     }
 
-    private static String cancellationCopy(String cancelledBy) {
+    /** The refund line only for riders who paid - an unpaid hold or reservation had nothing to refund. */
+    static String cancellationCopy(String cancelledBy, boolean paid) {
+        String refund = paid ? " You've been fully refunded." : "";
         if (cancelledBy == null) {
             return "Your booking was cancelled.";
         }
         return switch (cancelledBy) {
-            case "NOT_STARTED" -> "Your driver didn't start this trip. You've been fully refunded.";
-            case "DRIVER" -> "Your driver cancelled this trip. You've been fully refunded.";
+            case "NOT_STARTED" -> "Your driver didn't start this trip." + refund;
+            case "DRIVER" -> "Your driver cancelled this trip." + refund;
             case "RIDER" -> "Your booking was cancelled.";
-            default -> "Your booking couldn't go ahead and has been cancelled. Any payment has been refunded.";
+            default -> "Your booking couldn't go ahead and has been cancelled." + (paid ? " Your payment has been refunded." : "");
         };
+    }
+
+    /** "1 rider", "3 riders" - never "rider(s)". */
+    static String count(int n, String singular, String plural) {
+        return n + " " + (n == 1 ? singular : plural);
     }
 
     @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID_TRIP)
@@ -193,8 +202,8 @@ public class NotificationEventListener {
     public void onSeatReserved(SeatReservedEvent event) {
         String driverName = event.getDriverName() == null ? "Your favourite driver" : event.getDriverName();
         dispatchService.sendPush(event.getRiderId(), "Your favourite driver reserved you a seat",
-                driverName + " just posted a new trip and held " + event.getSeatCount()
-                        + " seat(s) for you - accept within 15 minutes before it's released.",
+                driverName + " just posted a new trip and held " + count(event.getSeatCount(), "seat", "seats")
+                        + " for you - accept within 15 minutes before it's released.",
                 "SEAT_RESERVED", event.getBookingId());
     }
 

@@ -15,6 +15,7 @@ import java.util.List;
 public class RouteCancelledEvent {
     private String routePostId;
     private String driverId;
+    /** The paid bookings this cancellation ended - each is refunded. */
     private List<String> affectedBookingIds;
     private String cancelledBy;
     private LocalDateTime cancelledAt;

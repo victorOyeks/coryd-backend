@@ -58,6 +58,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -769,13 +770,15 @@ public class RouteService {
         route.setStatus(RouteStatus.CANCELLED);
         routePostRepository.save(route);
 
-        List<Booking> affected = bookingRepository.findByRoutePostId(routePostId);
-        List<String> affectedIds = affected.stream().map(BaseEntity::getId).toList();
-
-        for (Booking booking : affected) {
+        List<String> refundedIds = new ArrayList<>();
+        for (Booking booking : bookingRepository.findByRoutePostId(routePostId)) {
             // Compare-and-set so a booking the rider cancelled a moment earlier isn't cancelled (and refunded) twice.
             if (bookingRepository.transitionStatus(booking.getId(), CANCELLABLE_BY_ROUTE_CANCELLATION, BookingStatus.CANCELLED_DRIVER) == 1) {
                 booking.setStatus(BookingStatus.CANCELLED_DRIVER);
+                boolean paid = booking.getConfirmedAt() != null;
+                if (paid) {
+                    refundedIds.add(booking.getId());
+                }
                 kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                         .bookingId(booking.getId())
                         .routePostId(routePostId)
@@ -783,6 +786,7 @@ public class RouteService {
                         .driverId(route.getDriverId())
                         .cancelledBy(cancelledBy)
                         .feeApplied(false)
+                        .paid(paid)
                         .cancelledAt(LocalDateTime.now())
                         .build());
             }
@@ -791,7 +795,7 @@ public class RouteService {
         kafkaTemplate.send(KafkaTopics.ROUTE_CANCELLED, RouteCancelledEvent.builder()
                 .routePostId(routePostId)
                 .driverId(route.getDriverId())
-                .affectedBookingIds(affectedIds)
+                .affectedBookingIds(refundedIds)
                 .cancelledBy(cancelledBy)
                 .cancelledAt(LocalDateTime.now())
                 .build());

@@ -107,7 +107,7 @@ On success, the returned `RoutePost` already reflects the reservations — `seat
 One push per reservation, fired the moment the route posts:
 
 - Title: *"Your favourite driver reserved you a seat"*
-- Body: *"{driverName} just posted a new trip and held {seatCount} seat(s) for you - accept within 15 minutes before it's released."*
+- Body: *"{driverName} just posted a new trip and held {seatCount} seat (or seats) for you - accept within 15 minutes before it's released."*
 - FCM data payload: `{ "type": "SEAT_RESERVED", "referenceId": "{bookingId}" }`
 
 Tapping the notification should route the rider straight into `GET /trip/bookings/{bookingId}` using that `referenceId` — same deep-link pattern as every other push this app sends (`type` selects the screen, `referenceId` is the id you fetch).

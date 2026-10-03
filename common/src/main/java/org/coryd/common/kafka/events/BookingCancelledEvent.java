@@ -19,6 +19,8 @@ public class BookingCancelledEvent {
     private String driverId;
     private String cancelledBy;
     private boolean feeApplied;
+    /** Whether the rider had paid - an unpaid hold or reservation has nothing to refund. */
+    private boolean paid;
     private BigDecimal feeAmount;
     private LocalDateTime cancelledAt;
 }
