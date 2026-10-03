@@ -181,6 +181,6 @@ class EmergencyContactIntegrationTest {
 
     private static UpdateDriverProfileRequest driver(String photoUrl, String contactName, String contactPhone) {
         return new UpdateDriverProfileRequest("Tunde", "Bakare", photoUrl, null, LocalDate.of(1990, 1, 1),
-                null, null, "LAG-123", contactName, contactPhone);
+                null, null, "LAG12345678", contactName, contactPhone);
     }
 }

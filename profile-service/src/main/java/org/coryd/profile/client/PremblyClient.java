@@ -2,12 +2,14 @@ package org.coryd.profile.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.http.HttpTimeouts;
 import org.coryd.profile.config.PremblyProperties;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
@@ -82,6 +84,15 @@ public class PremblyClient {
                     .body(payload)
                     .retrieve()
                     .body(responseType);
+        } catch (HttpClientErrorException.BadRequest | HttpClientErrorException.UnprocessableEntity e) {
+            // Prembly answers an input it won't accept (a malformed licence number) with a 4xx carrying
+            // its normal status:false body - that is an answer about the driver's input, not an outage.
+            log.warn("Prembly rejected the input for {} (sent {}): {}", subject, payload, e.getResponseBodyAsString());
+            try {
+                return objectMapper.readValue(e.getResponseBodyAsString(), responseType);
+            } catch (Exception unreadable) {
+                return null;
+            }
         } catch (Exception e) {
             // The payload is logged because the last failure was unreadable without it - it carries
             // a licence or plate number, both of which are already in the subject.
@@ -101,7 +112,13 @@ public class PremblyClient {
                                        @JsonProperty("response_code") String responseCode,
                                        @JsonProperty("is_sandbox") boolean sandbox,
                                        Data data,
-                                       Verification verification) {
+                                       Verification verification,
+                                       JsonNode errors) {
+
+        /** Prembly's own field-level reason when it refused the input, e.g. a malformed licence number. */
+        public String inputError() {
+            return firstError(errors);
+        }
 
         public FrscData frscData() {
             return data == null ? null : data.frscData();
@@ -129,7 +146,12 @@ public class PremblyClient {
                                 @JsonProperty("response_code") String responseCode,
                                 @JsonProperty("is_sandbox") boolean sandbox,
                                 Data data,
-                                Verification verification) {
+                                Verification verification,
+                                JsonNode errors) {
+
+        public String inputError() {
+            return firstError(errors);
+        }
 
         public String reference() {
             return verification == null ? null : verification.reference();
@@ -144,5 +166,15 @@ public class PremblyClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Verification(String status, String reference) {
+    }
+
+    /** errors is {"number": ["..."]} - the first message of the first field, or null. */
+    private static String firstError(JsonNode errors) {
+        if (errors == null || !errors.isObject() || errors.isEmpty()) {
+            return null;
+        }
+        JsonNode first = errors.elements().next();
+        String message = first.isArray() && !first.isEmpty() ? first.get(0).asText() : first.asText();
+        return message == null || message.isBlank() ? null : message;
     }
 }

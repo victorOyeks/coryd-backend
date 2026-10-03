@@ -2,6 +2,7 @@ package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.VerificationStatus;
+import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverProfileCreatedEvent;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -75,7 +77,7 @@ public class DriverProfileService {
             profile.setEmail(request.email());
         }
         profile.setDateOfBirth(request.dateOfBirth());
-        profile.setIdNumber(request.idNumber());
+        profile.setIdNumber(normalizeLicenceNumber(request.idNumber()));
 
         // Resubmitting the license photo resets just that
         // item's own review back to PENDING - the other stays as it was.
@@ -96,6 +98,18 @@ public class DriverProfileService {
             kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
         }
         return toResponse(saved);
+    }
+
+    /** Uppercase letters and digits only. Formats differ across licence generations (and Prembly's own
+     * test numbers don't match its stated rule), so this only rejects what can't be a licence number
+     * at all - FRSC, via the Prembly check, is the authority on whether it's real. */
+    static String normalizeLicenceNumber(String raw) {
+        String number = raw == null ? "" : raw.replaceAll("[\\s-]", "").toUpperCase(Locale.ROOT);
+        if (!number.matches("(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{8,20}")) {
+            throw new BadRequestException("Enter your driver's licence number as it appears on your licence - "
+                    + "letters and numbers only, 8 to 20 characters");
+        }
+        return number;
     }
 
     private DriverProfileResponse toResponse(DriverProfile profile) {

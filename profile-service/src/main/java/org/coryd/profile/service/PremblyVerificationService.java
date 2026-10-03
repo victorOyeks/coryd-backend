@@ -71,7 +71,7 @@ public class PremblyVerificationService {
         }
 
         PremblyClient.DriversLicenceResult result =
-                premblyClient.verifyDriversLicence(licenceNumber.trim(), firstName.trim(), lastName.trim());
+                premblyClient.verifyDriversLicence(subject, firstName.trim(), lastName.trim());
 
         if (result == null) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
@@ -79,8 +79,11 @@ public class PremblyVerificationService {
             return;
         }
         if (!result.status()) {
+            String summary = result.inputError() != null
+                    ? "Prembly rejected this licence number as invalid: " + result.inputError()
+                    : "FRSC has no record for this licence number: " + safe(result.detail());
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.NOT_FOUND,
-                    null, "FRSC has no record for this licence number: " + safe(result.detail()), result.reference());
+                    null, summary, result.reference());
             return;
         }
         // Prembly said yes but we could not find the names. That is our parsing, not their record,
@@ -135,8 +138,11 @@ public class PremblyVerificationService {
             return;
         }
         if (!result.status()) {
+            String summary = result.inputError() != null
+                    ? "Prembly rejected this plate number as invalid: " + result.inputError()
+                    : "No vehicle registered against this plate: " + safe(result.detail());
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.NOT_FOUND,
-                    null, "No vehicle registered against this plate: " + safe(result.detail()), result.reference());
+                    null, summary, result.reference());
             return;
         }
         PremblyClient.VehicleResult.Data data = result.data();
