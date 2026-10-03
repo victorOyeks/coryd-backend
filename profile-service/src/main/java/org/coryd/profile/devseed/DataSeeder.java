@@ -15,6 +15,7 @@ import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.entity.DriverDocument;
 import org.coryd.profile.entity.Vehicle;
 import org.coryd.profile.repository.DriverDocumentRepository;
+import org.coryd.profile.repository.RiderProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
 import org.coryd.profile.service.DriverProfileService;
 import org.coryd.profile.service.RiderProfileService;
@@ -41,8 +42,9 @@ import java.util.List;
  * DriverApprovedEvent included, which is what flips trip-service's DriverVerificationCache so
  * these drivers can actually post routes), not a shortcut that bypasses it. Every
  * SeedFixtures.RIDERS entry gets a plain RiderProfile via RiderProfileService.updateMine() - same
- * reasoning, riders just don't have a verification step. Idempotent: safe to run on every
- * restart.
+ * reasoning, riders just don't have a verification step. Seeds each account once: a driver already
+ * fully approved, or a rider who already has a profile, is skipped - re-deciding on every restart
+ * pushed four "approved" notifications to each seed driver per deploy and wiped any test edits.
  */
 @Slf4j
 @Component
@@ -58,19 +60,27 @@ public class DataSeeder implements ApplicationRunner {
     private final RiderProfileService riderProfileService;
     private final VerificationAggregationService verificationAggregationService;
     private final IdentityAuthClient identityAuthClient;
+    private final RiderProfileRepository riderProfileRepository;
 
     @Override
     public void run(ApplicationArguments args) {
+        int drivers = 0;
         for (int i = 0; i < SeedFixtures.DRIVERS.size(); i++) {
-            seedDriver(SeedFixtures.DRIVERS.get(i), i + 1);
+            drivers += seedDriver(SeedFixtures.DRIVERS.get(i), i + 1) ? 1 : 0;
         }
-        SeedFixtures.RIDERS.forEach(this::seedRider);
-        log.info("Seeded {} fully-approved drivers (ready to post routes) and {} rider profiles (ready to search)",
-                SeedFixtures.DRIVERS.size(), SeedFixtures.RIDERS.size());
+        int riders = 0;
+        for (SeedFixtures.SeedPerson rider : SeedFixtures.RIDERS) {
+            riders += seedRider(rider) ? 1 : 0;
+        }
+        log.info("Seeded {} new fully-approved drivers and {} new rider profiles ({} drivers / {} riders already in place)",
+                drivers, riders, SeedFixtures.DRIVERS.size() - drivers, SeedFixtures.RIDERS.size() - riders);
     }
 
-    private void seedDriver(SeedFixtures.SeedPerson driver, int index) {
+    private boolean seedDriver(SeedFixtures.SeedPerson driver, int index) {
         String driverId = identityAuthClient.resolveUserId(driver.phone(), SeedFixtures.SEED_PASSWORD, UserRole.DRIVER);
+        if (verificationAggregationService.getStatus(driverId).overallStatus() == VerificationStatus.APPROVED) {
+            return false;
+        }
 
         driverProfileService.updateMine(driverId, new UpdateDriverProfileRequest(
                 driver.firstName(),
@@ -111,6 +121,7 @@ public class DataSeeder implements ApplicationRunner {
                 "DataSeeder"
         );
         verificationAggregationService.decide(driverId, UserRole.OPS_ADMIN, approveEverything);
+        return true;
     }
 
     private void seedDocument(String driverId, DocumentType type, int index) {
@@ -121,8 +132,11 @@ public class DataSeeder implements ApplicationRunner {
         driverDocumentRepository.save(document);
     }
 
-    private void seedRider(SeedFixtures.SeedPerson rider) {
+    private boolean seedRider(SeedFixtures.SeedPerson rider) {
         String riderId = identityAuthClient.resolveUserId(rider.phone(), SeedFixtures.SEED_PASSWORD, UserRole.RIDER);
+        if (riderProfileRepository.findByUserId(riderId).isPresent()) {
+            return false;
+        }
         riderProfileService.updateMine(riderId, new UpdateRiderProfileRequest(
                 rider.firstName(),
                 rider.lastName(),
@@ -131,5 +145,6 @@ public class DataSeeder implements ApplicationRunner {
                 null,
                 null
         ));
+        return true;
     }
 }
