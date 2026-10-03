@@ -9,16 +9,18 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.client.IdentityAuthClient;
 import org.coryd.profile.dto.ItemDecision;
 import org.coryd.common.enums.ReviewableItem;
+import org.coryd.profile.dto.CreateDriverDocumentRequest;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
+import org.coryd.profile.dto.VehicleRegistrationRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
-import org.coryd.profile.entity.DriverDocument;
 import org.coryd.profile.entity.Vehicle;
-import org.coryd.profile.repository.DriverDocumentRepository;
 import org.coryd.profile.repository.RiderProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
+import org.coryd.profile.service.DriverDocumentService;
 import org.coryd.profile.service.DriverProfileService;
 import org.coryd.profile.service.RiderProfileService;
+import org.coryd.profile.service.VehicleService;
 import org.coryd.profile.service.VerificationAggregationService;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -54,9 +56,29 @@ public class DataSeeder implements ApplicationRunner {
 
     private static final LocalDate FAR_FUTURE_EXPIRY = LocalDate.of(2030, 1, 1);
 
+    /** Shaped like real FRSC numbers and real Nigerian plates, so seeded data passes the same
+     * validation a driver's own entry does and nothing reads as obviously fake on screen. */
+    private static final List<String> LICENCE_PREFIXES = List.of("LAG", "AAD", "FKJ", "ABC", "KJA");
+    private static final List<String> PLATE_PREFIXES = List.of("KJA", "LND", "AGL", "EKY", "IKJ");
+    private static final List<Car> CARS = List.of(
+            new Car("Toyota", "Corolla", "Black", 2018, 4),
+            new Car("Honda", "Accord", "Silver", 2016, 4),
+            new Car("Toyota", "Camry", "Grey", 2019, 4),
+            new Car("Kia", "Rio", "Blue", 2020, 4),
+            new Car("Hyundai", "Elantra", "White", 2017, 4),
+            new Car("Toyota", "Sienna", "Red", 2015, 6),
+            new Car("Nissan", "Almera", "Black", 2018, 4),
+            new Car("Honda", "Civic", "Blue", 2021, 4),
+            new Car("Toyota", "Highlander", "Silver", 2014, 6),
+            new Car("Mazda", "Mazda3", "Grey", 2019, 4));
+
+    private record Car(String make, String model, String color, int year, int seats) {
+    }
+
     private final DriverProfileService driverProfileService;
+    private final VehicleService vehicleService;
     private final VehicleRepository vehicleRepository;
-    private final DriverDocumentRepository driverDocumentRepository;
+    private final DriverDocumentService driverDocumentService;
     private final RiderProfileService riderProfileService;
     private final VerificationAggregationService verificationAggregationService;
     private final IdentityAuthClient identityAuthClient;
@@ -87,29 +109,17 @@ public class DataSeeder implements ApplicationRunner {
                 driver.lastName(),
                 null,
                 "driver" + index + "@example.com",
-                LocalDate.of(1995, 1, 1),
+                LocalDate.of(1980 + (index % 20), 1 + (index % 12), 1 + (index % 28)),
                 "https://example.com/coryd-seed/gov-id-" + index + ".jpg",
                 "coryd-seed/gov-id-" + index,
-                String.format("SEED%06d", index),
-                null,
-                null
+                licenceNumber(index),
+                "Next of kin " + index,
+                String.format("080%08d", index)
         ));
 
-        Vehicle vehicle = vehicleRepository.findByDriverId(driverId).stream().findFirst()
-                .orElseGet(() -> Vehicle.builder().driverId(driverId).build());
-        vehicle.setMake("Toyota");
-        vehicle.setModel("Corolla");
-        vehicle.setYear(2018);
-        vehicle.setColor("Black");
-        vehicle.setPlateNumber(String.format("SEED-%03d", index));
-        vehicle.setSeatCapacity(4);
-        vehicle.setExteriorPhotoUrl("https://example.com/coryd-seed/exterior-" + index + ".jpg");
-        vehicle.setInteriorPhotoUrl("https://example.com/coryd-seed/interior-" + index + ".jpg");
-        vehicle.setHasAC(true);
-        vehicleRepository.save(vehicle);
-
-        seedDocument(driverId, DocumentType.INSURANCE, index);
-        seedDocument(driverId, DocumentType.ROADWORTHINESS_CERT, index);
+        Vehicle vehicle = seedVehicle(driverId, index);
+        seedDocument(driverId, vehicle.getId(), DocumentType.INSURANCE, index);
+        seedDocument(driverId, vehicle.getId(), DocumentType.ROADWORTHINESS_CERT, index);
 
         VerificationDecisionBatchRequest approveEverything = new VerificationDecisionBatchRequest(
                 List.of(
@@ -124,12 +134,40 @@ public class DataSeeder implements ApplicationRunner {
         return true;
     }
 
-    private void seedDocument(String driverId, DocumentType type, int index) {
-        DriverDocument document = driverDocumentRepository.findByDriverIdAndDocumentType(driverId, type)
-                .orElseGet(() -> DriverDocument.builder().driverId(driverId).documentType(type).build());
-        document.setDocumentUrl("https://example.com/coryd-seed/" + type.name().toLowerCase() + "-" + index + ".jpg");
-        document.setExpiresOn(FAR_FUTURE_EXPIRY);
-        driverDocumentRepository.save(document);
+    /** Through VehicleService, not the repository, for the same reason the profile goes through
+     * DriverProfileService - the seeded rows then carry everything a real registration sets. */
+    private Vehicle seedVehicle(String driverId, int index) {
+        Car car = CARS.get((index - 1) % CARS.size());
+        VehicleRegistrationRequest request = new VehicleRegistrationRequest(
+                car.make(), car.model(), car.year(), car.color(), plateNumber(index), car.seats(),
+                "https://example.com/coryd-seed/exterior-" + index + ".jpg",
+                "coryd-seed/exterior-" + index,
+                "https://example.com/coryd-seed/interior-" + index + ".jpg",
+                "coryd-seed/interior-" + index,
+                true, true);
+
+        return vehicleRepository.findByDriverId(driverId).stream().findFirst()
+                .map(existing -> vehicleService.update(existing.getId(), driverId, request))
+                .orElseGet(() -> vehicleService.register(driverId, driverId, request));
+    }
+
+    private void seedDocument(String driverId, String vehicleId, DocumentType type, int index) {
+        driverDocumentService.create(driverId, new CreateDriverDocumentRequest(
+                type,
+                "https://example.com/coryd-seed/" + type.name().toLowerCase() + "-" + index + ".jpg",
+                "coryd-seed/" + type.name().toLowerCase() + "-" + index,
+                FAR_FUTURE_EXPIRY,
+                vehicleId));
+    }
+
+    /** 3 letters + 8 digits - inside the 8-20 alphanumeric rule the real entry path enforces. */
+    public static String licenceNumber(int index) {
+        return LICENCE_PREFIXES.get((index - 1) % LICENCE_PREFIXES.size()) + String.format("%08d", index);
+    }
+
+    /** Nigerian civilian format: three letters, three digits, two letters. */
+    private static String plateNumber(int index) {
+        return String.format("%s%03dXA", PLATE_PREFIXES.get((index - 1) % PLATE_PREFIXES.size()), index);
     }
 
     private boolean seedRider(SeedFixtures.SeedPerson rider) {
@@ -142,8 +180,8 @@ public class DataSeeder implements ApplicationRunner {
                 rider.lastName(),
                 rider.fullName().toLowerCase().replace(" ", "") + "@example.com",
                 null,
-                null,
-                null
+                "Next of kin for " + rider.firstName(),
+                String.format("081%08d", rider.phone().hashCode() & 0xFFFF)
         ));
         return true;
     }
