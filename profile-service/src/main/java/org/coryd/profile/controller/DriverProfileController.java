@@ -7,7 +7,6 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
-import org.coryd.profile.dto.PendingVerificationItem;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
@@ -22,6 +21,13 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.coryd.common.enums.VerificationQueueTab;
+import org.coryd.common.response.PagedResponse;
+import org.coryd.profile.dto.VerificationQueueCountsResponse;
+import org.coryd.profile.dto.VerificationQueueItem;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -70,9 +76,21 @@ public class DriverProfileController {
     /** Ops admin's review queue - every driver with at least one item still awaiting a decision.
      * Without this, decide()/getStatus() above only work if ops already knows a driverId to look
      * up - there was previously no way to discover one. */
-    @GetMapping("/verification/pending")
-    public ApiResponse<List<PendingVerificationItem>> pendingVerifications(@AuthenticationPrincipal CoRydUserDetails principal) {
-        return ApiResponse.ok(verificationAggregationService.getPendingQueue(principal.getActiveRole()));
+    @GetMapping("/verification/queue")
+    public ApiResponse<PagedResponse<VerificationQueueItem>> verificationQueue(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                               @RequestParam(required = false) VerificationQueueTab tab,
+                                                                               @RequestParam(required = false) String search,
+                                                                               @RequestParam(defaultValue = "0") int page,
+                                                                               @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, Math.min(size, 50));
+        return ApiResponse.ok(verificationAggregationService.queue(principal.getActiveRole(), tab, search, pageable));
+    }
+
+    /** The queue's tab badges. */
+    @GetMapping("/verification/queue/counts")
+    public ApiResponse<VerificationQueueCountsResponse> verificationQueueCounts(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                                @RequestParam(required = false) String search) {
+        return ApiResponse.ok(verificationAggregationService.queueCounts(principal.getActiveRole(), search));
     }
 
     /** Public, rider-facing driver-profile lookup - a name/photo/verified-badge card, not the raw

@@ -15,6 +15,8 @@ import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.VerificationStatus;
 
 
+import java.time.Instant;
+
 @Entity
 @Table(name = "vehicles", schema = "profile")
 @Getter
@@ -61,6 +63,14 @@ public class Vehicle extends BaseEntity {
     private VerificationStatus verificationStatus = VerificationStatus.PENDING;
 
     private String rejectionReason;
+
+    /** When this vehicle last entered review - the verification queue's "submitted". */
+    private Instant submittedAt;
+
+    /** Back in review after ops rejected it. Cleared once decided again. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean resubmitted = false;
 
     private boolean acConfirmedWorking;
 }

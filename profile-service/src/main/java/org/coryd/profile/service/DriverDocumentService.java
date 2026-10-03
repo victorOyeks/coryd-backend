@@ -8,6 +8,7 @@ import org.coryd.profile.repository.DriverDocumentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 
 @Service
@@ -26,6 +27,10 @@ public class DriverDocumentService {
         document.setDocumentUrl(request.url());
         document.setDocumentPublicId(request.publicId());
         document.setExpiresOn(request.expiresOn());
+        if (document.getStatus() != VerificationStatus.IN_REVIEW) {
+            document.setSubmittedAt(Instant.now());
+            document.setResubmitted(document.getStatus() == VerificationStatus.REJECTED);
+        }
         document.setStatus(VerificationStatus.IN_REVIEW);
         document.setRejectionReason(null);
         document.setReminderSent14d(false);

@@ -55,6 +55,14 @@ public class DriverDocument extends BaseEntity {
 
     private String rejectionReason;
 
+    /** When this document last entered review - the verification queue's "submitted". */
+    private Instant submittedAt;
+
+    /** Back in review after ops rejected it. Cleared once decided again. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean resubmitted = false;
+
     private String reviewedBy;
 
     private Instant reviewedAt;

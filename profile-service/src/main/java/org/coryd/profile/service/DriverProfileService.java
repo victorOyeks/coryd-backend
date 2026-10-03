@@ -82,6 +82,11 @@ public class DriverProfileService {
         // Resubmitting the license photo resets just that
         // item's own review back to PENDING - the other stays as it was.
         if (request.governmentIdUrl() != null) {
+            VerificationStatus before = profile.getGovernmentIdStatus();
+            if (before != VerificationStatus.IN_REVIEW) {
+                profile.setGovernmentIdSubmittedAt(Instant.now());
+                profile.setGovernmentIdResubmitted(before == VerificationStatus.REJECTED);
+            }
             profile.setGovernmentIdUrl(request.governmentIdUrl());
             profile.setGovernmentIdPublicId(request.governmentIdPublicId());
             profile.setGovernmentIdStatus(VerificationStatus.IN_REVIEW);

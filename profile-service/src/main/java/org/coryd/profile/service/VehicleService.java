@@ -12,6 +12,7 @@ import org.coryd.profile.repository.VehicleRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 
 @Service
@@ -45,6 +46,7 @@ public class VehicleService {
                 .acConfirmedWorking(request.acConfirmedWorking())
                 // A vehicle row only exists once registered, so it is never merely PENDING.
                 .verificationStatus(VerificationStatus.IN_REVIEW)
+                .submittedAt(Instant.now())
                 .build();
         Vehicle saved = vehicleRepository.save(vehicle);
         premblyVerificationService.checkPlateNumber(
@@ -72,6 +74,10 @@ public class VehicleService {
         vehicle.setInteriorPhotoPublicId(request.interiorPhotoPublicId());
         vehicle.setHasAC(request.hasAC());
         vehicle.setAcConfirmedWorking(request.acConfirmedWorking());
+        if (vehicle.getVerificationStatus() != VerificationStatus.IN_REVIEW) {
+            vehicle.setSubmittedAt(Instant.now());
+            vehicle.setResubmitted(vehicle.getVerificationStatus() == VerificationStatus.REJECTED);
+        }
         vehicle.setVerificationStatus(VerificationStatus.IN_REVIEW);
         vehicle.setRejectionReason(null);
 

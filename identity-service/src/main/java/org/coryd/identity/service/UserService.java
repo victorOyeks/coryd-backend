@@ -10,6 +10,7 @@ import org.coryd.identity.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Objects;
 
 @Slf4j
@@ -24,6 +25,15 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         return new UserContactResponse(user.getId(), Names.join(user.getFirstName(), user.getLastName()), user.getFirstName(), user.getLastName(), user.getPhone());
+    }
+
+    /** Batch form of getContact() for a page of rows - unknown ids are simply left out. */
+    @Transactional(readOnly = true)
+    public List<UserContactResponse> getContacts(List<String> userIds) {
+        return userRepository.findAllById(userIds).stream()
+                .map(user -> new UserContactResponse(user.getId(), Names.join(user.getFirstName(), user.getLastName()),
+                        user.getFirstName(), user.getLastName(), user.getPhone()))
+                .toList();
     }
 
     /**

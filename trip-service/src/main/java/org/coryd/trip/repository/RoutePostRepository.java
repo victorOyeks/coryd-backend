@@ -18,6 +18,38 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     Page<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId, Pageable pageable);
 
+    /** Ops Console trips table - status tab plus a search across either end of the route or the trip id, newest departure first. */
+    @Query("""
+            select r from RoutePost r
+            where r.status in :statuses
+              and (lower(r.originLabel) like lower(concat('%', :search, '%'))
+                or lower(r.destinationLabel) like lower(concat('%', :search, '%'))
+                or lower(r.id) like lower(concat(:search, '%'))
+                or cast(:search as string) is null)
+            order by r.departureTime desc
+            """)
+    Page<RoutePost> searchForOps(@Param("statuses") Collection<RouteStatus> statuses,
+                                 @Param("search") String search, Pageable pageable);
+
+    @Query("""
+            select count(r) from RoutePost r
+            where r.status in :statuses
+              and (lower(r.originLabel) like lower(concat('%', :search, '%'))
+                or lower(r.destinationLabel) like lower(concat('%', :search, '%'))
+                or lower(r.id) like lower(concat(:search, '%'))
+                or cast(:search as string) is null)
+            """)
+    long countForOps(@Param("statuses") Collection<RouteStatus> statuses, @Param("search") String search);
+
+    /** Ops live monitor - every started trip, plus unstarted ones already inside the boarding window. */
+    @Query("""
+            select r from RoutePost r
+            where r.status = 'IN_PROGRESS'
+               or (r.status in ('PUBLISHED', 'FULL') and r.departureTime <= :boardingFrom)
+            order by r.departureTime asc
+            """)
+    List<RoutePost> findLiveForOps(@Param("boardingFrom") Instant boardingFrom);
+
     /** A driver's routes that still occupy them - the overlap rule and the active/upcoming split. */
     List<RoutePost> findByDriverIdAndStatusIn(String driverId, Collection<RouteStatus> statuses);
 

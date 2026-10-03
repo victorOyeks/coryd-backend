@@ -67,7 +67,7 @@ import static org.mockito.Mockito.verify;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({BookingService.class, RouteService.class, TripScheduleService.class, CancellationPolicy.class, MatchingProperties.class})
+@Import({BookingService.class, RouteService.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class})
 class BookingFlowIntegrationTest {
 
     @Container
@@ -88,6 +88,7 @@ class BookingFlowIntegrationTest {
     @Autowired DataSource dataSource;
     @Autowired org.coryd.trip.repository.DriverVerificationCacheRepository driverVerificationCacheRepository;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    @Autowired OpsTripQueryService opsTripQueryService;
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockBean ProfileServiceClient profileServiceClient;
@@ -379,6 +380,27 @@ class BookingFlowIntegrationTest {
         bookingService.completeRoute(route.getId(), DRIVER);
 
         assertThatThrownBy(() -> routeService.cancel(route.getId(), DRIVER)).isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void routeCancellationReportsOnlyThePaidBookingsItRefunded() {
+        RoutePost route = route(4);
+        Booking paid = book(route, RIDER, 1);
+        confirm(paid);
+        Booking stillPaying = book(route, OTHER_RIDER, 1);
+
+        routeService.cancel(route.getId(), DRIVER);
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.ROUTE_CANCELLED), argThat(e ->
+                ((org.coryd.common.kafka.events.RouteCancelledEvent) e).getAffectedBookingIds().equals(List.of(paid.getId()))));
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e -> {
+            BookingCancelledEvent event = (BookingCancelledEvent) e;
+            return event.getBookingId().equals(paid.getId()) && event.isPaid();
+        }));
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e -> {
+            BookingCancelledEvent event = (BookingCancelledEvent) e;
+            return event.getBookingId().equals(stillPaying.getId()) && !event.isPaid();
+        }));
     }
 
     @Test
@@ -903,6 +925,95 @@ class BookingFlowIntegrationTest {
         assertThat(routeService.getRouteDetails(departed.getId(), 6.45, 3.39, RIDER).unavailableReason()).isEqualTo("This ride has already departed");
     }
 
+    // ---- ops console ------------------------------------------------------------------------------
+
+    @Test
+    void opsTripsAreCountedPerTabAndTotalOnlyPaidSeats() {
+        RoutePost active = route(4);
+        confirm(book(active, RIDER, 2));
+        Booking abandoned = book(active, OTHER_RIDER, 1);
+        bookingService.expireUnpaid(reload(abandoned));
+        RoutePost completed = route(4);
+        Booking rode = book(completed, "rider-3", 1);
+        confirm(rode);
+        start(completed);
+        pickUp(rode);
+        bookingService.completeRoute(completed.getId(), DRIVER);
+        RoutePost cancelled = route(4);
+        routeService.cancel(cancelled.getId(), DRIVER);
+
+        var counts = opsTripQueryService.counts(null);
+        assertThat(counts.all()).isEqualTo(3);
+        assertThat(counts.active()).isEqualTo(1);
+        assertThat(counts.completed()).isEqualTo(1);
+        assertThat(counts.cancelled()).isEqualTo(1);
+        assertThat(opsTripQueryService.trips(null, null, firstPage()).totalElements()).as("no status is the All tab").isEqualTo(3);
+
+        var activeTab = opsTripQueryService.trips(org.coryd.common.enums.OpsTripStatus.ACTIVE, null, firstPage());
+        assertThat(activeTab.content()).singleElement().satisfies(row -> {
+            assertThat(row.routePostId()).isEqualTo(active.getId());
+            assertThat(row.seatsBooked()).as("the expired hold isn't a seat").isEqualTo(2);
+            assertThat(row.totalFare()).isEqualByComparingTo(FARE.multiply(BigDecimal.valueOf(2)));
+        });
+        assertThat(opsTripQueryService.trips(org.coryd.common.enums.OpsTripStatus.CANCELLED, null, firstPage())
+                .content().get(0).totalFare()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void opsTripSearchMatchesEitherEndOrTheTripId() {
+        RoutePost route = route(4);
+
+        assertThat(opsTripQueryService.counts("obalende").all()).isEqualTo(1);
+        assertThat(opsTripQueryService.trips(null, route.getId().substring(0, 6), firstPage()).content())
+                .extracting(r -> r.routePostId()).containsExactly(route.getId());
+        assertThat(opsTripQueryService.trips(null, "ikeja", firstPage()).totalElements()).isZero();
+        assertThat(opsTripQueryService.counts("ikeja").all()).isZero();
+    }
+
+    @Test
+    void opsLiveMonitorSplitsStartedFromBoarding() {
+        RoutePost started = route(4);
+        confirm(book(started, RIDER, 1));
+        start(started);
+        RoutePost boarding = routeAt(Instant.now().plus(20, ChronoUnit.MINUTES), 40);
+        confirm(book(boarding, OTHER_RIDER, 2));
+        route(4);
+
+        var live = opsTripQueryService.live(null);
+
+        assertThat(live).extracting(t -> t.routePostId()).containsExactlyInAnyOrder(started.getId(), boarding.getId());
+        assertThat(live).filteredOn(t -> t.routePostId().equals(started.getId())).singleElement().satisfies(t -> {
+            assertThat(t.phase()).isEqualTo(org.coryd.common.enums.LiveTripPhase.ACTIVE);
+            assertThat(t.seatsBooked()).isEqualTo(1);
+            assertThat(t.etaAt()).isAfter(Instant.now());
+        });
+        assertThat(live).filteredOn(t -> t.routePostId().equals(boarding.getId())).singleElement().satisfies(t -> {
+            assertThat(t.phase()).isEqualTo(org.coryd.common.enums.LiveTripPhase.BOARDING);
+            assertThat(t.seatsBooked()).isEqualTo(2);
+            assertThat(t.progress()).isZero();
+            assertThat(t.estimatedDurationMinutes()).isEqualTo(40);
+        });
+        assertThat(opsTripQueryService.live("nowhere")).isEmpty();
+    }
+
+    @Test
+    void opsTripDetailListsEveryPaidPassengerButNoUnpaidHolds() {
+        RoutePost route = route(4);
+        Booking paid = book(route, RIDER, 1);
+        confirm(paid);
+        Booking cancelledAfterPaying = book(route, OTHER_RIDER, 1);
+        confirm(cancelledAfterPaying);
+        bookingService.cancelByRider(cancelledAfterPaying.getId(), OTHER_RIDER);
+        Booking neverPaid = book(route, "rider-3", 1);
+        bookingService.expireUnpaid(reload(neverPaid));
+
+        var detail = opsTripQueryService.trip(route.getId());
+
+        assertThat(detail.passengers()).extracting(p -> p.riderId()).containsExactlyInAnyOrder(RIDER, OTHER_RIDER);
+        assertThat(detail.trip().seatsBooked()).isEqualTo(1);
+        assertThat(detail.location()).as("not started, so no live position").isNull();
+    }
+
     // ---- late cancellation fee -------------------------------------------------------------------
 
     @Test
@@ -952,6 +1063,10 @@ class BookingFlowIntegrationTest {
                 .seatsAvailable(seats)
                 .farePerSeat(FARE)
                 .status(RouteStatus.PUBLISHED);
+    }
+
+    private static org.springframework.data.domain.Pageable firstPage() {
+        return org.springframework.data.domain.PageRequest.of(0, 20);
     }
 
     private RoutePost routeAt(Instant departure, Integer durationMinutes) {

@@ -12,8 +12,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
-import org.coryd.profile.dto.VerificationCheckOutcome;
-import org.coryd.profile.dto.VerificationCheckType;
+import org.coryd.common.enums.VerificationCheckOutcome;
+import org.coryd.common.enums.VerificationCheckType;
 
 /**
  * The outcome of one call to an identity provider, kept as the audit trail behind an automatic

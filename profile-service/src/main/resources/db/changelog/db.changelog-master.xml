@@ -28,5 +28,6 @@
     <include file="db/changelog/017-expired-status.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/018-government-id-public-id.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/019-backfill-emergency-contacts.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/020-verification-submitted-at.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

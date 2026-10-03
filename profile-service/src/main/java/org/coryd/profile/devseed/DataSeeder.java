@@ -8,7 +8,7 @@ import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.client.IdentityAuthClient;
 import org.coryd.profile.dto.ItemDecision;
-import org.coryd.profile.dto.ReviewableItem;
+import org.coryd.common.enums.ReviewableItem;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;

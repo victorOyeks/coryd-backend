@@ -7,13 +7,19 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
  * Runs one call to another service and unwraps the standard envelope to its data. Unlike the
- * enrichment clients elsewhere, nothing here degrades to empty - an ops admin approving or rejecting
- * a driver needs to see the real outcome, so a refusal comes back with the owning service's own
- * status and message, and an unreachable service is a 502, not a silent blank.
+ * enrichment clients elsewhere, primary calls here never degrade to empty - an ops admin approving or
+ * rejecting a driver needs to see the real outcome, so a refusal comes back with the owning service's
+ * own status and message, and an unreachable service is a 502, not a silent blank. Batch lookups for
+ * display details (names, phones, vehicles) are the exception: those blank out instead of failing a page.
  */
 @Slf4j
 final class DownstreamCalls {
@@ -30,6 +36,39 @@ final class DownstreamCalls {
         } catch (ResourceAccessException e) {
             log.error("{} unreachable: {}", service, e.getMessage());
             throw new DownstreamException(HttpStatus.BAD_GATEWAY, service + " is unavailable right now - try again shortly");
+        }
+    }
+
+    static <T> T data(String service, ObjectMapper objectMapper, Class<T> type, Supplier<JsonNode> call) {
+        JsonNode node = data(service, objectMapper, call);
+        try {
+            return node == null || node.isNull() ? null : objectMapper.treeToValue(node, type);
+        } catch (Exception e) {
+            log.error("Unreadable {} response: {}", service, e.getMessage());
+            throw new DownstreamException(HttpStatus.BAD_GATEWAY, service + " sent a response this console can't read");
+        }
+    }
+
+    /** A list-of-records lookup keyed by id - empty on any failure, so missing names never sink a page. */
+    static <T> Map<String, T> batch(String service, ObjectMapper objectMapper, Collection<String> ids, Class<T> type,
+                                    Function<T, String> key, Function<List<String>, JsonNode> call) {
+        List<String> distinct = ids.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            JsonNode items = data(service, objectMapper, () -> call.apply(distinct));
+            Map<String, T> byId = new LinkedHashMap<>();
+            if (items != null && items.isArray()) {
+                for (JsonNode item : items) {
+                    T value = objectMapper.treeToValue(item, type);
+                    byId.put(key.apply(value), value);
+                }
+            }
+            return byId;
+        } catch (Exception e) {
+            log.warn("{} lookup for {} ids failed - showing them without details: {}", service, distinct.size(), e.getMessage());
+            return Map.of();
         }
     }
 

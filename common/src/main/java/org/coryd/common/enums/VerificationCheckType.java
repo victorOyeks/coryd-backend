@@ -1,4 +1,4 @@
-package org.coryd.profile.dto;
+package org.coryd.common.enums;
 
 public enum VerificationCheckType {
 

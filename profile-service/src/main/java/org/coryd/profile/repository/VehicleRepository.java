@@ -8,6 +8,8 @@ import java.util.List;
 
 public interface VehicleRepository extends JpaRepository<Vehicle, String> {
     List<Vehicle> findByDriverId(String driverId);
+
+    List<Vehicle> findByDriverIdIn(List<String> driverIds);
     boolean existsByPlateNumber(String plateNumber);
 
     /** A vehicle row only exists once a driver actually registers one, so status alone means

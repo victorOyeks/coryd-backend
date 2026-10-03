@@ -71,6 +71,6 @@ class DataSeederTest {
     }
 
     private static VerificationStatusResponse status(VerificationStatus overall) {
-        return new VerificationStatusResponse(null, null, List.of(), overall, null, List.of());
+        return new VerificationStatusResponse(null, null, null, null, List.of(), overall, null, List.of());
     }
 }

@@ -162,6 +162,15 @@ public class LocationService {
             return LocationResponse.unavailable("Live tracking isn't available for this trip right now.");
         }
 
+        return readRouteLocation(routePostId);
+    }
+
+    /** The Ops Console's live map - no participant check, so only reachable through /internal (ops-service). */
+    public LocationResponse peekRouteLocation(String routePostId) {
+        return readRouteLocation(routePostId);
+    }
+
+    private LocationResponse readRouteLocation(String routePostId) {
         String raw = redisTemplate.opsForValue().get(ROUTE_LOCATION_KEY_PREFIX + routePostId);
         if (raw == null) {
             return LocationResponse.unavailable("Waiting for the driver's location to come through.");

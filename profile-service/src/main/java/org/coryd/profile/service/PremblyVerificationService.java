@@ -5,8 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.client.PremblyClient;
 import org.coryd.profile.config.PremblyProperties;
-import org.coryd.profile.dto.VerificationCheckOutcome;
-import org.coryd.profile.dto.VerificationCheckType;
+import org.coryd.common.enums.VerificationCheckOutcome;
+import org.coryd.common.enums.VerificationCheckType;
 import org.coryd.profile.entity.VerificationCheck;
 import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VerificationCheckRepository;
@@ -173,6 +173,7 @@ public class PremblyVerificationService {
                 return;
             }
             profile.setGovernmentIdStatus(VerificationStatus.APPROVED);
+            profile.setGovernmentIdResubmitted(false);
             profile.setGovernmentIdRejectionReason(null);
             // Same purge an ops approval does - an approved licence image is never shown again.
             verificationAggregationService.purgeGovernmentId(profile);

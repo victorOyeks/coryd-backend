@@ -1,4 +1,4 @@
-package org.coryd.profile.dto;
+package org.coryd.common.enums;
 
 /**
  * What a provider check concluded. Only MATCH is allowed to move an item forward on its own -

@@ -1,6 +1,6 @@
 package org.coryd.profile.repository;
 
-import org.coryd.profile.dto.VerificationCheckType;
+import org.coryd.common.enums.VerificationCheckType;
 import org.coryd.profile.entity.VerificationCheck;
 import org.springframework.data.jpa.repository.JpaRepository;
 

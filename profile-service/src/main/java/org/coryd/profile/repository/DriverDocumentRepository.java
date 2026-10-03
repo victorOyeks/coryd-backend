@@ -11,6 +11,8 @@ import java.util.Optional;
 
 public interface DriverDocumentRepository extends JpaRepository<DriverDocument, String> {
     List<DriverDocument> findByDriverId(String driverId);
+
+    List<DriverDocument> findByDriverIdIn(List<String> driverIds);
     Optional<DriverDocument> findByDriverIdAndDocumentType(String driverId, DocumentType documentType);
     List<DriverDocument> findByExpiresOnBeforeAndReminderSent14dFalse(LocalDate date);
     List<DriverDocument> findByExpiresOnBeforeAndReminderSent3dFalse(LocalDate date);

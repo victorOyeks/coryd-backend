@@ -12,7 +12,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /** Minimal cross-service user lookup/sync (trip-service's Call-driver button, profile-service's name push) - deliberately exposes only phone/name, nothing auth-related. Service-to-service only, gated by InternalApiKeyFilter via the /internal/** prefix and hidden from Swagger. */
 @Hidden
@@ -26,6 +29,11 @@ public class InternalUserController {
     @GetMapping("/{userId}/contact")
     public ApiResponse<UserContactResponse> contact(@PathVariable String userId) {
         return ApiResponse.ok(userService.getContact(userId));
+    }
+
+    @GetMapping("/contacts")
+    public ApiResponse<List<UserContactResponse>> contacts(@RequestParam List<String> userIds) {
+        return ApiResponse.ok(userService.getContacts(userIds));
     }
 
     @PutMapping("/{userId}/name")

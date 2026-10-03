@@ -56,6 +56,14 @@ public class DriverProfile extends BaseEntity {
 
     private String governmentIdRejectionReason;
 
+    /** When the licence last entered review - the verification queue's "submitted". */
+    private Instant governmentIdSubmittedAt;
+
+    /** It's back in review after ops rejected it. Cleared once decided again. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean governmentIdResubmitted = false;
+
     /** Set once, the first time this driver ever reaches overallStatus APPROVED - never moves
      * after that, even if a later rejection + re-approval cycle happens. "Verified Since" on the
      * Verification Status screen. */
