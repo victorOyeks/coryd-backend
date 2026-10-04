@@ -26,6 +26,18 @@ public interface FareHoldRepository extends JpaRepository<FareHold, String> {
     @Query("update FareHold h set h.refunded = true where h.id = :id and h.released = false and h.refunded = false")
     int markRefunded(@Param("id") String id);
 
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update FareHold h set h.refundDue = :amount, h.refundReason = :reason where h.id = :id")
+    int setRefundDue(@Param("id") String id, @Param("amount") BigDecimal amount, @Param("reason") String reason);
+
+    /** Clears only the amount that was retried, so a concurrent retry can't clear it twice. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update FareHold h set h.refundDue = 0 where h.id = :id and h.refundDue = :amount")
+    int clearRefundDue(@Param("id") String id, @Param("amount") BigDecimal amount);
+
+    @Query("select h.id from FareHold h where h.refundDue > 0")
+    List<String> findIdsWithRefundDue();
+
     /** A retry never changes amount, driver or split, so DO NOTHING is enough. */
     @Modifying
     @Query(value = "insert into payment.fare_holds (id, payment_transaction_id, booking_id, driver_id, amount, released, refunded, debt_recovery, created_at, updated_at) "

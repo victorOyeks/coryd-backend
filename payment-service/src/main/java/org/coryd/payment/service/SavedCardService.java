@@ -9,6 +9,7 @@ import org.coryd.payment.entity.SavedCard;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.repository.SavedCardRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.YearMonth;
@@ -44,8 +45,9 @@ public class SavedCardService {
     }
 
     /** Paying with the same card again refreshes its row rather than adding a second one. Only reusable
-     * card authorizations are kept - a bank transfer or USSD payment has nothing to charge again. */
-    @Transactional
+     * card authorizations are kept - a bank transfer or USSD payment has nothing to charge again. Its own
+     * transaction, so a failure here can never undo the payment it came with. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void remember(String riderId, CardAuthorization card) {
         if (card == null || !card.reusable() || !"card".equalsIgnoreCase(card.channel())
                 || card.authorizationCode() == null || card.email() == null) {

@@ -170,7 +170,7 @@ public class PaymentService {
         if (transaction == null) {
             return;
         }
-        savedCardService.remember(transaction.getRiderId(), card);
+        rememberCard(transaction.getRiderId(), card);
         if (paymentTransactionRepository.transitionStatus(transaction.getId(),
                 List.of(PayoutStatus.PENDING, PayoutStatus.FAILED), PayoutStatus.PAID) == 0) {
             log.info("Ignoring repeat charge.success for reference {}", gatewayReference);
@@ -184,6 +184,17 @@ public class PaymentService {
                 .amount(transaction.getAmount())
                 .paidAt(LocalDateTime.now())
                 .build());
+    }
+
+    private void rememberCard(String riderId, CardAuthorization card) {
+        if (card == null) {
+            return;
+        }
+        try {
+            savedCardService.remember(riderId, card);
+        } catch (Exception e) {
+            log.warn("Could not save the card used by rider {}: {}", riderId, e.getMessage());
+        }
     }
 
     /** A charge on a reference we no longer hold - the booking moved on to a newer checkout before the

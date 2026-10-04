@@ -28,6 +28,7 @@ import org.coryd.payment.repository.FareHoldRepository;
 import org.coryd.payment.repository.PaymentTransactionRepository;
 import org.coryd.payment.repository.PayoutRecipientRepository;
 import org.coryd.payment.repository.SavedCardRepository;
+import org.coryd.payment.scheduler.RefundRetryJob;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -87,7 +88,7 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @Import({PaymentService.class, EarningsService.class, SavedCardService.class, SettlementSyncService.class,
-        CommissionProperties.class, DriverSplitResolver.class, SubaccountBackfill.class})
+        CommissionProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class})
 class PaymentFlowIntegrationTest {
 
     @Container
@@ -105,6 +106,7 @@ class PaymentFlowIntegrationTest {
     @Autowired SavedCardService savedCardService;
     @Autowired SettlementSyncService settlementSyncService;
     @Autowired SubaccountBackfill subaccountBackfill;
+    @Autowired RefundRetryJob refundRetryJob;
     @Autowired PaymentTransactionRepository paymentTransactionRepository;
     @Autowired FareHoldRepository fareHoldRepository;
     @Autowired DriverEarningsAccountRepository earningsAccountRepository;
@@ -367,18 +369,40 @@ class PaymentFlowIntegrationTest {
     }
 
     @Test
-    void aRefundPaystackRefusesIsRetriedNotLost() {
+    void aRefundPaystackRefusesIsKeptAndRetriedUntilItGoesThrough() {
         String booking = heldBooking();
-        paidBooking(booking);
+        String reference = paidBooking(booking);
         when(gatewayClient.refund(anyString(), any(), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> earningsService.refund(booking, "Booking cancelled by DRIVER")).isInstanceOf(IllegalStateException.class);
-        assertThat(fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow().isRefunded())
-                .as("rolled back, so the redelivered cancellation tries again").isFalse();
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+
+        var hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow();
+        assertThat(hold.isRefunded()).isTrue();
+        assertThat(hold.getRefundDue()).as("still owed to the rider").isEqualByComparingTo(FARE);
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.REFUND_ISSUED), any());
+
+        refundRetryJob.retry();
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.REFUND_ISSUED), any());
 
         when(gatewayClient.refund(anyString(), any(), any())).thenReturn(true);
-        earningsService.refund(booking, "Booking cancelled by DRIVER");
-        assertThat(fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow().isRefunded()).isTrue();
+        refundRetryJob.retry();
+        refundRetryJob.retry();
+
+        assertThat(fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow().getRefundDue())
+                .isEqualByComparingTo("0.00");
+        verify(gatewayClient, times(3)).refund(eq(reference), eq(FARE), anyString());
+        verify(kafkaTemplate, times(1)).send(eq(KafkaTopics.REFUND_ISSUED), any());
+    }
+
+    @Test
+    void aDriverOnlySeesEarningsForTheirOwnBookings() {
+        String booking = heldBooking();
+        paidBooking(booking);
+        earningsService.onTripCompleted(tripCompleted(booking));
+
+        assertThat(earningsService.getTransactionsForBookings(List.of(booking), DRIVER, UserRole.DRIVER)).hasSize(1);
+        assertThat(earningsService.getTransactionsForBookings(List.of(booking), "driver-2", UserRole.DRIVER)).isEmpty();
+        assertThat(earningsService.getTransactionsForBookings(List.of(booking), "ops-1", UserRole.OPS_ADMIN)).hasSize(1);
     }
 
     @Test

@@ -18,5 +18,6 @@
     <include file="db/changelog/007-payment-authorization-url.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/008-driver-subaccounts.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/009-card-only-payments.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/010-refund-retry.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

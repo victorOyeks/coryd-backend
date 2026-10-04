@@ -93,8 +93,9 @@ public class EarningsController {
 
     /** Net-earned lookup for a set of bookings, e.g. to zip into a driver's trip history by bookingId. */
     @GetMapping("/transactions/batch")
-    public ApiResponse<List<BookingEarningsItem>> transactionsBatch(@RequestParam List<String> bookingIds) {
-        return ApiResponse.ok(earningsService.getTransactionsForBookings(bookingIds));
+    public ApiResponse<List<BookingEarningsItem>> transactionsBatch(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                    @RequestParam List<String> bookingIds) {
+        return ApiResponse.ok(earningsService.getTransactionsForBookings(bookingIds, principal.getUserId(), principal.getActiveRole()));
     }
 
     private static YearMonth parseMonth(String month) {

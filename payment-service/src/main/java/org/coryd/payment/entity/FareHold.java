@@ -50,4 +50,11 @@ public class FareHold extends BaseEntity {
     @Builder.Default
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal debtRecovery = BigDecimal.ZERO;
+
+    /** Owed back to the rider's card but not yet accepted by Paystack - retried until it is. */
+    @Builder.Default
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal refundDue = BigDecimal.ZERO;
+
+    private String refundReason;
 }

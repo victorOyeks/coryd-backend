@@ -188,9 +188,12 @@ public class EarningsService {
                 SettlementStatus.fromGateway(s.getStatus()), s.getSettlementDate())));
     }
 
-    /** Earnings breakdown for a set of bookings - e.g. the driver's trip history zips netCredit in by bookingId. */
-    public List<BookingEarningsItem> getTransactionsForBookings(List<String> bookingIds) {
+    /** Earnings breakdown for a set of bookings - e.g. the driver's trip history zips netCredit in by bookingId.
+     * Only the caller's own bookings come back, unless ops is asking. */
+    @Transactional(readOnly = true)
+    public List<BookingEarningsItem> getTransactionsForBookings(List<String> bookingIds, String callerId, UserRole callerRole) {
         return earningsTransactionRepository.findByBookingIdIn(bookingIds).stream()
+                .filter(t -> callerRole == UserRole.OPS_ADMIN || t.getDriverId().equals(callerId))
                 .map(t -> new BookingEarningsItem(t.getBookingId(), t.getGrossFare(), t.getCommissionAmount(), t.getNetCredit()))
                 .toList();
     }
@@ -216,20 +219,45 @@ public class EarningsService {
         return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 
-    /**
-     * Back to the card it came from. A refusal throws, so the hold isn't marked refunded and the
-     * cancellation event is retried rather than the rider silently going unpaid.
-     */
-    private void refundToCard(PaymentTransaction transaction, String bookingId, BigDecimal amount, String reason) {
+    /** Back to the card it came from. False when Paystack refused or couldn't be reached. */
+    private boolean refundToCard(PaymentTransaction transaction, String bookingId, BigDecimal amount, String reason) {
         if (transaction.getPaymentMethod() != PaymentMethod.PAYSTACK) {
             log.error("RECONCILE: booking {} was paid by {} - there is no card to refund {} to", bookingId,
                     transaction.getPaymentMethod(), amount);
+            return false;
+        }
+        return gatewayClient.refund(transaction.getGatewayReference(), amount, reason);
+    }
+
+    /** RefundRetryJob's unit of work - one hold per transaction, so one failure never holds up the rest. */
+    @Transactional
+    public void retryRefund(String holdId) {
+        FareHold hold = fareHoldRepository.findById(holdId).orElse(null);
+        if (hold == null || hold.getRefundDue().signum() <= 0) {
             return;
         }
-        if (!gatewayClient.refund(transaction.getGatewayReference(), amount, reason)) {
-            throw new IllegalStateException("Paystack refused the refund for booking " + bookingId + " - rider "
-                    + transaction.getRiderId() + " is owed " + amount);
+        PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(hold.getBookingId()).orElse(null);
+        if (transaction == null) {
+            return;
         }
+        BigDecimal amount = hold.getRefundDue();
+        if (!refundToCard(transaction, hold.getBookingId(), amount, hold.getRefundReason())) {
+            log.warn("Refund of {} for booking {} still not accepted by Paystack - will retry", amount, hold.getBookingId());
+            return;
+        }
+        if (fareHoldRepository.clearRefundDue(holdId, amount) == 1) {
+            refundIssued(hold.getBookingId(), transaction.getRiderId(), amount, hold.getRefundReason());
+        }
+    }
+
+    private void refundIssued(String bookingId, String riderId, BigDecimal amount, String reason) {
+        kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
+                .bookingId(bookingId)
+                .riderId(riderId)
+                .amount(amount)
+                .reason(reason)
+                .refundedAt(LocalDateTime.now())
+                .build());
     }
 
     /**
@@ -289,15 +317,14 @@ public class EarningsService {
             if (refunded.signum() == 0) {
                 return;
             }
-            refundToCard(transaction, bookingId, refunded, reason);
-
-            kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
-                    .bookingId(bookingId)
-                    .riderId(transaction.getRiderId())
-                    .amount(refunded)
-                    .reason(reason)
-                    .refundedAt(LocalDateTime.now())
-                    .build());
+            if (refundToCard(transaction, bookingId, refunded, reason)) {
+                refundIssued(bookingId, transaction.getRiderId(), refunded, reason);
+                return;
+            }
+            // The hold stays settled as refunded; what's owed is kept on it and retried until Paystack takes it.
+            fareHoldRepository.setRefundDue(hold.getId(), refunded, reason);
+            log.error("RECONCILE: Paystack did not accept the refund for booking {} - rider {} is owed {}, will retry",
+                    bookingId, transaction.getRiderId(), refunded);
         });
     }
 }
