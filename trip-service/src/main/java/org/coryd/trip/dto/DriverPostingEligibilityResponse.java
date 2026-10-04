@@ -7,6 +7,7 @@ public record DriverPostingEligibilityResponse(
         boolean documentsApproved,
         boolean identityOk,
         boolean vehicleOk,
+        boolean payoutAccountOk,
         String blockedReason,
         String prerequisiteLevel,
         String enforcement,

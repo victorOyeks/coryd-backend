@@ -92,6 +92,7 @@ class BookingFlowIntegrationTest {
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockBean ProfileServiceClient profileServiceClient;
+    @MockBean org.coryd.trip.client.PaymentServiceClient paymentServiceClient;
     @MockBean IdentityServiceClient identityServiceClient;
     @MockBean ShareTokenService shareTokenService;
     @MockBean LocationService locationService;
@@ -108,11 +109,61 @@ class BookingFlowIntegrationTest {
                     .isEqualTo(postgres.getJdbcUrl());
         }
         driverVerificationCacheRepository.deleteAll();
+        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(org.mockito.ArgumentMatchers.anyString())).thenReturn(true);
         ratingRepository.deleteAll();
         historyRepository.deleteAll();
         bookingRepository.deleteAll();
         routePostRepository.deleteAll();
         clearInvocations(kafkaTemplate);
+    }
+
+    // ---- payout account before posting ---------------------------------------------------------
+
+    /** The eligibility response echoes the policy's settings - the mocked policy has none until told. */
+    private void policySettings() {
+        org.mockito.Mockito.when(driverVerificationPolicy.getEnforcement()).thenReturn(DriverVerificationPolicy.Enforcement.GRACE);
+        org.mockito.Mockito.when(driverVerificationPolicy.getPrerequisiteLevel()).thenReturn(DriverVerificationPolicy.PrerequisiteLevel.SUBMITTED);
+    }
+
+    @Test
+    void aDriverWithNoBankAccountCannotPostEvenOnceApproved() {
+        policySettings();
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(DRIVER)).thenReturn(false);
+
+        var eligibility = routeService.postingEligibility(DRIVER);
+        assertThat(eligibility.canPostRoutes()).isFalse();
+        assertThat(eligibility.payoutAccountOk()).isFalse();
+        assertThat(eligibility.blockedReason()).isEqualTo("PAYOUT_ACCOUNT_REQUIRED");
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(1, ChronoUnit.DAYS))))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("bank account");
+        assertThat(routePostRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void identityStillComesBeforeTheBankAccount() {
+        policySettings();
+        org.mockito.Mockito.when(driverVerificationPolicy.requiresApprovedPrerequisites()).thenReturn(false);
+        org.mockito.Mockito.when(profileServiceClient.fetchOnboarding(DRIVER)).thenThrow(new RuntimeException("profile down"));
+        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(DRIVER)).thenReturn(false);
+
+        var eligibility = routeService.postingEligibility(DRIVER);
+
+        assertThat(eligibility.blockedReason()).isEqualTo("IDENTITY_REQUIRED");
+        assertThat(eligibility.payoutAccountOk()).isFalse();
+    }
+
+    @Test
+    void anUnreachablePaymentServiceDoesNotBlockPosting() {
+        policySettings();
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(DRIVER)).thenReturn(null);
+
+        var eligibility = routeService.postingEligibility(DRIVER);
+
+        assertThat(eligibility.canPostRoutes()).isTrue();
+        assertThat(eligibility.blockedReason()).isNull();
     }
 
     // ---- booking the same ride twice ------------------------------------------------------------

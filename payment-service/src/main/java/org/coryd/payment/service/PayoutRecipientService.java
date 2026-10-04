@@ -1,6 +1,7 @@
 package org.coryd.payment.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.payment.config.CommissionProperties;
@@ -34,9 +35,17 @@ public class PayoutRecipientService {
         return paystackGatewayClient.resolveAccountNumber(accountNumber, bankCode);
     }
 
-    /** Payout Setup screen's saved-accounts list. */
-    public List<PayoutRecipient> list(String driverId) {
+    /** Payout Setup screen's saved-accounts list - bank details, so only the driver themselves or ops. */
+    public List<PayoutRecipient> list(String driverId, String callerId, UserRole callerRole) {
+        if (!driverId.equals(callerId) && callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("You can only view your own payout accounts");
+        }
         return payoutRecipientRepository.findByDriverIdOrderByCreatedAtDesc(driverId);
+    }
+
+    /** Every saved account was verified with Paystack before it was saved, so any one counts. */
+    public boolean hasPayoutAccount(String driverId) {
+        return payoutRecipientRepository.existsByDriverId(driverId);
     }
 
     /** Adds a new saved bank account - re-resolves server-side (never trusts a client-supplied

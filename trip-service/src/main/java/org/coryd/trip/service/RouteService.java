@@ -16,6 +16,7 @@ import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.RoutePublishedEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.response.PagedResponse;
+import org.coryd.trip.client.PaymentServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.policy.DriverVerificationPolicy;
 import org.coryd.trip.config.MatchingProperties;
@@ -103,6 +104,7 @@ public class RouteService {
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
     private final RatingRepository ratingRepository;
     private final ProfileServiceClient profileServiceClient;
+    private final PaymentServiceClient paymentServiceClient;
     private final MapsService mapsService;
     private final MatchingProperties matchingProperties;
     private final DriverVerificationPolicy verificationPolicy;
@@ -135,6 +137,7 @@ public class RouteService {
             throw new BadRequestException("Routes can only be posted up to " + maxDaysAhead + " days ahead");
         }
         requirePostingEligibility(driverId);
+        requirePayoutAccount(driverId);
         bookingRepository.lockUser(driverId);
 
         if (request.vehicleId() != null) {
@@ -654,6 +657,14 @@ public class RouteService {
         }
     }
 
+    /** Earnings are split to the driver's bank account when a rider pays, so it must exist before anyone can book.
+     * Applies to approved drivers too. An unreachable payment-service doesn't block, same as the eligibility check. */
+    private void requirePayoutAccount(String driverId) {
+        if (Boolean.FALSE.equals(paymentServiceClient.hasPayoutAccount(driverId))) {
+            throw new BadRequestException("Add the bank account your earnings will be paid to before posting a route");
+        }
+    }
+
     /**
      * Only cached at SUBMITTED level - an upload cannot be undone, but an approval can be revoked,
      * so at APPROVED level profile-service is asked on every post.
@@ -715,9 +726,14 @@ public class RouteService {
                 blockedReason = requireApproved ? "IDENTITY_PENDING_APPROVAL" : "IDENTITY_REQUIRED";
             } else if (!vehicleOk) {
                 blockedReason = requireApproved ? "VEHICLE_PENDING_APPROVAL" : "VEHICLE_REQUIRED";
-            } else if (graceOver) {
-                blockedReason = "DOCUMENTS_OVERDUE";
             }
+        }
+        boolean payoutAccountOk = !Boolean.FALSE.equals(paymentServiceClient.hasPayoutAccount(driverId));
+        if (blockedReason == null && !payoutAccountOk) {
+            blockedReason = "PAYOUT_ACCOUNT_REQUIRED";
+        }
+        if (blockedReason == null && !approved && !verificationPolicy.neverEnforces() && graceOver) {
+            blockedReason = "DOCUMENTS_OVERDUE";
         }
 
         Integer daysRemaining = deadline == null || approved ? null
@@ -728,6 +744,7 @@ public class RouteService {
                 approved,
                 identityOk,
                 vehicleOk,
+                payoutAccountOk,
                 blockedReason,
                 verificationPolicy.getPrerequisiteLevel().name(),
                 verificationPolicy.getEnforcement().name(),

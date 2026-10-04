@@ -40,8 +40,9 @@ public class PayoutRecipientController {
 
     /** Payout Setup screen's saved-accounts list. */
     @GetMapping("/payout-recipients/drivers/{driverId}")
-    public ApiResponse<List<PayoutRecipient>> list(@PathVariable String driverId) {
-        return ApiResponse.ok(payoutRecipientService.list(driverId));
+    public ApiResponse<List<PayoutRecipient>> list(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                   @PathVariable String driverId) {
+        return ApiResponse.ok(payoutRecipientService.list(driverId, principal.getUserId(), principal.getActiveRole()));
     }
 
     /** Adds a new saved bank account - ownership-gated, since getting this wrong would mean saving bank details under someone else's account. */
