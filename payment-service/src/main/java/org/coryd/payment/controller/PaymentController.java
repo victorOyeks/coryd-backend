@@ -9,12 +9,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.payment.dto.CardAuthorization;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.service.PaymentService;
-import org.coryd.payment.service.PayoutService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,12 +33,8 @@ public class PaymentController {
     private static final String PAYSTACK_SIGNATURE_HEADER = "x-paystack-signature";
     private static final String EVENT_CHARGE_SUCCESS = "charge.success";
     private static final String EVENT_CHARGE_FAILED = "charge.failed";
-    private static final String EVENT_TRANSFER_SUCCESS = "transfer.success";
-    private static final String EVENT_TRANSFER_FAILED = "transfer.failed";
-    private static final String EVENT_TRANSFER_REVERSED = "transfer.reversed";
 
     private final PaymentService paymentService;
-    private final PayoutService payoutService;
     private final PaymentGatewayClient gatewayClient;
     private final ObjectMapper objectMapper;
 
@@ -75,14 +71,9 @@ public class PaymentController {
 
         switch (event.event()) {
             case EVENT_CHARGE_SUCCESS -> paymentService.handleWebhookSuccess(event.data().reference(),
-                    event.data().bookingId(), event.data().amount());
+                    event.data().bookingId(), event.data().amount(), event.data().card());
             case EVENT_CHARGE_FAILED -> paymentService.handleWebhookFailure(event.data().reference(),
                     event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Charge failed");
-            case EVENT_TRANSFER_SUCCESS -> payoutService.handleTransferSuccess(event.data().reference());
-            case EVENT_TRANSFER_FAILED -> payoutService.handleTransferFailure(event.data().reference(),
-                    event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Transfer failed");
-            case EVENT_TRANSFER_REVERSED -> payoutService.handleTransferFailure(event.data().reference(),
-                    event.data().gatewayResponse() != null ? event.data().gatewayResponse() : "Transfer reversed");
             default -> log.info("Ignoring unhandled Paystack webhook event: {}", event.event());
         }
 
@@ -93,11 +84,31 @@ public class PaymentController {
     private record WebhookPayload(String event, Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
         private record Data(String reference, @JsonProperty("gateway_response") String gatewayResponse,
-                            Long amount, JsonNode metadata) {
+                            Long amount, JsonNode metadata, Authorization authorization, Customer customer) {
             /** Paystack sends metadata as an object when we set it and as "" when we didn't - read it loosely. */
             String bookingId() {
                 return metadata != null && metadata.hasNonNull("bookingId") ? metadata.get("bookingId").asText() : null;
             }
+
+            CardAuthorization card() {
+                if (authorization == null) {
+                    return null;
+                }
+                return new CardAuthorization(authorization.authorizationCode(), authorization.signature(), authorization.channel(),
+                        authorization.reusable(), authorization.cardType(), authorization.last4(), authorization.expMonth(),
+                        authorization.expYear(), authorization.bank(), customer == null ? null : customer.email());
+            }
+        }
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        private record Authorization(@JsonProperty("authorization_code") String authorizationCode, String signature,
+                                     String channel, boolean reusable, @JsonProperty("card_type") String cardType,
+                                     String last4, @JsonProperty("exp_month") String expMonth,
+                                     @JsonProperty("exp_year") String expYear, String bank) {
+        }
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        private record Customer(String email) {
         }
     }
 }

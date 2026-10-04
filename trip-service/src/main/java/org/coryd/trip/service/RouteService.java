@@ -536,7 +536,7 @@ public class RouteService {
         return PagedResponse.from(routePostRepository.findByDriverIdOrderByCreatedAtDesc(driverId, pageable));
     }
 
-    /** Batch lookup for a client resolving routePostIds from elsewhere (e.g. the driver wallet's transaction feed) into display text - one call for a whole page, not one per row. */
+    /** Batch lookup for a client resolving routePostIds from elsewhere (e.g. the driver earnings screen's trip list) into display text - one call for a whole page, not one per row. */
     public List<RouteSummary> getSummaries(List<String> routePostIds) {
         if (routePostIds == null || routePostIds.isEmpty()) {
             return List.of();

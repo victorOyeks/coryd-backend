@@ -45,6 +45,10 @@ public class PayoutRecipient extends BaseEntity {
     @Column(length = 100)
     private String gatewaySubaccountCode;
 
+    /** Paystack's numeric id for the subaccount - its settlements are listed by id, not code. */
+    @Column(length = 50)
+    private String gatewaySubaccountId;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean isDefault = false;

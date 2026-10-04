@@ -51,14 +51,59 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         }
         long amountInKobo = amount.movePointRight(2).longValueExact();
 
-        Map<String, Object> body = new HashMap<>(Map.of(
-                "reference", reference,
-                "amount", amountInKobo,
-                "email", riderEmail
-        ));
+        Map<String, Object> body = chargeBody(reference, amountInKobo, riderEmail, metadata, subaccountCode, flatChargeKobo);
         if (callbackUrl != null && !callbackUrl.isBlank()) {
             body.put("callback_url", callbackUrl);
         }
+
+        InitResponse response = restClient().post()
+                .uri("/transaction/initialize")
+                .body(body)
+                .retrieve()
+                .body(InitResponse.class);
+
+        return new GatewayInitResult(response.data().authorizationUrl(), reference);
+    }
+
+    @Override
+    public ChargeResult chargeAuthorization(String reference, BigDecimal amount, String email, String authorizationCode,
+                                            Map<String, String> metadata, String subaccountCode, Long flatChargeKobo) {
+        Map<String, Object> body = chargeBody(reference, amount.movePointRight(2).longValueExact(), email,
+                metadata, subaccountCode, flatChargeKobo);
+        body.put("authorization_code", authorizationCode);
+        ChargeResponse response = restClient().post()
+                .uri("/transaction/charge_authorization")
+                .body(body)
+                .retrieve()
+                .body(ChargeResponse.class);
+        if (response == null || response.data() == null) {
+            return new ChargeResult(false, null, response == null ? null : response.message());
+        }
+        return new ChargeResult("success".equalsIgnoreCase(response.data().status()),
+                response.data().authorizationUrl(), response.data().gatewayResponse());
+    }
+
+    @Override
+    public void deactivateAuthorization(String authorizationCode) {
+        try {
+            restClient().post()
+                    .uri("/customer/deactivate_authorization")
+                    .body(Map.of("authorization_code", authorizationCode))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (Exception e) {
+            log.warn("Paystack did not deactivate a removed card: {}", e.getMessage());
+        }
+    }
+
+    /** The split is set per charge, so a saved-card charge carries it exactly like a checkout does. */
+    private Map<String, Object> chargeBody(String reference, long amountInKobo, String email, Map<String, String> metadata,
+                                           String subaccountCode, Long flatChargeKobo) {
+        Map<String, Object> body = new HashMap<>(Map.of(
+                "reference", reference,
+                "amount", amountInKobo,
+                "email", email
+        ));
         if (metadata != null && !metadata.isEmpty()) {
             body.put("metadata", metadata);
         }
@@ -73,14 +118,7 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
                 body.put("transaction_charge", flatChargeKobo);
             }
         }
-
-        InitResponse response = restClient().post()
-                .uri("/transaction/initialize")
-                .body(body)
-                .retrieve()
-                .body(InitResponse.class);
-
-        return new GatewayInitResult(response.data().authorizationUrl(), reference);
+        return body;
     }
 
     @Override
@@ -125,7 +163,7 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
      * settlement schedule must stay a fixed calendar; releasing on trip completion is what Paystack
      * refused to approve.
      */
-    public String createSubaccount(String businessName, String accountNumber, String bankCode, BigDecimal percentageCharge) {
+    public SubaccountResult createSubaccount(String businessName, String accountNumber, String bankCode, BigDecimal percentageCharge) {
         Map<String, Object> body = Map.of(
                 "business_name", businessName,
                 "settlement_bank", bankCode,
@@ -141,7 +179,30 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         if (response == null || !response.status() || response.data() == null) {
             throw new BadRequestException("Could not register that bank account for earnings. Please try again.");
         }
-        return response.data().subaccountCode();
+        return new SubaccountResult(response.data().subaccountCode(), response.data().id());
+    }
+
+    /** For subaccounts created before we kept the id. */
+    public String fetchSubaccountId(String subaccountCode) {
+        SubaccountResponse response = restClient().get()
+                .uri("/subaccount/{code}", subaccountCode)
+                .retrieve()
+                .body(SubaccountResponse.class);
+        return response == null || response.data() == null ? null : response.data().id();
+    }
+
+    /** One page of a subaccount's settlements to its bank, newest first. */
+    public List<Settlement> listSettlements(String subaccountId, java.time.Instant from, int page, int perPage) {
+        SettlementListResponse response = restClient().get()
+                .uri(b -> b.path("/settlement")
+                        .queryParam("subaccount", subaccountId)
+                        .queryParam("from", from.toString())
+                        .queryParam("page", page)
+                        .queryParam("perPage", perPage)
+                        .build())
+                .retrieve()
+                .body(SettlementListResponse.class);
+        return response == null || response.data() == null ? List.of() : response.data();
     }
 
     /**
@@ -171,7 +232,7 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         }
     }
 
-    /** Creates the Paystack-side transfer recipient once an account has been resolved - the returned recipient_code is what a later /transfer call targets. */
+    /** Paystack's transfer recipient for the account - kept so ops can still send a driver money by hand. */
     public String createTransferRecipient(String accountName, String accountNumber, String bankCode) {
         Map<String, Object> body = Map.of(
                 "type", "nuban",
@@ -191,36 +252,33 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         return response.data().recipientCode();
     }
 
-    /**
-     * Fires the actual withdrawal. Treated as provisional - the synchronous status here ("pending"
-     * or "success" depending on the bank/route) is not the source of truth; the transfer.success/
-     * transfer.failed webhook is, same as how charge collection already treats its webhook as
-     * authoritative over the synchronous initiate response.
-     */
-    public TransferResult initiateTransfer(String reference, BigDecimal amount, String recipientCode, String reason) {
-        long amountInKobo = amount.movePointRight(2).longValueExact();
-        Map<String, Object> body = Map.of(
-                "source", "balance",
-                "amount", amountInKobo,
-                "recipient", recipientCode,
-                "reason", reason,
-                "reference", reference
-        );
-        TransferResponse response = restClient().post()
-                .uri("/transfer")
-                .body(body)
-                .retrieve()
-                .body(TransferResponse.class);
-        if (response == null || !response.status()) {
-            throw new BadRequestException("Withdrawal could not be initiated. Please try again.");
-        }
-        return new TransferResult(response.data().transferCode(), response.data().status());
-    }
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record SubaccountResponse(boolean status, Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Data(@JsonProperty("subaccount_code") String subaccountCode) {
+        private record Data(@JsonProperty("subaccount_code") String subaccountCode, String id) {
+        }
+    }
+
+    public record SubaccountResult(String code, String id) {
+    }
+
+    /** Amounts are in kobo. status is success, processing, pending or failed. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Settlement(String id, String status,
+                             @JsonProperty("total_amount") Long totalAmount,
+                             @JsonProperty("effective_amount") Long effectiveAmount,
+                             @JsonProperty("settlement_date") String settlementDate) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record SettlementListResponse(boolean status, List<Settlement> data) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record ChargeResponse(boolean status, String message, Data data) {
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        private record Data(String status, @JsonProperty("gateway_response") String gatewayResponse,
+                            @JsonProperty("authorization_url") String authorizationUrl) {
         }
     }
 
@@ -237,9 +295,6 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
                                    @JsonProperty("account_name") String accountName) {
     }
 
-    public record TransferResult(String transferCode, String status) {
-    }
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record BankListResponse(boolean status, List<BankOption> data) {
     }
@@ -252,13 +307,6 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     private record RecipientResponse(boolean status, Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
         private record Data(@JsonProperty("recipient_code") String recipientCode) {
-        }
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private record TransferResponse(boolean status, Data data) {
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        private record Data(@JsonProperty("transfer_code") String transferCode, String status) {
         }
     }
 

@@ -63,7 +63,7 @@ Sixteen modules, covering every entity in the system.
 | 7 | Payments | Partial |
 | 8 | Refunds | Event only |
 | 9 | Driver earnings & payouts | Partial |
-| 10 | Wallets | Partial |
+| 10 | ~~Wallets~~ (removed - card-only payments) | n/a |
 | 11 | Safety / SOS | **Missing** |
 | 12 | Support / issues | **Missing** |
 | 13 | Ratings & quality | Partial |
@@ -214,7 +214,7 @@ immediately.
 
 **US-4.1** Search and list riders by name or phone.
 
-**US-4.2** View one rider: profile, booking history, wallet balance and ledger, payments, refunds,
+**US-4.2** View one rider: profile, booking history, saved cards (type and last 4 only), payments, refunds,
 ratings given and received, emergency contacts, issues raised.
 
 **US-4.3** Suspend or reactivate a rider, with a reason.
@@ -266,8 +266,8 @@ re-query Paystack.
 
 **US-7.3** Reconcile a day's takings against Paystack settlements.
 
-*Note for design:* payment method is either `PAYSTACK` or `WALLET`, and purpose is one of
-`BOOKING_PAYMENT`, `WALLET_TOPUP`, `REFUND` or `DEV_ADJUSTMENT`. Filters should reflect both.
+*Note for design:* every payment is a card payment for a booking. Payments made with a saved card
+look the same as checkout payments.
 
 ---
 
@@ -277,8 +277,8 @@ re-query Paystack.
 
 **US-8.2** Issue a manual refund against a booking, full or partial, with a reason.
 
-**US-8.3** Distinguish wallet refunds, which are instant, from card refunds, which settle over hours
-to days on Paystack's side — a card refund marked issued is not yet money in the rider's account.
+**US-8.3** Show that refunds go back to the card and settle over hours to days on Paystack's side -
+a refund marked issued is not yet money in the rider's account.
 
 > **Gap:** refunds are only triggered automatically by cancellation. There is no manual refund
 > endpoint.
@@ -287,14 +287,17 @@ to days on Paystack's side — a card refund marked issued is not yet money in t
 
 ## 12. Module 9 — Driver earnings & payouts
 
-**US-9.1** View a driver's earnings account: lifetime gross, lifetime commission, available balance.
+**US-9.1** View a driver's earnings: lifetime gross, lifetime commission, earned since last payout,
+and any settlement debt.
 
-**US-9.2** List payouts with status `PENDING`, `PROCESSING`, `PAID` or `FAILED`.
+**US-9.2** List a driver's weekly Paystack payouts (settlements) with status `PENDING`, `PROCESSING`,
+`SUCCESS` or `FAILED`.
 
-**US-9.3** Investigate and retry a failed payout — `failureReason` is already stored.
+**US-9.3** Record a settlement debt when Paystack takes a refund from CoRyd's balance because the
+driver's share had already settled. The driver's next fares pay it off automatically.
 
-**US-9.4** See total unsettled driver balance — money CoRyd owes drivers right now. This is a
-liability figure and belongs in the finance view.
+**US-9.4** See total driver debt - money drivers owe back to CoRyd right now. CoRyd holds no driver
+money, so there is no "owed to drivers" balance.
 
 **US-9.5** See and verify a driver's bank details before a payout leaves.
 
@@ -303,17 +306,12 @@ liability figure and belongs in the finance view.
 
 ---
 
-## 13. Module 10 — Wallets
+## 13. Module 10 — Wallets (removed)
 
-**US-10.1** View any user's wallet balance and full transaction ledger.
-
-**US-10.2** Investigate a top-up that was charged but not credited.
-
-**US-10.3** Manually credit or debit a wallet, with a reason, for dispute resolution.
-
-*Constraint:* the wallet is deliberately closed-loop — no withdrawals to bank, no user-to-user
-transfers. **The console must not introduce either**, as that would change CoRyd's regulatory
-position with Paystack and the CBN.
+CoRyd no longer has a wallet. Riders pay every trip by card, every fare is split to the driver's
+Paystack subaccount at charge time, and refunds go back to the card. **The console must not
+introduce any stored balance, top-up or withdrawal**, as holding customer money would change CoRyd's
+regulatory position with Paystack and the CBN.
 
 ---
 
@@ -451,12 +449,11 @@ endpoint. Engineering should treat this as the build list.
 | Stuck `IN_PROGRESS` route queue + ops resolve | Logs only | **P0** |
 | Suspend / reactivate user | `User.active` unused | P1 |
 | Manual refund | Automatic only | P1 |
-| Payout retry | No endpoint | P1 |
+| Settlement debt entry | API exists, no screen | P1 |
 | Driver & rider list/search/detail | Partial | P1 |
 | Booking list/search + admin cancel | Partial | P1 |
 | Runtime configuration + audit | Env vars only | P2 |
 | Rating moderation | No endpoint | P2 |
-| Manual wallet adjustment | Dev-only today | P2 |
 | Ops audit log | Not captured | P2 |
 | Integration & job health | Not exposed | P2 |
 | `seatCapacity` in the verification payload | Missing from review data | P1 — cheap |
@@ -542,8 +539,8 @@ Configuration · Ratings · Notifications · Reports · Audit · System health
 
 **Document types:** `INSURANCE`, `ROADWORTHINESS_CERT`
 
-**Payment method:** `PAYSTACK`, `WALLET` · **Purpose:** `BOOKING_PAYMENT`, `WALLET_TOPUP`,
-`REFUND`, `DEV_ADJUSTMENT` · **Payout status:** `PENDING`, `PROCESSING`, `PAID`, `FAILED`
+**Payment method:** `PAYSTACK` (card) · **Purpose:** `BOOKING_PAYMENT` · **Payout (settlement) status:**
+`PENDING`, `PROCESSING`, `SUCCESS`, `FAILED`
 
 **Notification channels:** SMS, WhatsApp, Push, Email
 
@@ -564,8 +561,8 @@ live-search session cleanup, document expiry, ops report jobs
 | OTP validity | 5 minutes | `AuthService.OTP_TTL_MINUTES` |
 | Document grace period | 30 days from first route | `driver.verification.grace-period-days` |
 | Prerequisite level | Approved identity + vehicle | `driver.verification.prerequisite-level` |
-| Driver payout | Own earnings, own registered bank account only | `PayoutService` |
-| Wallet | Closed loop — no withdrawal, no P2P | `WalletService` |
+| Driver payout | Split to the driver's own Paystack subaccount at charge time, settled weekly | `DriverSplitResolver` |
+| Stored balances | None - card-only, refunds to the card | `PaymentService` |
 | Reporting timezone | `Africa/Lagos` | `report.timezone` |
 
 > The first three appear in the published Terms of Service at coryd.ng/terms. Changing them in the

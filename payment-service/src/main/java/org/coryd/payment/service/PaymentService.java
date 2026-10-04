@@ -13,14 +13,15 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.PaymentSucceededEvent;
 import org.coryd.payment.client.TripServiceClient;
+import org.coryd.payment.dto.CardAuthorization;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
 import org.coryd.payment.entity.PaymentTransaction;
+import org.coryd.payment.entity.SavedCard;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.repository.FareHoldRepository;
 import org.coryd.payment.repository.PaymentTransactionRepository;
-import org.coryd.payment.repository.WalletTransactionRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +32,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/** Every fare is a card charge split at charge time - the driver's share goes to their subaccount and
+ * never sits with us. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -38,19 +41,21 @@ public class PaymentService {
 
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final FareHoldRepository fareHoldRepository;
-    private final WalletTransactionRepository walletTransactionRepository;
     private final PaymentGatewayClient gatewayClient;
-    private final WalletService walletService;
     private final TripServiceClient tripServiceClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final CheckoutEmailResolver checkoutEmailResolver;
     private final DriverSplitResolver driverSplitResolver;
+    private final SavedCardService savedCardService;
 
     /** Amount, rider and driver all come from trip-service's booking - the request only says which
-     * booking and how to pay, so a client can't pay less, pay from someone else's wallet, or route
-     * the fare to another driver. */
+     * booking and which card, so a client can't pay less, use someone else's card, or route the fare
+     * to another driver. */
     @Transactional
     public InitiatePaymentResponse initiate(InitiatePaymentRequest request, String callerId) {
+        if (request.paymentMethod() == PaymentMethod.WALLET) {
+            throw new BadRequestException("Paying from a wallet is no longer available - please pay by card");
+        }
         TripServiceClient.BookingPaymentView booking = tripServiceClient.fetchPaymentView(request.bookingId());
         if (!callerId.equals(booking.riderId())) {
             throw new UnauthorizedException("Only this booking's rider can pay for it");
@@ -59,8 +64,10 @@ public class PaymentService {
         if (booking.status() != BookingStatus.HELD) {
             throw new BadRequestException("This booking is no longer awaiting payment - its seat hold has ended. Please book again.");
         }
-        PaymentMethod method = request.paymentMethod() == null ? PaymentMethod.PAYSTACK : request.paymentMethod();
-        return method == PaymentMethod.WALLET ? payFromWallet(booking) : payViaPaystack(booking, request);
+        if (request.savedCardId() != null && !request.savedCardId().isBlank()) {
+            return payWithSavedCard(booking, request);
+        }
+        return payViaCheckout(booking, request);
     }
 
     /** Receipt/Pay Now screen's payment method/status. */
@@ -73,9 +80,9 @@ public class PaymentService {
     /** Upserts on the booking_id unique index instead of a plain insert - the DB, not this method,
      * guarantees at most one row per booking. A retry while a checkout is still open gets that same
      * checkout back, so every charge lands on one reference. */
-    private InitiatePaymentResponse payViaPaystack(TripServiceClient.BookingPaymentView booking, InitiatePaymentRequest request) {
+    private InitiatePaymentResponse payViaCheckout(TripServiceClient.BookingPaymentView booking, InitiatePaymentRequest request) {
         PaymentTransaction open = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking.bookingId())
-                .filter(t -> t.getStatus() == PayoutStatus.PENDING && t.getPaymentMethod() == PaymentMethod.PAYSTACK)
+                .filter(t -> t.getStatus() == PayoutStatus.PENDING)
                 .filter(t -> t.getAuthorizationUrl() != null && t.getAmount().compareTo(booking.fareTotal()) == 0)
                 .orElse(null);
         if (open != null) {
@@ -86,56 +93,64 @@ public class PaymentService {
         DriverSplitResolver.Split split = driverSplitResolver.resolve(booking.driverId(), booking.fareTotal());
         PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiateSplit(reference, booking.fareTotal(),
                 checkoutEmailResolver.resolve(booking.riderId(), request.riderEmail()), request.callbackUrl(),
-                Map.of("bookingId", booking.bookingId(), "purpose", PaymentPurpose.BOOKING_PAYMENT.name()),
-                split.subaccountCode(), split.flatChargeKobo());
+                metadata(booking), split.subaccountCode(), split.flatChargeKobo());
 
+        record(booking, result.gatewayReference(), result.authorizationUrl(), split);
+        return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
+    }
+
+    /**
+     * One tap, no redirect. A card the bank won't charge without the rider (OTP, 3-D Secure, declined)
+     * falls back to a normal checkout, so the rider is never stuck. Paystack's own charge.success for
+     * this reference arrives later and is ignored as a repeat.
+     */
+    private InitiatePaymentResponse payWithSavedCard(TripServiceClient.BookingPaymentView booking, InitiatePaymentRequest request) {
+        SavedCard card = savedCardService.owned(booking.riderId(), request.savedCardId());
+        String reference = UUID.randomUUID().toString();
+        DriverSplitResolver.Split split = driverSplitResolver.resolve(booking.driverId(), booking.fareTotal());
+        record(booking, reference, null, split);
+
+        PaymentGatewayClient.ChargeResult result;
+        try {
+            result = gatewayClient.chargeAuthorization(reference, booking.fareTotal(), card.getEmail(),
+                    card.getAuthorizationCode(), metadata(booking), split.subaccountCode(), split.flatChargeKobo());
+        } catch (Exception e) {
+            // If Paystack did charge, its webhook still lands on this reference and is adopted.
+            log.warn("Saved-card charge for booking {} did not complete, falling back to checkout: {}", booking.bookingId(), e.getMessage());
+            return payViaCheckout(booking, request);
+        }
+
+        if (result.success()) {
+            handleWebhookSuccess(reference, booking.bookingId(), booking.fareTotal().movePointRight(2).longValueExact(), null);
+            return new InitiatePaymentResponse(null, reference, PayoutStatus.PAID);
+        }
+        if (result.authorizationUrl() != null) {
+            paymentTransactionRepository.upsertByBookingId(UUID.randomUUID().toString(), booking.bookingId(), booking.riderId(),
+                    booking.fareTotal(), reference, result.authorizationUrl(), PayoutStatus.PENDING.name(),
+                    PaymentMethod.PAYSTACK.name(), PaymentPurpose.BOOKING_PAYMENT.name());
+            return new InitiatePaymentResponse(result.authorizationUrl(), reference, PayoutStatus.PENDING);
+        }
+        log.info("Saved card declined for booking {} ({}), falling back to checkout", booking.bookingId(), result.gatewayResponse());
+        return payViaCheckout(booking, request);
+    }
+
+    private void record(TripServiceClient.BookingPaymentView booking, String reference, String authorizationUrl,
+                        DriverSplitResolver.Split split) {
         int affected = paymentTransactionRepository.upsertByBookingId(
                 UUID.randomUUID().toString(), booking.bookingId(), booking.riderId(), booking.fareTotal(),
-                result.gatewayReference(), result.authorizationUrl(), PayoutStatus.PENDING.name(),
+                reference, authorizationUrl, PayoutStatus.PENDING.name(),
                 PaymentMethod.PAYSTACK.name(), PaymentPurpose.BOOKING_PAYMENT.name());
         if (affected == 0) {
             throw new BadRequestException("This booking has already been paid for");
         }
-
         PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking.bookingId())
                 .orElseThrow(() -> new IllegalStateException("Upsert succeeded but no transaction found for booking " + booking.bookingId()));
-
         fareHoldRepository.insertIfAbsent(UUID.randomUUID().toString(), transaction.getId(),
-                booking.bookingId(), booking.driverId(), booking.fareTotal());
-
-        return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
+                booking.bookingId(), booking.driverId(), booking.fareTotal(), split.debtRecovery());
     }
 
-    /** No gateway involved - the fare is debited from the wallet synchronously, so the booking
-     * confirms immediately instead of waiting on a webhook. A concurrent double-tap loses on the
-     * upsert (affected==0) and its debit rolls back with it. */
-    private InitiatePaymentResponse payFromWallet(TripServiceClient.BookingPaymentView booking) {
-        String reference = UUID.randomUUID().toString();
-        walletService.debitForBooking(booking.riderId(), booking.bookingId(), booking.fareTotal(), reference);
-
-        int affected = paymentTransactionRepository.upsertByBookingId(
-                UUID.randomUUID().toString(), booking.bookingId(), booking.riderId(), booking.fareTotal(),
-                reference, null, PayoutStatus.PAID.name(), PaymentMethod.WALLET.name(), PaymentPurpose.BOOKING_PAYMENT.name());
-        if (affected == 0) {
-            throw new BadRequestException("This booking has already been paid for");
-        }
-
-        PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking.bookingId())
-                .orElseThrow(() -> new IllegalStateException("Upsert succeeded but no transaction found for booking " + booking.bookingId()));
-
-        // Same FareHold as the Paystack path - EarningsService's commission/refund logic
-        // doesn't need to know which payment method funded it.
-        fareHoldRepository.insertIfAbsent(UUID.randomUUID().toString(), transaction.getId(),
-                booking.bookingId(), booking.driverId(), booking.fareTotal());
-
-        kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
-                .bookingId(transaction.getBookingId())
-                .paymentTransactionId(transaction.getId())
-                .amount(transaction.getAmount())
-                .paidAt(LocalDateTime.now())
-                .build());
-
-        return new InitiatePaymentResponse(null, reference, PayoutStatus.PAID);
+    private static Map<String, String> metadata(TripServiceClient.BookingPaymentView booking) {
+        return Map.of("bookingId", booking.bookingId(), "purpose", PaymentPurpose.BOOKING_PAYMENT.name());
     }
 
     private void rejectIfAlreadyPaid(String bookingId) {
@@ -146,26 +161,22 @@ public class PaymentService {
                 });
     }
 
-    /** Paystack resends webhooks - only the first delivery moves the transaction to PAID, so a
-     * repeat can't credit a top-up twice or re-confirm a booking. */
+    /** Paystack resends webhooks - only the first delivery moves the transaction to PAID, so a repeat
+     * can't re-confirm a booking. The card is remembered on every delivery; doing it twice is harmless. */
     @Transactional
-    public void handleWebhookSuccess(String gatewayReference, String metadataBookingId, Long amountKobo) {
+    public void handleWebhookSuccess(String gatewayReference, String metadataBookingId, Long amountKobo, CardAuthorization card) {
         PaymentTransaction transaction = paymentTransactionRepository.findByGatewayReference(gatewayReference)
                 .orElseGet(() -> adoptOrphanCharge(gatewayReference, metadataBookingId, amountKobo));
         if (transaction == null) {
             return;
         }
+        savedCardService.remember(transaction.getRiderId(), card);
         if (paymentTransactionRepository.transitionStatus(transaction.getId(),
                 List.of(PayoutStatus.PENDING, PayoutStatus.FAILED), PayoutStatus.PAID) == 0) {
             log.info("Ignoring repeat charge.success for reference {}", gatewayReference);
             return;
         }
         transaction.setStatus(PayoutStatus.PAID);
-
-        if (transaction.getPurpose() == PaymentPurpose.WALLET_TOPUP) {
-            walletService.creditFromTopUp(transaction);
-            return;
-        }
 
         kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
                 .bookingId(transaction.getBookingId())
@@ -175,9 +186,9 @@ public class PaymentService {
                 .build());
     }
 
-    /** A charge on a reference we no longer hold - the booking's row moved on to a newer checkout or
-     * a wallet payment before the rider finished an older checkout. The money is real either way:
-     * if the booking is still unpaid this charge pays it, otherwise it goes back to the rider's wallet. */
+    /** A charge on a reference we no longer hold - the booking moved on to a newer checkout before the
+     * rider finished an older one. If the booking is still unpaid this charge pays it; otherwise it was
+     * paid twice, and the extra charge goes straight back to the card. */
     private PaymentTransaction adoptOrphanCharge(String reference, String bookingId, Long amountKobo) {
         PaymentTransaction current = bookingId == null ? null
                 : paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
@@ -192,14 +203,15 @@ public class PaymentService {
             return current;
         }
 
-        String creditReference = "Duplicate payment " + reference;
-        if (walletTransactionRepository.existsByReference(creditReference)) {
-            return null;
-        }
         BigDecimal amount = amountKobo == null ? current.getAmount() : BigDecimal.valueOf(amountKobo).movePointLeft(2);
-        walletService.creditRefund(current.getRiderId(), bookingId, amount, creditReference);
-        log.warn("Booking {} was already paid - duplicate Paystack charge {} of {} credited to rider {}'s wallet",
-                bookingId, reference, amount, current.getRiderId());
+        // A resent webhook asks again; Paystack refuses to refund the same charge twice.
+        if (gatewayClient.refund(reference, null, "Duplicate payment for a booking already paid")) {
+            log.warn("Booking {} was already paid - duplicate charge {} of {} refunded to rider {}'s card",
+                    bookingId, reference, amount, current.getRiderId());
+        } else {
+            log.error("RECONCILE: duplicate charge {} of {} on booking {} could not be refunded (it may already have been)",
+                    reference, amount, bookingId);
+        }
         return null;
     }
 
@@ -213,11 +225,6 @@ public class PaymentService {
             return;
         }
         if (paymentTransactionRepository.transitionStatus(transaction.getId(), List.of(PayoutStatus.PENDING), PayoutStatus.FAILED) == 0) {
-            return;
-        }
-
-        if (transaction.getPurpose() == PaymentPurpose.WALLET_TOPUP) {
-            // Nothing was ever held for a top-up - the rider just sees it failed.
             return;
         }
 

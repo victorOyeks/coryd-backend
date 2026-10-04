@@ -76,7 +76,7 @@ public class RouteController {
         return ApiResponse.ok(routeService.findByDriver(driverId, pageable));
     }
 
-    /** Batch route resolution - e.g. the driver wallet's transaction feed turning routePostIds into "Ikorodu -> Victoria Island" text. */
+    /** Batch route resolution - e.g. the driver earnings screen's trip list turning routePostIds into "Ikorodu -> Victoria Island" text. */
     @GetMapping("/batch")
     public ApiResponse<List<RouteSummary>> batch(@RequestParam List<String> ids) {
         return ApiResponse.ok(routeService.getSummaries(ids));

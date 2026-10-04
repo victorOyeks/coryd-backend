@@ -26,12 +26,21 @@ public interface FareHoldRepository extends JpaRepository<FareHold, String> {
     @Query("update FareHold h set h.refunded = true where h.id = :id and h.released = false and h.refunded = false")
     int markRefunded(@Param("id") String id);
 
-    /** Same idea as WalletRepository.insertIfAbsent - a retry never changes amount/driverId, so DO NOTHING is enough. */
+    /** A retry never changes amount, driver or split, so DO NOTHING is enough. */
     @Modifying
-    @Query(value = "insert into payment.fare_holds (id, payment_transaction_id, booking_id, driver_id, amount, released, refunded, created_at, updated_at) "
-            + "values (:id, :paymentTransactionId, :bookingId, :driverId, :amount, false, false, now(), now()) "
+    @Query(value = "insert into payment.fare_holds (id, payment_transaction_id, booking_id, driver_id, amount, released, refunded, debt_recovery, created_at, updated_at) "
+            + "values (:id, :paymentTransactionId, :bookingId, :driverId, :amount, false, false, :debtRecovery, now(), now()) "
             + "on conflict (booking_id) do nothing", nativeQuery = true)
     void insertIfAbsent(@Param("id") String id, @Param("paymentTransactionId") String paymentTransactionId,
                          @Param("bookingId") String bookingId, @Param("driverId") String driverId,
-                         @Param("amount") BigDecimal amount);
+                         @Param("amount") BigDecimal amount, @Param("debtRecovery") BigDecimal debtRecovery);
+
+    /** Debt already being recovered by paid fares that haven't settled into the ledger yet - so two
+     * bookings in a row don't both claim the same debt. */
+    @Query("""
+            select coalesce(sum(h.debtRecovery), 0) from FareHold h, PaymentTransaction t
+            where t.id = h.paymentTransactionId and h.driverId = :driverId
+              and h.released = false and h.refunded = false and t.status = org.coryd.common.enums.PayoutStatus.PAID
+            """)
+    BigDecimal outstandingDebtRecovery(@Param("driverId") String driverId);
 }

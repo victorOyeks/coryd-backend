@@ -21,7 +21,7 @@ catching up means 400s or blank fields.
 | `PUT /profile/drivers/me` | `legalName` | `firstName` + `lastName`, **both required** |
 | `PUT /profile/riders/me` | `fullName` | `firstName` (required) + `lastName` |
 | Driver/rider summaries, search results, chat, booking manifest | `legalName` / `fullName` | `firstName` + `lastName` |
-| Wallet feed `rider` block | `fullName` | `firstName` + `lastName` |
+| Earnings trip list `rider` block | `fullName` | `firstName` + `lastName` |
 | Login / refresh response | `fullName` | `fullName` **kept** + `firstName` + `lastName` |
 
 **The login response deliberately still has `fullName`**, carrying the first name only, exactly as
@@ -182,127 +182,16 @@ would leave a refund with nothing to recover from.
 
 ---
 
-## The payment flow, end to end
+## Payments and driver earnings
 
-The API surface the app calls is **unchanged** — same endpoint, same request, same response. What
-changed is where the money goes behind it, and that surfaces as two new error cases plus a
-different refund destination.
+**Superseded by [card-payments-fe-guide.md](card-payments-fe-guide.md).** The wallet has been removed:
+riders pay by card (with saved cards for one-tap payment), refunds go back to the card, and drivers
+are paid by Paystack straight to their bank every week, with no withdrawals. Follow that guide for the
+payment, refund and driver earnings screens.
 
-### Paying for a booking
-
-```
-POST /payment/payments/initiate
-{
-  "bookingId": "...",
-  "paymentMethod": "PAYSTACK",     // or "WALLET"
-  "riderEmail": "rider@example.com",
-  "callbackUrl": "coryd://payment-return"
-}
-```
-
-Response is as before:
-
-| | Means |
-|---|---|
-| `status: "PENDING"` + `authorizationUrl` | Open the Paystack checkout. Confirmation arrives by webhook, not from this call |
-| `status: "PAID"` + `authorizationUrl: null` | Wallet paid synchronously — show success immediately |
-
-**Amount, rider and driver are read from the booking, never from your request.** `amount`, `riderId`
-and `driverId` in the body are ignored. Send them or don't; they cannot change what is charged.
-
-### What now happens behind it
-
-On a card payment, Paystack divides the fare the moment it is charged — our commission to us, the
-driver's share straight to the driver's own Paystack account. It never passes through CoRyd. The
-driver is then paid by Paystack on a fixed weekly schedule.
-
-Nothing about that is visible to the rider. The checkout looks identical.
-
-### Two new failures to handle
-
-**1. The driver hasn't set up payouts** — 400 on `initiate`:
-
-> This driver has not finished setting up payouts, so this trip cannot be booked yet
-
-The driver has no bank account registered, so there is nowhere to send their share. **Treat it as a
-route-level problem, not a payment problem.** The rider did nothing wrong and retrying will not
-help. Take them back to search and, ideally, stop showing that route.
-
-**2. Nothing else changed in the happy path.** Webhook confirmation, retries returning the same
-checkout, double-tap protection — all as they were.
-
-### Refunds now depend on how the rider paid
-
-| Paid with | Refund goes to |
-|---|---|
-| Card (`PAYSTACK`) | **Back to the card**, via Paystack |
-| Wallet (`WALLET`) | **Back to the wallet**, as before |
-
-This is new. Previously every refund became wallet credit regardless of how the rider paid. A card
-refund now reverses the original charge, which is the only thing that can reclaim the driver's
-share.
-
-**Don't tell the rider to check their wallet after a card refund.** Say "refunded to your card,
-allow a few working days" — bank timelines, not ours. The wallet balance will not move.
-
-`REFUND_ISSUED` still fires the same push either way.
-
----
-
-## Driver earnings: the Withdraw button goes away
-
-This is a screen redesign, not a field rename.
-
-Most of a driver's earnings are now paid **directly into their bank account** by our payment
-provider, on a fixed weekly schedule. They don't request it and we don't hold it. Only fares a
-rider paid from their CoRyd wallet still arrive as a withdrawable balance.
-
-`GET /payment/earnings/drivers/{driverId}/summary`:
-
-```json
-{
-  "lifetimeGross": 125000.00,
-  "lifetimeNet": 118750.00,
-  "todayNet": 2375.00,
-  "availableBalance": 1140.00,
-  "settlementDebt": 0.00
-}
-```
-
-| Field | What it means now |
-|---|---|
-| `lifetimeGross`, `lifetimeNet`, `todayNet` | **Unchanged.** Still total earnings, however they were paid |
-| `availableBalance` | **Changed meaning.** No longer "everything you've earned" — only the part paid from rider wallets, which is all that is still withdrawable. Often `0` |
-| `settlementDebt` | **New.** What the driver owes back after a refund we couldn't recover. Usually `0` |
-
-**Stop labelling `availableBalance` as "Your earnings".** A driver who earned ₦120,000 this week
-may see `availableBalance: 0` and think they've been robbed, when in fact it has all been paid to
-their bank. Label it "Available to withdraw" and show `lifetimeNet` / `todayNet` as the earnings
-figures.
-
-Suggested shape: **total earned** (from `todayNet` / `lifetimeNet`), **paid to your bank
-automatically**, and **available to withdraw** (`availableBalance`) only when it is greater than
-zero.
-
-`POST /payment/payouts/drivers/{driverId}` still works, and still withdraws `availableBalance`. It
-now fails with *"Insufficient wallet balance"* far more often, simply because that balance is
-usually zero.
-
-The transaction feed (`GET /payment/earnings/drivers/{driverId}/transactions`) is unchanged and
-remains the full statement.
-
-If `settlementDebt` is greater than zero, say so plainly — that driver's next trips pay it off
-before they earn again, and they should not discover it from a surprise zero payout.
-
-### Bank details become mandatory, earlier
-
-A driver's routes **cannot be booked** until they've added a bank account, because that's what
-creates their payout destination. A rider trying to pay for such a route gets:
-
-> This driver has not finished setting up payouts, so this trip cannot be booked yet
-
-Move bank-account setup into driver onboarding, before they can post. Today it sits late, as a
-prerequisite for withdrawing.
+A driver's routes still can't be booked until they've added a bank account, and posting itself now
+needs one too (`PAYOUT_ACCOUNT_REQUIRED`, see
+[payout-account-gate-fe-guide.md](payout-account-gate-fe-guide.md)).
 
 ---
 
@@ -347,13 +236,13 @@ See [live-route-search-fe-guide.md](live-route-search-fe-guide.md) for the full 
 - [ ] Status mapping tolerates `IN_REVIEW` and `EXPIRED`, and never renders `IN_REVIEW` as a prompt
 - [ ] Approved items render from status, not from the presence of a URL
 - [ ] Date picker capped at 3 days ahead
-- [ ] Driver earnings screen relabelled: `availableBalance` is "available to withdraw", not "your earnings"
+- [ ] Wallet, top-up, pay-from-wallet and Withdraw removed; payments and earnings built per card-payments-fe-guide.md
 - [ ] `settlementDebt` surfaced when greater than zero
 - [ ] Bank-account setup moved into driver onboarding
 - [ ] `posting-eligibility` re-fetched shortly after a licence save
 - [ ] Live search replaces the list wholesale on every frame
 - [ ] "Driver has not finished setting up payouts" handled as a route problem, not a retryable payment error
-- [ ] Card refunds described as going back to the card, not the wallet
+- [ ] Refunds described as going back to the card
 
 ---
 

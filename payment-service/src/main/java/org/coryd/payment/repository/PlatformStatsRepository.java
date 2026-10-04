@@ -17,17 +17,7 @@ public interface PlatformStatsRepository extends Repository<EarningsTransaction,
         BigDecimal getNetCredit();
     }
 
-    interface MethodSplit {
-        BigDecimal getCardAmount();
-        BigDecimal getWalletAmount();
-    }
-
     interface RefundSums {
-        long getCount();
-        BigDecimal getAmount();
-    }
-
-    interface PayoutSums {
         long getCount();
         BigDecimal getAmount();
     }
@@ -42,17 +32,6 @@ public interface PlatformStatsRepository extends Repository<EarningsTransaction,
             """, nativeQuery = true)
     EarningsSums earnings(@Param("from") Instant from, @Param("to") Instant to);
 
-    @Query(value = """
-            select
-                coalesce(sum(amount) filter (where payment_method = 'PAYSTACK'), 0) as cardAmount,
-                coalesce(sum(amount) filter (where payment_method = 'WALLET'), 0)   as walletAmount
-            from payment.payment_transactions
-            where created_at >= :from and created_at < :to
-              and purpose = 'BOOKING_PAYMENT'
-              and status = 'PAID'
-            """, nativeQuery = true)
-    MethodSplit methodSplit(@Param("from") Instant from, @Param("to") Instant to);
-
     /** Refunds are flagged on the hold rather than written as their own row, so updated_at is the refund moment. */
     @Query(value = """
             select
@@ -64,17 +43,7 @@ public interface PlatformStatsRepository extends Repository<EarningsTransaction,
             """, nativeQuery = true)
     RefundSums refunds(@Param("from") Instant from, @Param("to") Instant to);
 
-    @Query(value = """
-            select
-                count(*)                 as count,
-                coalesce(sum(amount), 0) as amount
-            from payment.payouts
-            where status = 'PAID'
-              and updated_at >= :from and updated_at < :to
-            """, nativeQuery = true)
-    PayoutSums payouts(@Param("from") Instant from, @Param("to") Instant to);
-
-    /** Point-in-time, not range-bound - what CoRyd still owes drivers right now. */
-    @Query(value = "select coalesce(sum(available_balance), 0) from payment.driver_earnings_accounts", nativeQuery = true)
-    BigDecimal unsettledDriverBalance();
+    /** Point-in-time, not range-bound - what drivers owe back after refunds taken from our balance. */
+    @Query(value = "select coalesce(sum(settlement_debt), 0) from payment.driver_earnings_accounts", nativeQuery = true)
+    BigDecimal driverDebt();
 }

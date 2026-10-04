@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 
 /**
  * Paystack requires an email on /transaction/initialize, so this never returns null - every
- * checkout path (booking payment, wallet top-up) must go through it. Prefers the rider's own
+ * checkout path must go through it. Prefers the rider's own
  * address; failing that, a stable per-rider placeholder built from their phone, which keeps
  * Paystack's customer records one-per-rider instead of collapsing everyone into one inbox.
  */

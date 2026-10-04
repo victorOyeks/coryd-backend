@@ -360,7 +360,7 @@ driver's licence alone, which is checked against FRSC (below).
 | `PUT /profile/riders/me` | `fullName` | `firstName` (required) + `lastName` |
 | Driver/rider summaries, search results, chat, booking manifest | `legalName` / `fullName` | `firstName` + `lastName` |
 | Login / refresh response | `fullName` | `fullName` **kept** (still first name only) + `firstName` + `lastName` |
-| Wallet feed `rider` block | `fullName` | `firstName` + `lastName` |
+| Earnings trip list `rider` block | `fullName` | `firstName` + `lastName` |
 
 The login response deliberately keeps its `fullName` key so nothing breaks the moment the backend
 deploys — it still carries the first name only, as before. Move to `firstName` at your own pace.

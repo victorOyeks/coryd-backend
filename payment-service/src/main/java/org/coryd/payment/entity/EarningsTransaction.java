@@ -27,10 +27,10 @@ public class EarningsTransaction extends BaseEntity {
     @Column(nullable = false)
     private String bookingId;
 
-    /** So a "Trip" row in the driver's wallet feed can link back to the Trip Receipt screen without a second lookup. */
+    /** So a "Trip" row on the driver's earnings screen can link back to the Trip Receipt screen without a second lookup. */
     private String routePostId;
 
-    /** Who paid for this trip - so the wallet feed can show the rider on a "Trip" row without a per-row cross-service lookup. Nullable only for rows written before this column existed. */
+    /** Who paid for this trip - so the earnings screen can show the rider on a "Trip" row without a per-row cross-service lookup. Nullable only for rows written before this column existed. */
     private String riderId;
 
     @Column(nullable = false, precision = 10, scale = 2)

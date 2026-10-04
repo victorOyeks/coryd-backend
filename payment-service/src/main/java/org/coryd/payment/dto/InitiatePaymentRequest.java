@@ -5,6 +5,7 @@ import org.coryd.common.enums.PaymentMethod;
 
 import java.math.BigDecimal;
 
+/** riderId, driverId and amount are ignored - they come from the booking. */
 public record InitiatePaymentRequest(
         @NotNull String bookingId,
         String riderId,
@@ -12,6 +13,7 @@ public record InitiatePaymentRequest(
         BigDecimal amount,
         String riderEmail,
         PaymentMethod paymentMethod,
-        String callbackUrl
+        String callbackUrl,
+        String savedCardId
 ) {
 }

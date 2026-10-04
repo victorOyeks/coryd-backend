@@ -5,8 +5,6 @@ public record PurgeBookingsResult(
         int fareHolds,
         int paymentTransactions,
         int earningsTransactions,
-        int walletTransactions,
-        int walletsAdjusted,
         int earningsAccountsAdjusted
 ) {
 }

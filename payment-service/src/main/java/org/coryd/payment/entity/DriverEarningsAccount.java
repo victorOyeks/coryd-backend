@@ -27,10 +27,6 @@ public class DriverEarningsAccount extends BaseEntity {
 
     @Builder.Default
     @Column(nullable = false, precision = 12, scale = 2)
-    private BigDecimal availableBalance = BigDecimal.ZERO;
-
-    @Builder.Default
-    @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal lifetimeGross = BigDecimal.ZERO;
 
     @Builder.Default

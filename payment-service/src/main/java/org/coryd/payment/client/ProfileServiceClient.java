@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Read-only lookups against profile-service for display data on the Wallet feed (the rider name
+ * Read-only lookups against profile-service for display data on the earnings screen (the rider name
  * and photo on a trip row) - same pattern and same degradation as trip-service's client of the
  * same name: a failure here blanks the name, it never fails the feed, since none of it is
  * transactional.
@@ -36,7 +36,7 @@ public class ProfileServiceClient {
                 .build();
     }
 
-    /** One call for a whole page of the wallet feed, not one per trip row - keyed by userId for easy zipping. */
+    /** One call for a whole page of the trip list, not one per trip row - keyed by userId for easy zipping. */
     public Map<String, RiderSummaryItem> fetchRiderSummaries(List<String> riderIds) {
         if (riderIds == null || riderIds.isEmpty()) {
             return Map.of();

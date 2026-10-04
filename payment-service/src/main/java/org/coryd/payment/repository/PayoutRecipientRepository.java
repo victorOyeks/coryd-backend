@@ -20,6 +20,9 @@ public interface PayoutRecipientRepository extends JpaRepository<PayoutRecipient
 
     boolean existsByDriverId(String driverId);
 
+    /** Settlement sync: every subaccount a driver has ever had, since an old account can still be paid out. */
+    List<PayoutRecipient> findByGatewaySubaccountCodeIsNotNull();
+
     /** Backfill: bank account already verified with Paystack, but no subaccount to split to yet. */
     List<PayoutRecipient> findByGatewaySubaccountCodeIsNullAndGatewayRecipientCodeIsNotNull();
 

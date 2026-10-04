@@ -95,7 +95,7 @@ Manifest row → "Mark Picked Up"
 
 The rule applies when a **rider cancels a paid booking**.
 
-| When they cancel | Refund to wallet |
+| When they cancel | Refund to their card |
 |---|---|
 | 2+ hours before departure | 100% (free) |
 | Less than 2 hours before departure | **75%**. The 25% fee goes to the driver. |
@@ -120,9 +120,10 @@ These shipped in the earlier booking fixes.
 **Paying for a booking.** `POST /payment/payments/initiate` only needs:
 
 ```json
-{ "bookingId": "...", "paymentMethod": "WALLET" | "PAYSTACK", "callbackUrl": "...", "riderEmail": "..." }
+{ "bookingId": "...", "savedCardId": "...", "callbackUrl": "...", "riderEmail": "..." }
 ```
 
+- Wallet payments have been removed; see [card-payments-fe-guide.md](card-payments-fe-guide.md). `savedCardId` is optional.
 - `riderId`, `driverId` and `amount` are now **ignored**. The server reads them from the booking. Sending them is harmless, so you can drop them whenever convenient.
 - Tapping Pay with Paystack again while a checkout is still open returns the **same** `authorizationUrl`. Don't treat that as an error; just reopen it.
 - Paying for a booking whose 4-minute hold has expired returns `400`: `This booking is no longer awaiting payment - its seat hold has ended. Please book again.`

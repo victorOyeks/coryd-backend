@@ -6,7 +6,6 @@ import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.entity.PayoutRecipient;
 import org.coryd.payment.gateway.PaystackGatewayClient;
 import org.coryd.payment.repository.PayoutRecipientRepository;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
@@ -15,8 +14,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Every driver who added a bank account before split payments existed has no subaccount, and with
- * splits on a driver without one cannot be booked at all. This gives them one on startup.
+ * Every driver who added a bank account before split payments existed has no subaccount, and a
+ * driver without one cannot be booked at all. This gives them one on startup.
  *
  * <p>Runs on every boot and only picks up rows still missing a code, so it is safe to repeat and
  * self-heals a driver Paystack rejected last time. A failure on one row never stops the rest, and
@@ -32,14 +31,8 @@ public class SubaccountBackfill implements ApplicationRunner {
     private final PaystackGatewayClient paystackGatewayClient;
     private final CommissionProperties commissionProperties;
 
-    @Value("${payment.split.enabled:false}")
-    private boolean splitEnabled;
-
     @Override
     public void run(ApplicationArguments args) {
-        if (!splitEnabled) {
-            return;
-        }
         List<PayoutRecipient> pending = payoutRecipientRepository
                 .findByGatewaySubaccountCodeIsNullAndGatewayRecipientCodeIsNotNull();
         if (pending.isEmpty()) {
@@ -49,9 +42,11 @@ public class SubaccountBackfill implements ApplicationRunner {
         int created = 0;
         for (PayoutRecipient recipient : pending) {
             try {
-                recipient.setGatewaySubaccountCode(paystackGatewayClient.createSubaccount(
+                PaystackGatewayClient.SubaccountResult subaccount = paystackGatewayClient.createSubaccount(
                         recipient.getAccountName(), recipient.getAccountNumber(), recipient.getBankCode(),
-                        commissionProperties.driverSharePercentage()));
+                        commissionProperties.driverSharePercentage());
+                recipient.setGatewaySubaccountCode(subaccount.code());
+                recipient.setGatewaySubaccountId(subaccount.id());
                 payoutRecipientRepository.save(recipient);
                 created++;
             } catch (Exception e) {

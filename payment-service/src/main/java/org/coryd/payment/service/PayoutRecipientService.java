@@ -60,9 +60,9 @@ public class PayoutRecipientService {
         }
         PaystackGatewayClient.ResolvedAccount resolved = paystackGatewayClient.resolveAccountNumber(request.accountNumber(), request.bankCode());
         String recipientCode = paystackGatewayClient.createTransferRecipient(resolved.accountName(), request.accountNumber(), request.bankCode());
-        // The subaccount is what earnings are split to; the transfer recipient stays for refunds
-        // and any manual payout ops still needs to make.
-        String subaccountCode = paystackGatewayClient.createSubaccount(
+        // The subaccount is what earnings are split to; the transfer recipient stays for any
+        // manual payment ops still needs to make.
+        PaystackGatewayClient.SubaccountResult subaccount = paystackGatewayClient.createSubaccount(
                 resolved.accountName(), request.accountNumber(), request.bankCode(),
                 commissionProperties.driverSharePercentage());
 
@@ -74,14 +74,15 @@ public class PayoutRecipientService {
                 .accountNumber(request.accountNumber())
                 .accountName(resolved.accountName())
                 .gatewayRecipientCode(recipientCode)
-                .gatewaySubaccountCode(subaccountCode)
+                .gatewaySubaccountCode(subaccount.code())
+                .gatewaySubaccountId(subaccount.id())
                 .isDefault(isFirstAccount)
                 .build();
 
         return payoutRecipientRepository.save(recipient);
     }
 
-    /** "Select preferred payout account" - switches which saved, already-verified account future withdrawals go to. */
+    /** "Select preferred payout account" - switches which saved account future fares are split to. */
     @Transactional
     public PayoutRecipient selectDefault(String driverId, String callerId, String recipientId) {
         if (!callerId.equals(driverId)) {

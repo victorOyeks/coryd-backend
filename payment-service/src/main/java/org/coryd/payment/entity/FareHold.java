@@ -14,8 +14,8 @@ import org.coryd.common.entity.BaseEntity;
 import java.math.BigDecimal;
 
 /**
- * The rider's paid fare, held until trip completion (Section 10.4) before it
- * becomes creditable to the driver's earnings ledger.
+ * One booking's fare and what became of it - released to the driver's earnings on completion or
+ * refunded to the rider, exactly once. The money itself moved at charge time; this is the ledger.
  */
 @Entity
 @Table(name = "fare_holds", schema = "payment")
@@ -45,4 +45,9 @@ public class FareHold extends BaseEntity {
     @Builder.Default
     @Column(nullable = false)
     private boolean refunded = false;
+
+    /** The part of this fare routed to us to pay down the driver's settlement debt. */
+    @Builder.Default
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal debtRecovery = BigDecimal.ZERO;
 }

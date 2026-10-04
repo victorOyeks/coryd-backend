@@ -246,8 +246,8 @@ If the host ever changes again, these are the places that have to follow it:
 - **`.env.dev`** - `SHARE_LINK_BASE_URL=https://api-dev.coryd.ng/trip`. The trip-share links texted to
   emergency contacts are built from it; restart `coryd-trip-service` after changing it.
 - **Paystack dashboard** (Test mode) -> Settings -> API Keys & Webhooks -> Test Webhook URL:
-  `https://api-dev.coryd.ng/payment/payments/webhook`. Card payments, wallet top-ups and driver
-  withdrawals all confirm through it.
+  `https://api-dev.coryd.ng/payment/payments/webhook`. Card payments confirm through it, and it's
+  how riders' cards get saved for one-tap payment.
 - **The rider/driver app and the Ops Console** - their API base URL.
 
 ---

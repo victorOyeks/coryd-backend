@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Calls payment-service's dev purge so a reset route does not leave wallet balances and
+ * Calls payment-service's dev purge so a reset route does not leave
  * earnings totals crediting trips that no longer exist. Dev-only on both ends - this bean
  * and the endpoint it targets each require coryd.dev-tools.enabled.
  */

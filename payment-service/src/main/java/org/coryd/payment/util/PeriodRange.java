@@ -10,7 +10,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 
-/** Shared [since, until) computation for the Wallet screen's period tabs - the earnings summary card and the transactions feed both use this, so the numbers always agree. Exclusive upper bound works whether the period is the current one (bound sits in the future, harmless) or a past one picked via the month picker. */
+/** Shared [since, until) computation for the earnings screen's period tabs - the summary card and the trip list both use this, so the numbers always agree. Exclusive upper bound works whether the period is the current one (bound sits in the future, harmless) or a past one picked via the month picker. */
 public final class PeriodRange {
 
     private PeriodRange() {

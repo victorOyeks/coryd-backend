@@ -196,17 +196,15 @@ public class ReportEmailBuilder {
     private void moneySection(StringBuilder html, ReportData data) {
         openSection(html, data.period() == ReportPeriod.MONTHLY ? "Money &middot; for the books" : "Money");
         row(html, "Gross fares collected", naira(data.payment().grossFares()), INK, false);
-        subRow(html, "Card &middot; Paystack", naira(data.payment().grossViaCard()));
-        subRow(html, "CoRyd wallet", naira(data.payment().grossViaWallet()));
         row(html, "Commission earned", naira(data.payment().commission()), GREEN, false);
         row(html, "Credited to drivers", naira(data.payment().creditedToDrivers()), INK, false);
         row(html, "Refunds issued <span style=\"color:#AAA;\">&middot; " + data.payment().refundCount() + "</span>",
                 naira(data.payment().refundAmount()), RED, false);
         boolean monthly = data.period() == ReportPeriod.MONTHLY;
-        row(html, "Payouts to banks <span style=\"color:#AAA;\">&middot; " + data.payment().payoutCount() + "</span>",
+        row(html, "Paid to driver banks <span style=\"color:#AAA;\">&middot; " + data.payment().payoutCount() + "</span>",
                 naira(data.payment().payoutAmount()), INK, !monthly);
         if (monthly) {
-            row(html, "Unsettled driver balance", naira(data.payment().unsettledDriverBalance()), INK, true);
+            row(html, "Owed back by drivers", naira(data.payment().driverDebt()), INK, true);
         }
         closeSection(html);
     }
@@ -373,13 +371,6 @@ public class ReportEmailBuilder {
                 .append("<td align=\"right\" style=\"padding:10px 0;").append(border)
                 .append("font-weight:600;color:").append(valueColor).append(";\">").append(value)
                 .append("</td></tr>");
-    }
-
-    private void subRow(StringBuilder html, String label, String value) {
-        html.append("<tr><td style=\"padding:8px 0 8px 14px;border-bottom:1px solid #F8F8F8;color:").append(MUTED)
-                .append(";font-size:13px;\">").append(label).append("</td>")
-                .append("<td align=\"right\" style=\"padding:8px 0;border-bottom:1px solid #F8F8F8;color:").append(MUTED)
-                .append(";font-size:13px;\">").append(value).append("</td></tr>");
     }
 
     private String deltaChip(ReportData data) {

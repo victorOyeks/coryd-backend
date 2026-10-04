@@ -144,18 +144,16 @@ public class PlatformStatsClient {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record PaymentStats(
             BigDecimal grossFares,
-            BigDecimal grossViaCard,
-            BigDecimal grossViaWallet,
             BigDecimal commission,
             BigDecimal creditedToDrivers,
             long refundCount,
             BigDecimal refundAmount,
             long payoutCount,
             BigDecimal payoutAmount,
-            BigDecimal unsettledDriverBalance) {
+            BigDecimal driverDebt) {
 
         public static final PaymentStats EMPTY = new PaymentStats(
-                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 0, BigDecimal.ZERO, 0, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 

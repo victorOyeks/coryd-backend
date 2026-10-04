@@ -27,7 +27,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class PaymentTransaction extends BaseEntity {
 
-    /** Null for wallet top-ups, which have no booking to attach to. */
+    /** Every payment is for a booking; nullable only because the column predates that. */
     private String bookingId;
 
     @Column(nullable = false)

@@ -17,5 +17,6 @@
     <include file="db/changelog/006-payment-fare-hold-booking-unique.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/007-payment-authorization-url.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/008-driver-subaccounts.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/009-card-only-payments.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
