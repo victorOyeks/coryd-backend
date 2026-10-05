@@ -56,6 +56,9 @@ paystack:
   # Who pays the fee on a split charge. Verify against a real test-mode split before going live -
   # left unset, Paystack bills the main account, which is more than our commission on a 2,500 fare.
   split-fee-bearer: ${PAYSTACK_SPLIT_FEE_BEARER:}
+  # Test environments only: send bank accounts to Paystack as its test bank (001) so test mode's
+  # 3 real bank lookups a day aren't used up. Ignored with a live key.
+  test-bank-code: ${PAYSTACK_TEST_BANK_CODE:}
 
 services:
   # Rider name/photo for the earnings screen's trip rows (ProfileServiceClient).

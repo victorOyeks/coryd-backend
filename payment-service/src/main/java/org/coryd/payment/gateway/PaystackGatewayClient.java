@@ -2,13 +2,19 @@ package org.coryd.payment.gateway;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.exception.ExternalServiceException;
 import org.coryd.common.http.HttpTimeouts;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -19,6 +25,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 @Slf4j
 @Component
@@ -26,6 +33,7 @@ import java.util.Map;
 public class PaystackGatewayClient implements PaymentGatewayClient {
 
     private static final String HMAC_ALGORITHM = "HmacSHA512";
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final PaystackProperties paystackProperties;
 
@@ -134,12 +142,53 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         }
     }
 
+    @PostConstruct
+    void warnAboutTestBank() {
+        String testBank = paystackProperties.getTestBankCode();
+        if (testBank != null && !testBank.isBlank()) {
+            if (paystackProperties.isTestKey()) {
+                log.warn("PAYSTACK_TEST_BANK_CODE={} - bank accounts are sent to Paystack as its test bank, not the driver's real one", testBank);
+            } else {
+                log.error("PAYSTACK_TEST_BANK_CODE is set with a live key - ignoring it, real bank details are used");
+            }
+        }
+    }
+
+    /**
+     * Paystack's refusal comes back as a readable 400 with its own message (a bad account number, a test
+     * mode limit), and an outage as a 502 - never a 500 for something the driver can act on.
+     */
+    private <T> T call(String failure, Supplier<T> request) {
+        try {
+            return request.get();
+        } catch (RestClientResponseException e) {
+            String message = paystackMessage(e);
+            log.warn("Paystack refused: {} {}", e.getStatusCode(), message);
+            if (e.getStatusCode().is4xxClientError()) {
+                throw new BadRequestException(message != null ? message : failure);
+            }
+            throw new ExternalServiceException(failure, e);
+        } catch (ResourceAccessException e) {
+            log.warn("Paystack unreachable: {}", e.getMessage());
+            throw new ExternalServiceException(failure, e);
+        }
+    }
+
+    private static String paystackMessage(RestClientResponseException e) {
+        try {
+            JsonNode body = JSON.readTree(e.getResponseBodyAsString());
+            return body.hasNonNull("message") ? body.get("message").asText() : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     /** Bank picker for the "Add bank account" screen. */
     public List<BankOption> listBanks() {
-        BankListResponse response = restClient().get()
+        BankListResponse response = call("Unable to load bank list. Please try again.", () -> restClient().get()
                 .uri("/bank?currency=NGN")
                 .retrieve()
-                .body(BankListResponse.class);
+                .body(BankListResponse.class));
         if (response == null || !response.status()) {
             throw new BadRequestException("Unable to load bank list. Please try again.");
         }
@@ -148,10 +197,11 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
 
     /** Resolves the real account holder name from the bank - never trust a client-supplied name for a payout recipient. */
     public ResolvedAccount resolveAccountNumber(String accountNumber, String bankCode) {
-        ResolveResponse response = restClient().get()
-                .uri("/bank/resolve?account_number={accountNumber}&bank_code={bankCode}", accountNumber, bankCode)
+        String gatewayBank = paystackProperties.gatewayBankCode(bankCode);
+        ResolveResponse response = call("Could not verify that account number - please try again.", () -> restClient().get()
+                .uri("/bank/resolve?account_number={accountNumber}&bank_code={bankCode}", accountNumber, gatewayBank)
                 .retrieve()
-                .body(ResolveResponse.class);
+                .body(ResolveResponse.class));
         if (response == null || !response.status()) {
             throw new BadRequestException("Could not verify that account number - please check the details and try again.");
         }
@@ -166,16 +216,16 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     public SubaccountResult createSubaccount(String businessName, String accountNumber, String bankCode, BigDecimal percentageCharge) {
         Map<String, Object> body = Map.of(
                 "business_name", businessName,
-                "settlement_bank", bankCode,
+                "settlement_bank", paystackProperties.gatewayBankCode(bankCode),
                 "account_number", accountNumber,
                 "percentage_charge", percentageCharge,
                 "settlement_schedule", paystackProperties.getSettlementSchedule()
         );
-        SubaccountResponse response = restClient().post()
+        SubaccountResponse response = call("Could not register that bank account for earnings. Please try again.", () -> restClient().post()
                 .uri("/subaccount")
                 .body(body)
                 .retrieve()
-                .body(SubaccountResponse.class);
+                .body(SubaccountResponse.class));
         if (response == null || !response.status() || response.data() == null) {
             throw new BadRequestException("Could not register that bank account for earnings. Please try again.");
         }
@@ -238,14 +288,14 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
                 "type", "nuban",
                 "name", accountName,
                 "account_number", accountNumber,
-                "bank_code", bankCode,
+                "bank_code", paystackProperties.gatewayBankCode(bankCode),
                 "currency", "NGN"
         );
-        RecipientResponse response = restClient().post()
+        RecipientResponse response = call("Could not register that bank account for payouts. Please try again.", () -> restClient().post()
                 .uri("/transferrecipient")
                 .body(body)
                 .retrieve()
-                .body(RecipientResponse.class);
+                .body(RecipientResponse.class));
         if (response == null || !response.status()) {
             throw new BadRequestException("Could not register that bank account for payouts. Please try again.");
         }

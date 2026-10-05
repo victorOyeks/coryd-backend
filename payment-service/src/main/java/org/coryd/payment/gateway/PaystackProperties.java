@@ -22,4 +22,20 @@ public class PaystackProperties {
      * The dashboard's "pass transaction fees to customers" does not cover splits on its own.
      */
     private String splitFeeBearer;
+
+    /**
+     * Test environments only: Paystack's test bank (its own error message names "001"), sent in place
+     * of the driver's real bank so adding an account doesn't burn test mode's 3 real lookups a day.
+     * Ignored with a live key - a live account must always be the real one.
+     */
+    private String testBankCode;
+
+    public boolean isTestKey() {
+        return secretKey != null && secretKey.startsWith("sk_test_");
+    }
+
+    /** The bank code Paystack is actually sent. The driver's own details are still what we store and show. */
+    public String gatewayBankCode(String bankCode) {
+        return testBankCode != null && !testBankCode.isBlank() && isTestKey() ? testBankCode : bankCode;
+    }
 }
