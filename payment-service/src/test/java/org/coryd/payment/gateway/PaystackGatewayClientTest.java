@@ -85,6 +85,28 @@ class PaystackGatewayClientTest {
     }
 
     @Test
+    void withATestKeyEveryDriverGetsTheSharedTestSubaccountWithoutCallingPaystack() {
+        properties.setTestSubaccountCode("ACCT_testshared");
+
+        PaystackGatewayClient.SubaccountResult subaccount = client.createSubaccount("TEST ACCOUNT", "0123451994", "057", new BigDecimal("95.00"));
+
+        assertThat(subaccount.code()).isEqualTo("ACCT_testshared");
+        assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void aLiveKeyNeverUsesTheTestSubaccount() {
+        properties.setTestSubaccountCode("ACCT_testshared");
+        properties.setSecretKey("sk_live_abc");
+        body.set("{\"status\":true,\"data\":{\"subaccount_code\":\"ACCT_real\",\"id\":7}}");
+
+        PaystackGatewayClient.SubaccountResult subaccount = client.createSubaccount("ADA OBI", "0123451994", "057", new BigDecimal("95.00"));
+
+        assertThat(subaccount.code()).isEqualTo("ACCT_real");
+        assertThat(requests).hasSize(1);
+    }
+
+    @Test
     void aLiveKeyAlwaysUsesTheRealBank() {
         properties.setTestBankCode("001");
         properties.setSecretKey("sk_live_abc");

@@ -30,6 +30,17 @@ public class PaystackProperties {
      */
     private String testBankCode;
 
+    /**
+     * Test environments only: one subaccount created by hand in Paystack's test dashboard, used for
+     * every driver - Paystack's test bank resolves accounts but won't take a subaccount. Ignored with a live key.
+     */
+    private String testSubaccountCode;
+
+    /** The shared test subaccount, when one applies - never with a live key. */
+    public String testSubaccount() {
+        return testSubaccountCode != null && !testSubaccountCode.isBlank() && isTestKey() ? testSubaccountCode : null;
+    }
+
     public boolean isTestKey() {
         return secretKey != null && secretKey.startsWith("sk_test_");
     }

@@ -143,7 +143,15 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     }
 
     @PostConstruct
-    void warnAboutTestBank() {
+    void warnAboutTestSettings() {
+        String testSubaccount = paystackProperties.getTestSubaccountCode();
+        if (testSubaccount != null && !testSubaccount.isBlank()) {
+            if (paystackProperties.isTestKey()) {
+                log.warn("PAYSTACK_TEST_SUBACCOUNT_CODE={} - every driver's fares are split to this one test subaccount", testSubaccount);
+            } else {
+                log.error("PAYSTACK_TEST_SUBACCOUNT_CODE is set with a live key - ignoring it, each driver gets their own subaccount");
+            }
+        }
         String testBank = paystackProperties.getTestBankCode();
         if (testBank != null && !testBank.isBlank()) {
             if (paystackProperties.isTestKey()) {
@@ -214,6 +222,11 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
      * refused to approve.
      */
     public SubaccountResult createSubaccount(String businessName, String accountNumber, String bankCode, BigDecimal percentageCharge) {
+        String testSubaccount = paystackProperties.testSubaccount();
+        if (testSubaccount != null) {
+            // Its numeric id is looked up by the settlement sync on first use.
+            return new SubaccountResult(testSubaccount, null);
+        }
         Map<String, Object> body = Map.of(
                 "business_name", businessName,
                 "settlement_bank", paystackProperties.gatewayBankCode(bankCode),

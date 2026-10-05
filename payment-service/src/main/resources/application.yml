@@ -59,6 +59,9 @@ paystack:
   # Test environments only: send bank accounts to Paystack as its test bank (001) so test mode's
   # 3 real bank lookups a day aren't used up. Ignored with a live key.
   test-bank-code: ${PAYSTACK_TEST_BANK_CODE:}
+  # Test environments only: one subaccount made by hand in Paystack's test dashboard, used for every
+  # driver (Paystack's test bank won't take a subaccount). Ignored with a live key.
+  test-subaccount-code: ${PAYSTACK_TEST_SUBACCOUNT_CODE:}
 
 services:
   # Rider name/photo for the earnings screen's trip rows (ProfileServiceClient).
