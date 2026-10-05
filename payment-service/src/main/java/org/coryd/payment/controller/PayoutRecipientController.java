@@ -34,8 +34,9 @@ public class PayoutRecipientController {
 
     /** "Confirm this is you" step before saving. */
     @GetMapping("/payout-recipients/resolve")
-    public ApiResponse<PaystackGatewayClient.ResolvedAccount> resolve(@RequestParam String accountNumber, @RequestParam String bankCode) {
-        return ApiResponse.ok(payoutRecipientService.resolve(accountNumber, bankCode));
+    public ApiResponse<PaystackGatewayClient.ResolvedAccount> resolve(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                       @RequestParam String accountNumber, @RequestParam String bankCode) {
+        return ApiResponse.ok(payoutRecipientService.resolve(principal.getUserId(), accountNumber, bankCode));
     }
 
     /** Payout Setup screen's saved-accounts list. */

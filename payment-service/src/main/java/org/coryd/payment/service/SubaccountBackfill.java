@@ -34,7 +34,7 @@ public class SubaccountBackfill implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         List<PayoutRecipient> pending = payoutRecipientRepository
-                .findByGatewaySubaccountCodeIsNullAndGatewayRecipientCodeIsNotNull();
+                .findByGatewaySubaccountCodeIsNull();
         if (pending.isEmpty()) {
             return;
         }

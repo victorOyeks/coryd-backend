@@ -23,8 +23,8 @@ public interface PayoutRecipientRepository extends JpaRepository<PayoutRecipient
     /** Settlement sync: every subaccount a driver has ever had, since an old account can still be paid out. */
     List<PayoutRecipient> findByGatewaySubaccountCodeIsNotNull();
 
-    /** Backfill: bank account already verified with Paystack, but no subaccount to split to yet. */
-    List<PayoutRecipient> findByGatewaySubaccountCodeIsNullAndGatewayRecipientCodeIsNotNull();
+    /** Backfill: a saved bank account with no subaccount to split to yet. */
+    List<PayoutRecipient> findByGatewaySubaccountCodeIsNull();
 
     /** The subaccount a booking's fare is split to - the default account, if it has one. */
     Optional<PayoutRecipient> findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(String driverId);

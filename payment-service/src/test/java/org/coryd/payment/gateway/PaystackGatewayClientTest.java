@@ -74,15 +74,13 @@ class PaystackGatewayClientTest {
     @Test
     void withATestKeyAndTestBankEveryBankCallUsesTheTestBank() {
         properties.setTestBankCode("001");
-        body.set("{\"status\":true,\"data\":{\"account_number\":\"0123451994\",\"account_name\":\"TEST ACCOUNT\",\"subaccount_code\":\"ACCT_1\",\"id\":42,\"recipient_code\":\"RCP_1\"}}");
+        body.set("{\"status\":true,\"data\":{\"account_number\":\"0123451994\",\"account_name\":\"TEST ACCOUNT\",\"subaccount_code\":\"ACCT_1\",\"id\":42}}");
 
         client.resolveAccountNumber("0123451994", "999992");
-        client.createTransferRecipient("TEST ACCOUNT", "0123451994", "999992");
         PaystackGatewayClient.SubaccountResult subaccount = client.createSubaccount("TEST ACCOUNT", "0123451994", "999992", new BigDecimal("95.00"));
 
         assertThat(requests.get(0)).contains("bank_code=001").doesNotContain("999992");
-        assertThat(requests.get(1)).contains("\"bank_code\":\"001\"").doesNotContain("999992");
-        assertThat(requests.get(2)).contains("\"settlement_bank\":\"001\"").doesNotContain("999992");
+        assertThat(requests.get(1)).contains("\"settlement_bank\":\"001\"").doesNotContain("999992");
         assertThat(subaccount.id()).isEqualTo("42");
     }
 
