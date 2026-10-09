@@ -167,6 +167,21 @@ class BookingFlowIntegrationTest {
     }
 
     @Test
+    void paymentHistoriesGetEachBookingsRouteAndUnknownBookingsAreLeftOut() {
+        RoutePost route = route(4);
+        Booking booking = book(route, RIDER, 1);
+
+        var summaries = bookingService.getRouteSummaries(List.of(booking.getId(), "no-such-booking"));
+
+        assertThat(summaries).singleElement().satisfies(s -> {
+            assertThat(s.bookingId()).isEqualTo(booking.getId());
+            assertThat(s.routePostId()).isEqualTo(route.getId());
+            assertThat(s.originLabel()).isEqualTo(route.getOriginLabel());
+            assertThat(s.destinationLabel()).isEqualTo(route.getDestinationLabel());
+        });
+    }
+
+    @Test
     void aDriverOwingTooMuchMustPayItBackBeforePosting() {
         policySettings();
         driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));

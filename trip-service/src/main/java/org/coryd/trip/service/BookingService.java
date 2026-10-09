@@ -28,6 +28,7 @@ import org.coryd.trip.dto.LocationResponse;
 import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingPaymentView;
+import org.coryd.trip.dto.BookingRouteSummary;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.event.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
@@ -1157,6 +1158,22 @@ public class BookingService {
         Booking booking = getOrThrow(bookingId);
         return new BookingPaymentView(booking.getId(), booking.getRiderId(), routeOf(booking).getDriverId(),
                 booking.getStatus(), booking.getFareTotal(), booking.getHoldExpiresAt());
+    }
+
+    /** Route text for payment-service's payment histories - one call per page, unknown ids simply left out. */
+    @Transactional(readOnly = true)
+    public List<BookingRouteSummary> getRouteSummaries(List<String> bookingIds) {
+        List<Booking> bookings = bookingRepository.findAllById(bookingIds);
+        Map<String, RoutePost> routes = routePostRepository.findAllById(bookings.stream().map(Booking::getRoutePostId).distinct().toList())
+                .stream().collect(Collectors.toMap(RoutePost::getId, r -> r));
+        return bookings.stream()
+                .filter(b -> routes.containsKey(b.getRoutePostId()))
+                .map(b -> {
+                    RoutePost route = routes.get(b.getRoutePostId());
+                    return new BookingRouteSummary(b.getId(), route.getId(), route.getOriginLabel(), route.getDestinationLabel(),
+                            route.getDepartureTime());
+                })
+                .toList();
     }
 
     @Transactional

@@ -42,6 +42,13 @@ public class PaymentTransaction extends BaseEntity {
     @Column(length = 512)
     private String authorizationUrl;
 
+    /** The card it was paid with, for the rider's payment history. */
+    @Column(length = 50)
+    private String cardType;
+
+    @Column(length = 4)
+    private String cardLast4;
+
     @Enumerated(EnumType.STRING)
     @Builder.Default
     @Column(nullable = false, length = 20)

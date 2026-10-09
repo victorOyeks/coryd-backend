@@ -88,7 +88,8 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @Import({PaymentService.class, EarningsService.class, SavedCardService.class, SettlementSyncService.class,
-        CommissionProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class})
+        CommissionProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class,
+        PaymentHistoryService.class, org.coryd.payment.repository.PaymentHistoryRepository.class})
 class PaymentFlowIntegrationTest {
 
     @Container
@@ -115,6 +116,8 @@ class PaymentFlowIntegrationTest {
     @Autowired SavedCardRepository savedCardRepository;
     @Autowired DriverSettlementRepository driverSettlementRepository;
     @Autowired org.coryd.payment.repository.DriverDebtEntryRepository driverDebtEntryRepository;
+    @Autowired org.coryd.payment.repository.RefundRepository refundRepository;
+    @Autowired PaymentHistoryService paymentHistoryService;
     @Autowired DataSource dataSource;
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
@@ -132,6 +135,7 @@ class PaymentFlowIntegrationTest {
         }
         driverSettlementRepository.deleteAll();
         driverDebtEntryRepository.deleteAll();
+        refundRepository.deleteAll();
         savedCardRepository.deleteAll();
         payoutRecipientRepository.deleteAll();
         earningsTransactionRepository.deleteAll();
@@ -845,6 +849,106 @@ class PaymentFlowIntegrationTest {
         assertThat(refunded.getChange()).isEqualByComparingTo("1140.00");
         assertThat(paid.getReason()).isEqualTo("PAID_BY_CARD");
         assertThat(paid.getAmountOwed()).isEqualByComparingTo("0.00");
+    }
+
+    // ---- payment histories -------------------------------------------------------------------
+
+    @Test
+    void aRidersHistoryShowsTheirCardPaymentAndItsRefundWithTheRoute() {
+        String booking = heldBooking();
+        String reference = paymentService.initiate(checkout(booking), RIDER).gatewayReference();
+        paymentService.handleWebhookSuccess(reference, booking, FARE_KOBO, card("AUTH_1", "SIG_1", true));
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+        when(tripServiceClient.fetchBookingRoutes(anyList())).thenReturn(Map.of(booking,
+                new TripServiceClient.BookingRoute(booking, "route-1", "Ikorodu", "Victoria Island", Instant.now())));
+
+        var history = paymentHistoryService.riderHistory(RIDER, PageRequest.of(0, 20), RIDER, UserRole.RIDER).content();
+
+        assertThat(history).extracting(i -> i.type() + ":" + i.status()).containsExactly("REFUND:REFUNDED", "PAYMENT:PAID");
+        assertThat(history.get(0).refundKind()).isEqualTo(org.coryd.payment.dto.RefundKind.CANCELLATION);
+        assertThat(history.get(0).amount()).isEqualByComparingTo(FARE);
+        assertThat(history.get(1).card().cardType()).isEqualTo("visa");
+        assertThat(history.get(1).card().last4()).isEqualTo("4081");
+        assertThat(history.get(1).route().originLabel()).isEqualTo("Ikorodu");
+    }
+
+    @Test
+    void aRefundStillWithPaystackShowsAsProcessingThenRefundedOnTheSameRow() {
+        String booking = heldBooking();
+        paidBooking(booking);
+        when(gatewayClient.refund(anyString(), any(), any())).thenReturn(false);
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+
+        assertThat(refundRows()).extracting(i -> i.status()).containsExactly(org.coryd.payment.dto.RiderPaymentStatus.REFUND_PROCESSING);
+
+        when(gatewayClient.refund(anyString(), any(), any())).thenReturn(true);
+        refundRetryJob.retry();
+        assertThat(refundRows()).extracting(i -> i.status()).containsExactly(org.coryd.payment.dto.RiderPaymentStatus.REFUNDED);
+    }
+
+    @Test
+    void abandonedCheckoutsAreLeftOutButFailedPaymentsAndDoubleChargesShow() {
+        String abandoned = heldBooking();
+        paymentService.initiate(checkout(abandoned), RIDER);
+        String failed = heldBooking();
+        paymentService.handleWebhookFailure(paymentService.initiate(checkout(failed), RIDER).gatewayReference(), "Declined");
+        String paidTwice = heldBooking();
+        paidBooking(paidTwice);
+        paymentService.handleWebhookSuccess("older-checkout-" + UUID.randomUUID(), paidTwice, FARE_KOBO, null);
+
+        var history = paymentHistoryService.riderHistory(RIDER, PageRequest.of(0, 20), RIDER, UserRole.RIDER).content();
+
+        assertThat(history).extracting(i -> i.bookingId()).doesNotContain(abandoned);
+        assertThat(history).filteredOn(i -> failed.equals(i.bookingId())).extracting(i -> i.status())
+                .containsExactly(org.coryd.payment.dto.RiderPaymentStatus.FAILED);
+        assertThat(history).filteredOn(i -> i.refundKind() == org.coryd.payment.dto.RefundKind.DUPLICATE_CHARGE).hasSize(1);
+    }
+
+    @Test
+    void historiesAreOnlyForTheirOwnerOrOps() {
+        assertThatThrownBy(() -> paymentHistoryService.riderHistory(RIDER, PageRequest.of(0, 20), "rider-2", UserRole.RIDER))
+                .isInstanceOf(UnauthorizedException.class);
+        assertThatThrownBy(() -> paymentHistoryService.driverStatement(DRIVER, PageRequest.of(0, 20), RIDER, UserRole.RIDER))
+                .isInstanceOf(UnauthorizedException.class);
+        assertThat(paymentHistoryService.riderHistory(RIDER, PageRequest.of(0, 20), "ops-1", UserRole.OPS_ADMIN).content()).isEmpty();
+    }
+
+    @Test
+    void aDriversStatementPutsEarningsPayoutsAndWhatTheyOweInOneListAndPagesAcrossThem() {
+        String completed = heldBooking();
+        paidBooking(completed);
+        earningsService.onTripCompleted(tripCompleted(completed));
+        String refunded = heldBooking();
+        paidBooking(refunded);
+        earningsService.refund(refunded, "Booking cancelled by DRIVER");
+        when(gatewayClient.fetchSubaccountId(SUBACCOUNT)).thenReturn("777");
+        when(gatewayClient.listSettlements(eq("777"), any(), anyInt(), anyInt())).thenReturn(List.of(
+                new PaystackGatewayClient.Settlement("S1", "success", 114000L, 114000L, Instant.now().plusSeconds(60).toString())));
+        settlementSyncService.syncAll();
+        when(profileServiceClient.fetchRiderSummaries(anyList()))
+                .thenReturn(Map.of(RIDER, new ProfileServiceClient.RiderSummaryItem(RIDER, "Ada", "Obi", null)));
+
+        var all = paymentHistoryService.driverStatement(DRIVER, PageRequest.of(0, 20), DRIVER, UserRole.DRIVER);
+        var firstTwo = paymentHistoryService.driverStatement(DRIVER, PageRequest.of(0, 2), DRIVER, UserRole.DRIVER);
+        var nextTwo = paymentHistoryService.driverStatement(DRIVER, PageRequest.of(1, 2), DRIVER, UserRole.DRIVER);
+
+        assertThat(all.content()).extracting(i -> i.type()).containsExactly(
+                org.coryd.payment.dto.DriverStatementType.PAYOUT,
+                org.coryd.payment.dto.DriverStatementType.REFUNDED_TRIP,
+                org.coryd.payment.dto.DriverStatementType.TRIP_EARNING);
+        assertThat(all.content().get(1).owedAfter()).isEqualByComparingTo("1140.00");
+        assertThat(all.content().get(2).amount()).isEqualByComparingTo("1140.00");
+        assertThat(all.content().get(2).rider().firstName()).isEqualTo("Ada");
+        assertThat(all.content().get(0).payoutStatus()).isEqualTo(SettlementStatus.SUCCESS);
+        assertThat(all.totalElements()).isEqualTo(3);
+        assertThat(firstTwo.content()).hasSize(2);
+        assertThat(nextTwo.content()).hasSize(1);
+        assertThat(nextTwo.content().get(0).id()).isEqualTo(all.content().get(2).id());
+    }
+
+    private List<org.coryd.payment.dto.RiderPaymentItem> refundRows() {
+        return paymentHistoryService.riderHistory(RIDER, PageRequest.of(0, 20), RIDER, UserRole.RIDER).content().stream()
+                .filter(i -> i.type() == org.coryd.payment.dto.RiderPaymentType.REFUND).toList();
     }
 
     private BigDecimal owed() {

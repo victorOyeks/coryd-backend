@@ -8,13 +8,18 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.payment.dto.CardAuthorization;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
+import org.coryd.payment.dto.RiderPaymentItem;
 import org.coryd.payment.gateway.PaymentGatewayClient;
+import org.coryd.payment.service.PaymentHistoryService;
 import org.coryd.payment.service.PaymentService;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
@@ -35,6 +41,7 @@ public class PaymentController {
     private static final String EVENT_CHARGE_FAILED = "charge.failed";
 
     private final PaymentService paymentService;
+    private final PaymentHistoryService paymentHistoryService;
     private final PaymentGatewayClient gatewayClient;
     private final ObjectMapper objectMapper;
 
@@ -42,6 +49,16 @@ public class PaymentController {
     public ApiResponse<InitiatePaymentResponse> initiate(@AuthenticationPrincipal CoRydUserDetails principal,
                                                           @Valid @RequestBody InitiatePaymentRequest request) {
         return ApiResponse.ok(paymentService.initiate(request, principal.getUserId()));
+    }
+
+    /** A rider's trip payments and refunds, newest first. */
+    @GetMapping("/riders/{riderId}/history")
+    public ApiResponse<PagedResponse<RiderPaymentItem>> riderHistory(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                     @PathVariable String riderId,
+                                                                     @RequestParam(defaultValue = "0") int page,
+                                                                     @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, Math.min(size, 50));
+        return ApiResponse.ok(paymentHistoryService.riderHistory(riderId, pageable, principal.getUserId(), principal.getActiveRole()));
     }
 
     @GetMapping("/bookings/{bookingId}")

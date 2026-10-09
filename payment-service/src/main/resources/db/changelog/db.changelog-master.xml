@@ -20,5 +20,6 @@
     <include file="db/changelog/009-card-only-payments.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/010-refund-retry.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/011-driver-debt-entries.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/012-refunds-and-payment-cards.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

@@ -17,16 +17,21 @@ import org.coryd.payment.dto.CardAuthorization;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
+import org.coryd.payment.dto.RefundKind;
+import org.coryd.payment.dto.RefundStatus;
 import org.coryd.payment.entity.PaymentTransaction;
+import org.coryd.payment.entity.Refund;
 import org.coryd.payment.entity.SavedCard;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.repository.FareHoldRepository;
 import org.coryd.payment.repository.PaymentTransactionRepository;
+import org.coryd.payment.repository.RefundRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +53,7 @@ public class PaymentService {
     private final DriverSplitResolver driverSplitResolver;
     private final SavedCardService savedCardService;
     private final EarningsService earningsService;
+    private final RefundRepository refundRepository;
 
     private static final BigDecimal MIN_REPAYMENT = new BigDecimal("100.00");
 
@@ -156,7 +162,9 @@ public class PaymentService {
         }
 
         if (result.success()) {
-            handleWebhookSuccess(reference, booking.bookingId(), booking.fareTotal().movePointRight(2).longValueExact(), null);
+            handleWebhookSuccess(reference, booking.bookingId(), booking.fareTotal().movePointRight(2).longValueExact(),
+                    new CardAuthorization(card.getAuthorizationCode(), card.getFingerprint(), "card", true, card.getCardType(),
+                            card.getLast4(), card.getExpMonth(), card.getExpYear(), card.getBank(), card.getEmail()));
             return new InitiatePaymentResponse(null, reference, PayoutStatus.PAID);
         }
         if (result.authorizationUrl() != null) {
@@ -206,6 +214,11 @@ public class PaymentService {
             return;
         }
         rememberCard(transaction.getRiderId(), card);
+        // On the loaded row, not a bulk update - this row is flushed later and would write the old card back.
+        if (card != null && card.last4() != null) {
+            transaction.setCardType(card.cardType() == null ? null : card.cardType().trim());
+            transaction.setCardLast4(card.last4());
+        }
         if (paymentTransactionRepository.transitionStatus(transaction.getId(),
                 List.of(PayoutStatus.PENDING, PayoutStatus.FAILED), PayoutStatus.PAID) == 0) {
             log.info("Ignoring repeat charge.success for reference {}", gatewayReference);
@@ -215,8 +228,12 @@ public class PaymentService {
 
         if (transaction.getPurpose() == PaymentPurpose.DEBT_REPAYMENT) {
             BigDecimal excess = earningsService.applyRepayment(transaction.getRiderId(), transaction.getAmount(), gatewayReference);
-            if (excess.signum() > 0 && !gatewayClient.refund(gatewayReference, excess, "Paid more than was owed")) {
-                log.error("RECONCILE: driver {} overpaid {} on {} and it could not be refunded", transaction.getRiderId(), excess, gatewayReference);
+            if (excess.signum() > 0) {
+                if (gatewayClient.refund(gatewayReference, excess, "Paid more than was owed")) {
+                    recordRefund(transaction.getRiderId(), null, transaction.getId(), excess, RefundKind.OVERPAYMENT, "Paid more than was owed");
+                } else {
+                    log.error("RECONCILE: driver {} overpaid {} on {} and it could not be refunded", transaction.getRiderId(), excess, gatewayReference);
+                }
             }
             return;
         }
@@ -262,6 +279,8 @@ public class PaymentService {
         if (gatewayClient.refund(reference, null, "Duplicate payment for a booking already paid")) {
             log.warn("Booking {} was already paid - duplicate charge {} of {} refunded to rider {}'s card",
                     bookingId, reference, amount, current.getRiderId());
+            recordRefund(current.getRiderId(), bookingId, current.getId(), amount, RefundKind.DUPLICATE_CHARGE,
+                    "Duplicate payment for a booking already paid");
             // The duplicate was split too, so the driver was paid for it as well.
             fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).ifPresent(hold ->
                     earningsService.chargeRefundToDriver(hold.getDriverId(), bookingId, amount, hold.getDebtRecovery()));
@@ -270,6 +289,19 @@ public class PaymentService {
                     reference, amount, bookingId);
         }
         return null;
+    }
+
+    private void recordRefund(String userId, String bookingId, String transactionId, BigDecimal amount, RefundKind kind, String reason) {
+        refundRepository.save(Refund.builder()
+                .userId(userId)
+                .bookingId(bookingId)
+                .paymentTransactionId(transactionId)
+                .amount(amount)
+                .status(RefundStatus.REFUNDED)
+                .kind(kind)
+                .reason(reason)
+                .refundedAt(Instant.now())
+                .build());
     }
 
     /** Only a still-pending attempt can fail - a late failure for a checkout that was superseded or

@@ -17,15 +17,17 @@ import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.config.KafkaConfig;
 import org.coryd.payment.dto.BookingEarningsItem;
 import org.coryd.payment.dto.CommissionRate;
-import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.dto.DebtEntryItem;
 import org.coryd.payment.dto.DebtEntryType;
+import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.dto.DriverPayoutItem;
-import org.coryd.payment.dto.OwedBalanceResponse;
 import org.coryd.payment.dto.DriverPostingStatus;
 import org.coryd.payment.dto.EarningsPeriod;
 import org.coryd.payment.dto.EarningsTripItem;
+import org.coryd.payment.dto.OwedBalanceResponse;
 import org.coryd.payment.dto.PeriodEarningsSummary;
+import org.coryd.payment.dto.RefundKind;
+import org.coryd.payment.dto.RefundStatus;
 import org.coryd.payment.dto.SettlementStatus;
 import org.coryd.payment.entity.DriverDebtEntry;
 import org.coryd.payment.entity.DriverEarningsAccount;
@@ -33,6 +35,7 @@ import org.coryd.payment.entity.DriverSettlement;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
 import org.coryd.payment.entity.PaymentTransaction;
+import org.coryd.payment.entity.Refund;
 import org.coryd.payment.gateway.PaymentGatewayClient;
 import org.coryd.payment.repository.DriverDebtEntryRepository;
 import org.coryd.payment.repository.DriverEarningsAccountRepository;
@@ -41,10 +44,11 @@ import org.coryd.payment.repository.EarningsTransactionRepository;
 import org.coryd.payment.repository.FareHoldRepository;
 import org.coryd.payment.repository.PaymentTransactionRepository;
 import org.coryd.payment.repository.PayoutRecipientRepository;
+import org.coryd.payment.repository.RefundRepository;
 import org.coryd.payment.util.PeriodRange;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -85,6 +89,7 @@ public class EarningsService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final PayoutRecipientRepository payoutRecipientRepository;
     private final DriverDebtEntryRepository driverDebtEntryRepository;
+    private final RefundRepository refundRepository;
 
     /** Above this, a driver can't post routes until they pay it back - their fares are what recover it otherwise. */
     @Value("${payment.driver-owed-limit:10000}")
@@ -261,9 +266,31 @@ public class EarningsService {
             return;
         }
         if (fareHoldRepository.clearRefundDue(holdId, amount) == 1) {
+            Refund pending = refundRepository.findFirstByBookingIdAndKindAndStatusOrderByCreatedAtDesc(
+                    hold.getBookingId(), RefundKind.CANCELLATION, RefundStatus.PENDING).orElse(null);
+            if (pending != null) {
+                pending.setStatus(RefundStatus.REFUNDED);
+                pending.setRefundedAt(Instant.now());
+                refundRepository.save(pending);
+            } else {
+                recordRefund(transaction, hold.getBookingId(), amount, hold.getRefundReason(), RefundStatus.REFUNDED);
+            }
             chargeRefundToDriver(hold.getDriverId(), hold.getBookingId(), amount, hold.getDebtRecovery());
             refundIssued(hold.getBookingId(), transaction.getRiderId(), amount, hold.getRefundReason());
         }
+    }
+
+    private void recordRefund(PaymentTransaction transaction, String bookingId, BigDecimal amount, String reason, RefundStatus status) {
+        refundRepository.save(Refund.builder()
+                .userId(transaction.getRiderId())
+                .bookingId(bookingId)
+                .paymentTransactionId(transaction.getId())
+                .amount(amount)
+                .status(status)
+                .kind(RefundKind.CANCELLATION)
+                .reason(reason)
+                .refundedAt(status == RefundStatus.REFUNDED ? Instant.now() : null)
+                .build());
     }
 
     private void refundIssued(String bookingId, String riderId, BigDecimal amount, String reason) {
@@ -432,10 +459,12 @@ public class EarningsService {
                 return;
             }
             if (refundToCard(transaction, bookingId, refunded, reason)) {
+                recordRefund(transaction, bookingId, refunded, reason, RefundStatus.REFUNDED);
                 chargeRefundToDriver(hold.getDriverId(), bookingId, refunded, hold.getDebtRecovery());
                 refundIssued(bookingId, transaction.getRiderId(), refunded, reason);
                 return;
             }
+            recordRefund(transaction, bookingId, refunded, reason, RefundStatus.PENDING);
             // The hold stays settled as refunded; what's owed is kept on it and retried until Paystack takes it.
             fareHoldRepository.setRefundDue(hold.getId(), refunded, reason);
             log.error("RECONCILE: Paystack did not accept the refund for booking {} - rider {} is owed {}, will retry",
