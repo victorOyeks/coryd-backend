@@ -47,6 +47,9 @@ public class PaymentService {
     private final CheckoutEmailResolver checkoutEmailResolver;
     private final DriverSplitResolver driverSplitResolver;
     private final SavedCardService savedCardService;
+    private final EarningsService earningsService;
+
+    private static final BigDecimal MIN_REPAYMENT = new BigDecimal("100.00");
 
     /** Amount, rider and driver all come from trip-service's booking - the request only says which
      * booking and which card, so a client can't pay less, use someone else's card, or route the fare
@@ -68,6 +71,38 @@ public class PaymentService {
             return payWithSavedCard(booking, request);
         }
         return payViaCheckout(booking, request);
+    }
+
+    /** A driver paying back what they owe, by card, to CoRyd with no split. amount null pays it all; a part
+     * payment is at least MIN_REPAYMENT (or everything, if less is owed). */
+    @Transactional
+    public InitiatePaymentResponse initiateRepayment(String driverId, String callerId, BigDecimal amount, String email, String callbackUrl) {
+        if (!driverId.equals(callerId)) {
+            throw new UnauthorizedException("Only this driver can pay back what they owe");
+        }
+        BigDecimal debt = earningsService.amountOwed(driverId);
+        if (debt.signum() <= 0) {
+            throw new BadRequestException("You don't owe anything");
+        }
+        BigDecimal owed = amount == null ? debt : amount.setScale(2, java.math.RoundingMode.HALF_UP);
+        if (owed.compareTo(debt) > 0) {
+            throw new BadRequestException("You only owe ₦" + debt.toPlainString());
+        }
+        if (owed.compareTo(debt) < 0 && owed.compareTo(MIN_REPAYMENT) < 0) {
+            throw new BadRequestException("The least you can pay is ₦" + MIN_REPAYMENT.toPlainString());
+        }
+        String reference = UUID.randomUUID().toString();
+        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(reference, owed,
+                checkoutEmailResolver.resolve(driverId, email), callbackUrl,
+                Map.of("driverId", driverId, "purpose", PaymentPurpose.DEBT_REPAYMENT.name()));
+        paymentTransactionRepository.save(PaymentTransaction.builder()
+                .riderId(driverId)
+                .amount(owed)
+                .gatewayReference(result.gatewayReference())
+                .authorizationUrl(result.authorizationUrl())
+                .purpose(PaymentPurpose.DEBT_REPAYMENT)
+                .build());
+        return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
     }
 
     /** Receipt/Pay Now screen's payment method/status. */
@@ -178,6 +213,14 @@ public class PaymentService {
         }
         transaction.setStatus(PayoutStatus.PAID);
 
+        if (transaction.getPurpose() == PaymentPurpose.DEBT_REPAYMENT) {
+            BigDecimal excess = earningsService.applyRepayment(transaction.getRiderId(), transaction.getAmount(), gatewayReference);
+            if (excess.signum() > 0 && !gatewayClient.refund(gatewayReference, excess, "Paid more than was owed")) {
+                log.error("RECONCILE: driver {} overpaid {} on {} and it could not be refunded", transaction.getRiderId(), excess, gatewayReference);
+            }
+            return;
+        }
+
         kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, PaymentSucceededEvent.builder()
                 .bookingId(transaction.getBookingId())
                 .paymentTransactionId(transaction.getId())
@@ -219,6 +262,9 @@ public class PaymentService {
         if (gatewayClient.refund(reference, null, "Duplicate payment for a booking already paid")) {
             log.warn("Booking {} was already paid - duplicate charge {} of {} refunded to rider {}'s card",
                     bookingId, reference, amount, current.getRiderId());
+            // The duplicate was split too, so the driver was paid for it as well.
+            fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).ifPresent(hold ->
+                    earningsService.chargeRefundToDriver(hold.getDriverId(), bookingId, amount, hold.getDebtRecovery()));
         } else {
             log.error("RECONCILE: duplicate charge {} of {} on booking {} could not be refunded (it may already have been)",
                     reference, amount, bookingId);
@@ -235,7 +281,8 @@ public class PaymentService {
             log.info("Ignoring charge.failed for superseded reference {}", gatewayReference);
             return;
         }
-        if (paymentTransactionRepository.transitionStatus(transaction.getId(), List.of(PayoutStatus.PENDING), PayoutStatus.FAILED) == 0) {
+        if (paymentTransactionRepository.transitionStatus(transaction.getId(), List.of(PayoutStatus.PENDING), PayoutStatus.FAILED) == 0
+                || transaction.getPurpose() == PaymentPurpose.DEBT_REPAYMENT) {
             return;
         }
 

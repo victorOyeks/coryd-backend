@@ -293,8 +293,10 @@ and any settlement debt.
 **US-9.2** List a driver's weekly Paystack payouts (settlements) with status `PENDING`, `PROCESSING`,
 `SUCCESS` or `FAILED`.
 
-**US-9.3** Record a settlement debt when Paystack takes a refund from CoRyd's balance because the
-driver's share had already settled. The driver's next fares pay it off automatically.
+**US-9.3** See what each driver owes from refunded trips. Paystack takes every refund from CoRyd's
+balance, so the driver's share of each refund is recorded against them automatically and recovered
+from their next fares; over ₦10,000 they can't post until they pay it back by card. Ops can add a
+manual correction (e.g. a refund made by hand in the Paystack dashboard).
 
 **US-9.4** See total driver debt - money drivers owe back to CoRyd right now. CoRyd holds no driver
 money, so there is no "owed to drivers" balance.

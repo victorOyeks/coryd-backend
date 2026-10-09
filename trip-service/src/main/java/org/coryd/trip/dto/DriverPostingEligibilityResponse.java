@@ -1,5 +1,6 @@
 package org.coryd.trip.dto;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 public record DriverPostingEligibilityResponse(
@@ -8,6 +9,7 @@ public record DriverPostingEligibilityResponse(
         boolean identityOk,
         boolean vehicleOk,
         boolean payoutAccountOk,
+        BigDecimal amountOwed,
         String blockedReason,
         String prerequisiteLevel,
         String enforcement,

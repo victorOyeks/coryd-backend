@@ -86,12 +86,4 @@ class PayoutRecipientServiceTest {
         assertThatThrownBy(() -> service.list("d-1", "d-2", UserRole.DRIVER)).isInstanceOf(UnauthorizedException.class);
         verify(repository, never()).findByDriverIdOrderByCreatedAtDesc(anyString());
     }
-
-    @Test
-    void anySavedAccountCountsForPosting() {
-        when(repository.existsByDriverId("d-1")).thenReturn(true);
-
-        assertThat(service.hasPayoutAccount("d-1")).isTrue();
-        assertThat(service.hasPayoutAccount("d-2")).isFalse();
-    }
 }

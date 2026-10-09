@@ -47,11 +47,6 @@ public class PayoutRecipientService {
         return payoutRecipientRepository.findByDriverIdOrderByCreatedAtDesc(driverId);
     }
 
-    /** Every saved account was verified with Paystack before it was saved, so any one counts. */
-    public boolean hasPayoutAccount(String driverId) {
-        return payoutRecipientRepository.existsByDriverId(driverId);
-    }
-
     /** Adds a new saved bank account - re-resolves server-side (never trusts a client-supplied
      * account name) and creates the Paystack subaccount fares are split to. The first account a
      * driver ever saves becomes their default automatically; later ones are added as non-default

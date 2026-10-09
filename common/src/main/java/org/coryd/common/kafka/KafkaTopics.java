@@ -26,6 +26,7 @@ public final class KafkaTopics {
     public static final String PAYMENT_SUCCEEDED = "coryd-payment-succeeded";
     public static final String PAYMENT_FAILED = "coryd-payment-failed";
     public static final String REFUND_ISSUED = "coryd-refund-issued";
+    public static final String DRIVER_OWED_CHANGED = "coryd-driver-owed-changed";
     public static final String PAYOUT_PROCESSED = "coryd-payout-processed";
 
     public static final String DRIVER_APPROVED = "coryd-driver-approved";

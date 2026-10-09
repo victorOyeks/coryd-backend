@@ -8,6 +8,7 @@ import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
+import org.coryd.common.kafka.events.DriverOwedChangedEvent;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.common.response.PagedResponse;
@@ -17,25 +18,33 @@ import org.coryd.payment.config.KafkaConfig;
 import org.coryd.payment.dto.BookingEarningsItem;
 import org.coryd.payment.dto.CommissionRate;
 import org.coryd.payment.dto.DriverEarningsSummary;
+import org.coryd.payment.dto.DebtEntryItem;
+import org.coryd.payment.dto.DebtEntryType;
 import org.coryd.payment.dto.DriverPayoutItem;
+import org.coryd.payment.dto.OwedBalanceResponse;
+import org.coryd.payment.dto.DriverPostingStatus;
 import org.coryd.payment.dto.EarningsPeriod;
 import org.coryd.payment.dto.EarningsTripItem;
 import org.coryd.payment.dto.PeriodEarningsSummary;
 import org.coryd.payment.dto.SettlementStatus;
+import org.coryd.payment.entity.DriverDebtEntry;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.DriverSettlement;
 import org.coryd.payment.entity.EarningsTransaction;
 import org.coryd.payment.entity.FareHold;
 import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.gateway.PaymentGatewayClient;
+import org.coryd.payment.repository.DriverDebtEntryRepository;
 import org.coryd.payment.repository.DriverEarningsAccountRepository;
 import org.coryd.payment.repository.DriverSettlementRepository;
 import org.coryd.payment.repository.EarningsTransactionRepository;
 import org.coryd.payment.repository.FareHoldRepository;
 import org.coryd.payment.repository.PaymentTransactionRepository;
+import org.coryd.payment.repository.PayoutRecipientRepository;
 import org.coryd.payment.util.PeriodRange;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -74,6 +83,12 @@ public class EarningsService {
     private final ProfileServiceClient profileServiceClient;
     private final CommissionProperties commissionProperties;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final PayoutRecipientRepository payoutRecipientRepository;
+    private final DriverDebtEntryRepository driverDebtEntryRepository;
+
+    /** Above this, a driver can't post routes until they pay it back - their fares are what recover it otherwise. */
+    @Value("${payment.driver-owed-limit:10000}")
+    private BigDecimal owedLimit;
 
     @KafkaListener(topics = KafkaTopics.TRIP_COMPLETED, groupId = KafkaConfig.GROUP_ID)
     @Transactional
@@ -109,7 +124,7 @@ public class EarningsService {
                 .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
         if (debtRecovery != null && debtRecovery.signum() > 0) {
             BigDecimal recovered = debtRecovery.min(account.getSettlementDebt());
-            account.setSettlementDebt(account.getSettlementDebt().subtract(recovered));
+            moveDebt(account, recovered.negate(), DebtEntryType.RECOVERED_FROM_FARE, bookingId, null, null);
             BigDecimal excess = debtRecovery.subtract(recovered);
             if (excess.signum() > 0) {
                 log.error("RECONCILE: booking {} took {} more than driver {} still owed - owed back to the driver",
@@ -246,6 +261,7 @@ public class EarningsService {
             return;
         }
         if (fareHoldRepository.clearRefundDue(holdId, amount) == 1) {
+            chargeRefundToDriver(hold.getDriverId(), hold.getBookingId(), amount, hold.getDebtRecovery());
             refundIssued(hold.getBookingId(), transaction.getRiderId(), amount, hold.getRefundReason());
         }
     }
@@ -261,10 +277,108 @@ public class EarningsService {
     }
 
     /**
-     * Ops records what a driver owes after Paystack takes a refund from our balance because the
-     * driver's share had already settled. Not inferred here: the refund response doesn't say whether
-     * the driver had been settled, and guessing would mean charging drivers twice.
+     * Paystack takes every refund out of CoRyd's balance while the driver keeps the share they were
+     * split, so that share of the refunded amount is owed back - less anything this fare already
+     * routed to us against an earlier debt. Recovered from the driver's next fares.
      */
+    @Transactional
+    public void chargeRefundToDriver(String driverId, String bookingId, BigDecimal refunded, BigDecimal debtRecovery) {
+        BigDecimal share = refunded.subtract(refunded.multiply(commissionProperties.getPercentage()).setScale(2, RoundingMode.HALF_UP));
+        BigDecimal owed = share.subtract(debtRecovery == null ? BigDecimal.ZERO : debtRecovery);
+        DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
+                .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
+        if (account.getSettlementDebt().add(owed).signum() < 0) {
+            log.error("RECONCILE: refund on booking {} leaves CoRyd owing driver {} {}", bookingId, driverId,
+                    account.getSettlementDebt().add(owed).negate());
+            owed = account.getSettlementDebt().negate();
+        }
+        if (owed.signum() == 0) {
+            return;
+        }
+        moveDebt(account, owed, DebtEntryType.REFUNDED_TRIP, bookingId, null, null);
+        earningsAccountRepository.save(account);
+        owedChanged(account, DebtEntryType.REFUNDED_TRIP, owed, bookingId);
+        log.info("Driver {} now owes {} after a refund of {} on booking {}", driverId, account.getSettlementDebt(), refunded, bookingId);
+    }
+
+    /** Every change to what's owed goes through here, so the driver's history always adds up to their balance. */
+    private void moveDebt(DriverEarningsAccount account, BigDecimal change, DebtEntryType type, String bookingId,
+                          String reference, String note) {
+        if (change.signum() == 0) {
+            return;
+        }
+        account.setSettlementDebt(account.getSettlementDebt().add(change));
+        driverDebtEntryRepository.save(DriverDebtEntry.builder()
+                .driverId(account.getDriverId())
+                .type(type)
+                .amount(change)
+                .balanceAfter(account.getSettlementDebt())
+                .bookingId(bookingId)
+                .reference(reference)
+                .note(note)
+                .build());
+    }
+
+    /** Tells the driver - a refunded trip adds to what they owe, and a card payment brings it down. */
+    private void owedChanged(DriverEarningsAccount account, DebtEntryType type, BigDecimal change, String bookingId) {
+        kafkaTemplate.send(KafkaTopics.DRIVER_OWED_CHANGED, DriverOwedChangedEvent.builder()
+                .driverId(account.getDriverId())
+                .reason(type.name())
+                .change(change)
+                .amountOwed(account.getSettlementDebt())
+                .owedLimit(owedLimit)
+                .overLimit(account.getSettlementDebt().compareTo(owedLimit) > 0)
+                .bookingId(bookingId)
+                .changedAt(LocalDateTime.now())
+                .build());
+    }
+
+    /** The driver's "what do I owe" card - and, when they're blocked, the least they must pay to post again. */
+    @Transactional(readOnly = true)
+    public OwedBalanceResponse owedBalance(String driverId, String callerId, UserRole callerRole) {
+        requireSelfOrOps(driverId, callerId, callerRole);
+        BigDecimal owed = amountOwed(driverId);
+        boolean blocked = owed.compareTo(owedLimit) > 0;
+        return new OwedBalanceResponse(owed, owedLimit, blocked, blocked ? owed.subtract(owedLimit) : BigDecimal.ZERO);
+    }
+
+    /** Every change to what the driver owes, newest first. */
+    @Transactional(readOnly = true)
+    public PagedResponse<DebtEntryItem> owedHistory(String driverId, Pageable pageable, String callerId, UserRole callerRole) {
+        requireSelfOrOps(driverId, callerId, callerRole);
+        return PagedResponse.from(driverDebtEntryRepository.findByDriverIdOrderByCreatedAtDescIdDesc(driverId, pageable)
+                .map(e -> new DebtEntryItem(e.getId(), e.getType(), e.getAmount(), e.getBalanceAfter(), e.getBookingId(),
+                        e.getReference(), e.getNote(), e.getCreatedAt())));
+    }
+
+    public BigDecimal amountOwed(String driverId) {
+        return earningsAccountRepository.findByDriverId(driverId).map(DriverEarningsAccount::getSettlementDebt).orElse(BigDecimal.ZERO);
+    }
+
+    /** Pays the debt down by what the driver paid; returns anything paid beyond what was owed, to go back to their card. */
+    @Transactional
+    public BigDecimal applyRepayment(String driverId, BigDecimal amount, String reference) {
+        DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
+                .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
+        BigDecimal applied = amount.min(account.getSettlementDebt());
+        moveDebt(account, applied.negate(), DebtEntryType.PAID_BY_CARD, null, reference, null);
+        earningsAccountRepository.save(account);
+        if (applied.signum() > 0) {
+            owedChanged(account, DebtEntryType.PAID_BY_CARD, applied.negate(), null);
+        }
+        log.info("Driver {} paid back {} - now owes {}", driverId, applied, account.getSettlementDebt());
+        return amount.subtract(applied);
+    }
+
+    /** What trip-service's posting gate needs from payments: a bank account to split to, and not owing too much. */
+    @Transactional(readOnly = true)
+    public DriverPostingStatus postingStatus(String driverId) {
+        BigDecimal owed = amountOwed(driverId);
+        return new DriverPostingStatus(payoutRecipientRepository.existsByDriverId(driverId), owed, owedLimit,
+                owed.compareTo(owedLimit) > 0);
+    }
+
+    /** Ops correction on top of the automatic refund charges - e.g. a refund made by hand in the Paystack dashboard. */
     @Transactional
     public void recordSettlementDebt(String driverId, BigDecimal amount, String reason, UserRole callerRole) {
         if (callerRole != UserRole.OPS_ADMIN) {
@@ -275,7 +389,7 @@ public class EarningsService {
         }
         DriverEarningsAccount account = earningsAccountRepository.findForUpdate(driverId)
                 .orElseGet(() -> DriverEarningsAccount.builder().driverId(driverId).build());
-        account.setSettlementDebt(account.getSettlementDebt().add(amount));
+        moveDebt(account, amount, DebtEntryType.OPS_ADJUSTMENT, null, null, reason);
         earningsAccountRepository.save(account);
         log.info("Recorded settlement debt of {} against driver {}: {}", amount, driverId, reason);
     }
@@ -318,6 +432,7 @@ public class EarningsService {
                 return;
             }
             if (refundToCard(transaction, bookingId, refunded, reason)) {
+                chargeRefundToDriver(hold.getDriverId(), bookingId, refunded, hold.getDebtRecovery());
                 refundIssued(bookingId, transaction.getRiderId(), refunded, reason);
                 return;
             }

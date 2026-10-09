@@ -22,6 +22,35 @@ class NotificationCopyTest {
     private final NotificationEventListener listener = new NotificationEventListener(dispatch);
 
     @Test
+    void aDriverIsToldWhatARefundAddsAndHowToPostAgainWhenBlocked() {
+        listener.onDriverOwedChanged(owed("REFUNDED_TRIP", "1140.00", "1140.00", false));
+        verify(dispatch).sendPush(eq("driver-1"), eq("A trip you were paid for was refunded"),
+                eq("₦1140.00 will be taken from your next earnings. You now owe ₦1140.00."), eq("DRIVER_OWED_CHANGED"), eq("booking-1"));
+
+        listener.onDriverOwedChanged(owed("REFUNDED_TRIP", "1140.00", "12500.00", true));
+        verify(dispatch).sendPush(eq("driver-1"), any(),
+                eq("₦1140.00 will be taken from your next earnings. You now owe ₦12500.00. Pay at least ₦2500.00 in the app to post trips again."),
+                any(), any());
+    }
+
+    @Test
+    void aDriverIsThankedForPayingAndToldWhatIsLeft() {
+        listener.onDriverOwedChanged(owed("PAID_BY_CARD", "-1140.00", "0.00", false));
+        verify(dispatch).sendPush(eq("driver-1"), eq("Payment received"),
+                eq("Thanks - you've paid ₦1140.00. You don't owe anything now."), any(), any());
+
+        listener.onDriverOwedChanged(owed("PAID_BY_CARD", "-500.00", "640.00", false));
+        verify(dispatch).sendPush(eq("driver-1"), eq("Payment received"),
+                eq("Thanks - you've paid ₦500.00. You still owe ₦640.00."), any(), any());
+    }
+
+    private static org.coryd.common.kafka.events.DriverOwedChangedEvent owed(String reason, String change, String owed, boolean overLimit) {
+        return org.coryd.common.kafka.events.DriverOwedChangedEvent.builder().driverId("driver-1").reason(reason)
+                .change(new java.math.BigDecimal(change)).amountOwed(new java.math.BigDecimal(owed))
+                .owedLimit(new java.math.BigDecimal("10000.00")).overLimit(overLimit).bookingId("booking-1").build();
+    }
+
+    @Test
     void getReadyReminderCountsRiders() {
         listener.onRouteDepartureReminder(reminder("DRIVER_GET_READY", 0));
         verify(dispatch).sendRoutePush(eq("driver-1"), eq("Get ready to depart"),

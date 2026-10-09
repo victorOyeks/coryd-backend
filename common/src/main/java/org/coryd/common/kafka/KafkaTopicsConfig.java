@@ -101,6 +101,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic driverOwedChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_OWED_CHANGED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic payoutProcessedTopic() {
         return TopicBuilder.name(KafkaTopics.PAYOUT_PROCESSED).partitions(3).replicas(1).build();
     }

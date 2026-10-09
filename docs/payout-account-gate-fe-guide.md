@@ -8,6 +8,7 @@ A driver can't post a route until they have saved the bank account their earning
 - New field: `payoutAccountOk` (boolean), next to `identityOk` and `vehicleOk`. Use it for the checklist tick.
 - The check applies to approved drivers too, not only drivers who are still onboarding.
 - Order: identity and vehicle reasons come first. `PAYOUT_ACCOUNT_REQUIRED` shows only when those are done.
+- `blockedReason: "AMOUNT_OWED"`: the driver owes more than ₦10,000 from refunded trips. New field `amountOwed` holds the amount (it's present whenever it's known, even below the limit). Show it with a **Pay now** button; see "Owed from refunded trips" in card-payments-fe-guide.md. Posting a route in this state returns `400` naming the amount.
 - When the driver saves an account, call eligibility again. It clears straight away.
 
 Posting a route without a bank account returns `400`: `Add the bank account your earnings will be paid to before posting a route`.

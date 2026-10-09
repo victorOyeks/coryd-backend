@@ -109,7 +109,7 @@ class BookingFlowIntegrationTest {
                     .isEqualTo(postgres.getJdbcUrl());
         }
         driverVerificationCacheRepository.deleteAll();
-        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(org.mockito.ArgumentMatchers.anyString())).thenReturn(true);
+        org.mockito.Mockito.when(paymentServiceClient.postingStatus(org.mockito.ArgumentMatchers.anyString())).thenReturn(standing(true, "0", false));
         ratingRepository.deleteAll();
         historyRepository.deleteAll();
         bookingRepository.deleteAll();
@@ -129,7 +129,7 @@ class BookingFlowIntegrationTest {
     void aDriverWithNoBankAccountCannotPostEvenOnceApproved() {
         policySettings();
         driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
-        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(DRIVER)).thenReturn(false);
+        org.mockito.Mockito.when(paymentServiceClient.postingStatus(DRIVER)).thenReturn(standing(false, "0", false));
 
         var eligibility = routeService.postingEligibility(DRIVER);
         assertThat(eligibility.canPostRoutes()).isFalse();
@@ -146,7 +146,7 @@ class BookingFlowIntegrationTest {
         policySettings();
         org.mockito.Mockito.when(driverVerificationPolicy.requiresApprovedPrerequisites()).thenReturn(false);
         org.mockito.Mockito.when(profileServiceClient.fetchOnboarding(DRIVER)).thenThrow(new RuntimeException("profile down"));
-        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(DRIVER)).thenReturn(false);
+        org.mockito.Mockito.when(paymentServiceClient.postingStatus(DRIVER)).thenReturn(standing(false, "0", false));
 
         var eligibility = routeService.postingEligibility(DRIVER);
 
@@ -158,12 +158,44 @@ class BookingFlowIntegrationTest {
     void anUnreachablePaymentServiceDoesNotBlockPosting() {
         policySettings();
         driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
-        org.mockito.Mockito.when(paymentServiceClient.hasPayoutAccount(DRIVER)).thenReturn(null);
+        org.mockito.Mockito.when(paymentServiceClient.postingStatus(DRIVER)).thenReturn(null);
 
         var eligibility = routeService.postingEligibility(DRIVER);
 
         assertThat(eligibility.canPostRoutes()).isTrue();
         assertThat(eligibility.blockedReason()).isNull();
+    }
+
+    @Test
+    void aDriverOwingTooMuchMustPayItBackBeforePosting() {
+        policySettings();
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        org.mockito.Mockito.when(paymentServiceClient.postingStatus(DRIVER)).thenReturn(standing(true, "12500.00", true));
+
+        var eligibility = routeService.postingEligibility(DRIVER);
+
+        assertThat(eligibility.canPostRoutes()).isFalse();
+        assertThat(eligibility.blockedReason()).isEqualTo("AMOUNT_OWED");
+        assertThat(eligibility.amountOwed()).isEqualByComparingTo("12500.00");
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(1, ChronoUnit.DAYS))))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("12500.00");
+    }
+
+    @Test
+    void owingLessThanTheLimitDoesNotBlock() {
+        policySettings();
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        org.mockito.Mockito.when(paymentServiceClient.postingStatus(DRIVER)).thenReturn(standing(true, "800.00", false));
+
+        var eligibility = routeService.postingEligibility(DRIVER);
+
+        assertThat(eligibility.canPostRoutes()).isTrue();
+        assertThat(eligibility.amountOwed()).isEqualByComparingTo("800.00");
+    }
+
+    private static org.coryd.trip.client.PaymentServiceClient.PostingStatus standing(boolean hasAccount, String owed, boolean overLimit) {
+        return new org.coryd.trip.client.PaymentServiceClient.PostingStatus(hasAccount, new java.math.BigDecimal(owed), overLimit);
     }
 
     // ---- booking the same ride twice ------------------------------------------------------------

@@ -114,6 +114,7 @@ class PaymentFlowIntegrationTest {
     @Autowired PayoutRecipientRepository payoutRecipientRepository;
     @Autowired SavedCardRepository savedCardRepository;
     @Autowired DriverSettlementRepository driverSettlementRepository;
+    @Autowired org.coryd.payment.repository.DriverDebtEntryRepository driverDebtEntryRepository;
     @Autowired DataSource dataSource;
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
@@ -130,6 +131,7 @@ class PaymentFlowIntegrationTest {
                     .isEqualTo(postgres.getJdbcUrl());
         }
         driverSettlementRepository.deleteAll();
+        driverDebtEntryRepository.deleteAll();
         savedCardRepository.deleteAll();
         payoutRecipientRepository.deleteAll();
         earningsTransactionRepository.deleteAll();
@@ -142,6 +144,8 @@ class PaymentFlowIntegrationTest {
         when(gatewayClient.initiateSplit(anyString(), any(), anyString(), any(), anyMap(), any(), any()))
                 .thenAnswer(inv -> new PaymentGatewayClient.GatewayInitResult("https://checkout/" + inv.getArgument(0), inv.getArgument(0)));
         when(gatewayClient.refund(anyString(), any(), any())).thenReturn(true);
+        when(gatewayClient.initiate(anyString(), any(), anyString(), any(), anyMap()))
+                .thenAnswer(inv -> new PaymentGatewayClient.GatewayInitResult("https://checkout/" + inv.getArgument(0), inv.getArgument(0)));
         when(profileServiceClient.fetchRiderSummaries(anyList())).thenReturn(Map.of());
         givenDriverHasASubaccount();
     }
@@ -637,6 +641,214 @@ class PaymentFlowIntegrationTest {
                 .isInstanceOf(UnauthorizedException.class);
         assertThatThrownBy(() -> earningsService.recordSettlementDebt(DRIVER, BigDecimal.ZERO, "x", UserRole.OPS_ADMIN))
                 .isInstanceOf(BadRequestException.class);
+    }
+
+    // ---- every refund is CoRyd's money, so the driver's share of it is owed back ----------------
+
+    @Test
+    void aFullRefundChargesTheDriverTheShareTheyWerePaid() {
+        String booking = heldBooking();
+        paidBooking(booking);
+
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+
+        assertThat(owed()).as("1200 refunded, of which the driver was split 1140").isEqualByComparingTo("1140.00");
+    }
+
+    @Test
+    void aLateCancellationChargesOnlyTheShareOfWhatWasRefunded() {
+        String booking = heldBooking();
+        paidBooking(booking);
+
+        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1");
+
+        assertThat(owed()).as("95% of the 900 refunded - the driver keeps their share of the 300 fee").isEqualByComparingTo("855.00");
+    }
+
+    @Test
+    void aFareThatAlreadyWentToTheDebtIsNotChargedTwice() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("300.00"), "earlier refund", UserRole.OPS_ADMIN);
+        String booking = heldBooking();
+        paidBooking(booking);
+
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+
+        // The driver was split 840 (1140 less the 300 routed to us), and now owes the 300 plus that 840.
+        assertThat(owed()).isEqualByComparingTo("1140.00");
+    }
+
+    @Test
+    void aRefundStillOwedChargesTheDriverOnlyOnceItGoesThrough() {
+        String booking = heldBooking();
+        paidBooking(booking);
+        when(gatewayClient.refund(anyString(), any(), any())).thenReturn(false);
+
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+        assertThat(owed()).isEqualByComparingTo("0.00");
+
+        when(gatewayClient.refund(anyString(), any(), any())).thenReturn(true);
+        refundRetryJob.retry();
+        refundRetryJob.retry();
+        assertThat(owed()).isEqualByComparingTo("1140.00");
+    }
+
+    @Test
+    void aRefundedDuplicateChargeIsChargedToTheDriverToo() {
+        String booking = heldBooking();
+        paidBooking(booking);
+
+        paymentService.handleWebhookSuccess("older-checkout-" + UUID.randomUUID(), booking, FARE_KOBO, null);
+
+        assertThat(owed()).isEqualByComparingTo("1140.00");
+    }
+
+    @Test
+    void owingMoreThanTheLimitIsReportedForThePostingGate() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("10000.00"), "x", UserRole.OPS_ADMIN);
+        assertThat(earningsService.postingStatus(DRIVER).overOwedLimit()).as("at the limit is still fine").isFalse();
+
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("0.01"), "x", UserRole.OPS_ADMIN);
+        var status = earningsService.postingStatus(DRIVER);
+        assertThat(status.overOwedLimit()).isTrue();
+        assertThat(status.hasPayoutAccount()).isTrue();
+        assertThat(status.amountOwed()).isEqualByComparingTo("10000.01");
+    }
+
+    @Test
+    void aDriverPaysBackWhatTheyOweByCardOnce() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("1140.00"), "refund", UserRole.OPS_ADMIN);
+
+        InitiatePaymentResponse checkout = paymentService.initiateRepayment(DRIVER, DRIVER, null, null, null);
+
+        verify(gatewayClient).initiate(eq(checkout.gatewayReference()), eq(new BigDecimal("1140.00")), anyString(), any(), anyMap());
+        verify(gatewayClient, never()).initiateSplit(anyString(), any(), anyString(), any(), anyMap(), any(), any());
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, 114000L, null);
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, 114000L, null);
+
+        assertThat(owed()).isEqualByComparingTo("0.00");
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.PAYMENT_SUCCEEDED), any());
+        verify(gatewayClient, never()).refund(anyString(), any(), any());
+    }
+
+    @Test
+    void payingBackMoreThanIsStillOwedRefundsTheDifference() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("1140.00"), "refund", UserRole.OPS_ADMIN);
+        InitiatePaymentResponse checkout = paymentService.initiateRepayment(DRIVER, DRIVER, null, null, null);
+        // Meanwhile a trip paid part of it down.
+        earningsService.applyRepayment(DRIVER, new BigDecimal("640.00"), "elsewhere");
+
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, 114000L, null);
+
+        assertThat(owed()).isEqualByComparingTo("0.00");
+        verify(gatewayClient).refund(eq(checkout.gatewayReference()), eq(new BigDecimal("640.00")), anyString());
+    }
+
+    @Test
+    void onlyTheDriverPaysBackAndOnlyWhenTheyOweSomething() {
+        assertThatThrownBy(() -> paymentService.initiateRepayment(DRIVER, DRIVER, null, null, null))
+                .isInstanceOf(BadRequestException.class);
+        earningsService.recordSettlementDebt(DRIVER, BigDecimal.TEN, "x", UserRole.OPS_ADMIN);
+        assertThatThrownBy(() -> paymentService.initiateRepayment(DRIVER, RIDER, null, null, null))
+                .isInstanceOf(UnauthorizedException.class);
+    }
+
+    @Test
+    void aFailedRepaymentNeverLooksLikeAFailedBooking() {
+        earningsService.recordSettlementDebt(DRIVER, BigDecimal.TEN, "x", UserRole.OPS_ADMIN);
+        InitiatePaymentResponse checkout = paymentService.initiateRepayment(DRIVER, DRIVER, null, null, null);
+
+        paymentService.handleWebhookFailure(checkout.gatewayReference(), "Declined");
+
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.PAYMENT_FAILED), any());
+        assertThat(owed()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void aBlockedDriverSeesWhatTheyOweAndTheLeastToPayToPostAgain() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("12500.00"), "refunds", UserRole.OPS_ADMIN);
+
+        var balance = earningsService.owedBalance(DRIVER, DRIVER, UserRole.DRIVER);
+
+        assertThat(balance.amountOwed()).isEqualByComparingTo("12500.00");
+        assertThat(balance.owedLimit()).isEqualByComparingTo("10000");
+        assertThat(balance.blocked()).isTrue();
+        assertThat(balance.minimumToUnblock()).isEqualByComparingTo("2500.00");
+        assertThatThrownBy(() -> earningsService.owedBalance(DRIVER, "driver-2", UserRole.DRIVER)).isInstanceOf(UnauthorizedException.class);
+    }
+
+    @Test
+    void aBlockedDriverCanPayJustEnoughToPostAgain() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("12500.00"), "refunds", UserRole.OPS_ADMIN);
+
+        InitiatePaymentResponse checkout = paymentService.initiateRepayment(DRIVER, DRIVER, new BigDecimal("2500"), null, null);
+        verify(gatewayClient).initiate(eq(checkout.gatewayReference()), eq(new BigDecimal("2500.00")), anyString(), any(), anyMap());
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, 250000L, null);
+
+        assertThat(owed()).isEqualByComparingTo("10000.00");
+        assertThat(earningsService.postingStatus(DRIVER).overOwedLimit()).isFalse();
+    }
+
+    @Test
+    void aPartPaymentCannotBeTinyOrMoreThanIsOwed() {
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("1140.00"), "refund", UserRole.OPS_ADMIN);
+
+        assertThatThrownBy(() -> paymentService.initiateRepayment(DRIVER, DRIVER, new BigDecimal("50"), null, null))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("least");
+        assertThatThrownBy(() -> paymentService.initiateRepayment(DRIVER, DRIVER, new BigDecimal("2000"), null, null))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("only owe");
+    }
+
+    @Test
+    void theHistoryShowsEveryChangeAndAddsUpToTheBalance() {
+        String refunded = heldBooking();
+        paidBooking(refunded);
+        earningsService.refund(refunded, "Booking cancelled by DRIVER");
+        earningsService.recordSettlementDebt(DRIVER, new BigDecimal("2000.00"), "manual refund", UserRole.OPS_ADMIN);
+        String completed = heldBooking();
+        paidBooking(completed);
+        earningsService.onTripCompleted(tripCompleted(completed));
+        InitiatePaymentResponse checkout = paymentService.initiateRepayment(DRIVER, DRIVER, null, null, null);
+        BigDecimal owedBeforeCard = owed();
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, owedBeforeCard.movePointRight(2).longValueExact(), null);
+
+        var history = earningsService.owedHistory(DRIVER, PageRequest.of(0, 20), DRIVER, UserRole.DRIVER).content();
+
+        assertThat(history).extracting(e -> e.type()).containsExactly(
+                org.coryd.payment.dto.DebtEntryType.PAID_BY_CARD,
+                org.coryd.payment.dto.DebtEntryType.RECOVERED_FROM_FARE,
+                org.coryd.payment.dto.DebtEntryType.OPS_ADJUSTMENT,
+                org.coryd.payment.dto.DebtEntryType.REFUNDED_TRIP);
+        assertThat(history).extracting(e -> e.balanceAfter().toPlainString())
+                .containsExactly("0.00", "2000.00", "3140.00", "1140.00");
+        assertThat(history.get(0).reference()).isEqualTo(checkout.gatewayReference());
+        assertThat(history.get(1).bookingId()).isEqualTo(completed);
+        assertThat(history.get(3).bookingId()).isEqualTo(refunded);
+        assertThat(history.stream().map(e -> e.amount()).reduce(BigDecimal.ZERO, BigDecimal::add))
+                .as("the entries add up to what's owed now").isEqualByComparingTo(owed());
+    }
+
+    @Test
+    void theDriverIsToldWhenARefundAddsToWhatTheyOweAndWhenTheyPay() {
+        String booking = heldBooking();
+        paidBooking(booking);
+        clearInvocations(kafkaTemplate);
+
+        earningsService.refund(booking, "Booking cancelled by DRIVER");
+        InitiatePaymentResponse checkout = paymentService.initiateRepayment(DRIVER, DRIVER, null, null, null);
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, 114000L, null);
+
+        ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+        verify(kafkaTemplate, times(2)).send(eq(KafkaTopics.DRIVER_OWED_CHANGED), events.capture());
+        var refunded = (org.coryd.common.kafka.events.DriverOwedChangedEvent) events.getAllValues().get(0);
+        var paid = (org.coryd.common.kafka.events.DriverOwedChangedEvent) events.getAllValues().get(1);
+        assertThat(refunded.getReason()).isEqualTo("REFUNDED_TRIP");
+        assertThat(refunded.getChange()).isEqualByComparingTo("1140.00");
+        assertThat(paid.getReason()).isEqualTo("PAID_BY_CARD");
+        assertThat(paid.getAmountOwed()).isEqualByComparingTo("0.00");
+    }
+
+    private BigDecimal owed() {
+        return earningsService.amountOwed(DRIVER);
     }
 
     // ---- subaccount backfill ---------------------------------------------------------------------

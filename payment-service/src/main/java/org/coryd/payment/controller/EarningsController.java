@@ -8,13 +8,18 @@ import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.payment.dto.BookingEarningsItem;
 import org.coryd.payment.dto.CommissionRate;
+import org.coryd.payment.dto.DebtEntryItem;
 import org.coryd.payment.dto.DriverEarningsSummary;
 import org.coryd.payment.dto.DriverPayoutItem;
 import org.coryd.payment.dto.EarningsPeriod;
 import org.coryd.payment.dto.EarningsTripItem;
+import org.coryd.payment.dto.InitiatePaymentResponse;
+import org.coryd.payment.dto.OwedBalanceResponse;
 import org.coryd.payment.dto.PeriodEarningsSummary;
 import org.coryd.payment.dto.RecordSettlementDebtRequest;
+import org.coryd.payment.dto.RepayRequest;
 import org.coryd.payment.service.EarningsService;
+import org.coryd.payment.service.PaymentService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -36,6 +41,7 @@ import java.util.List;
 public class EarningsController {
 
     private final EarningsService earningsService;
+    private final PaymentService paymentService;
 
     @GetMapping("/commission-rate")
     public ApiResponse<CommissionRate> commissionRate() {
@@ -82,7 +88,33 @@ public class EarningsController {
         return ApiResponse.ok(earningsService.getPayouts(driverId, pageable, principal.getUserId(), principal.getActiveRole()));
     }
 
-    /** Ops-only: a refund Paystack took from our balance because the driver's share had already settled. */
+    /** Pay back what's owed from refunded trips by card - opens a Paystack checkout for the whole amount. */
+    @PostMapping("/drivers/{driverId}/repay")
+    public ApiResponse<InitiatePaymentResponse> repay(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                      @PathVariable String driverId,
+                                                      @RequestBody(required = false) RepayRequest request) {
+        return ApiResponse.ok(paymentService.initiateRepayment(driverId, principal.getUserId(),
+                request == null ? null : request.amount(), request == null ? null : request.email(),
+                request == null ? null : request.callbackUrl()));
+    }
+
+    /** What the driver owes from refunded trips, whether that blocks posting, and the least to pay to unblock. */
+    @GetMapping("/drivers/{driverId}/owed")
+    public ApiResponse<OwedBalanceResponse> owed(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String driverId) {
+        return ApiResponse.ok(earningsService.owedBalance(driverId, principal.getUserId(), principal.getActiveRole()));
+    }
+
+    /** Every change to what's owed - refunded trips, amounts taken from fares, card payments, ops corrections. */
+    @GetMapping("/drivers/{driverId}/owed/history")
+    public ApiResponse<PagedResponse<DebtEntryItem>> owedHistory(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                 @PathVariable String driverId,
+                                                                 @RequestParam(defaultValue = "0") int page,
+                                                                 @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, Math.min(size, 50));
+        return ApiResponse.ok(earningsService.owedHistory(driverId, pageable, principal.getUserId(), principal.getActiveRole()));
+    }
+
+    /** Ops-only correction on top of the automatic charge every refund makes. */
     @PostMapping("/drivers/{driverId}/settlement-debt")
     public ApiResponse<Void> recordSettlementDebt(@AuthenticationPrincipal CoRydUserDetails principal,
                                                   @PathVariable String driverId,

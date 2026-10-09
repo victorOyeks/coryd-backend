@@ -137,7 +137,7 @@ public class RouteService {
             throw new BadRequestException("Routes can only be posted up to " + maxDaysAhead + " days ahead");
         }
         requirePostingEligibility(driverId);
-        requirePayoutAccount(driverId);
+        requirePaymentStanding(driverId);
         bookingRepository.lockUser(driverId);
 
         if (request.vehicleId() != null) {
@@ -657,11 +657,20 @@ public class RouteService {
         }
     }
 
-    /** Earnings are split to the driver's bank account when a rider pays, so it must exist before anyone can book.
-     * Applies to approved drivers too. An unreachable payment-service doesn't block, same as the eligibility check. */
-    private void requirePayoutAccount(String driverId) {
-        if (Boolean.FALSE.equals(paymentServiceClient.hasPayoutAccount(driverId))) {
+    /** Earnings are split to the driver's bank account when a rider pays, so it must exist before anyone can book,
+     * and a driver owing too much from refunded trips pays it back first. Applies to approved drivers too. An
+     * unreachable payment-service doesn't block, same as the eligibility check. */
+    private void requirePaymentStanding(String driverId) {
+        PaymentServiceClient.PostingStatus status = paymentServiceClient.postingStatus(driverId);
+        if (status == null) {
+            return;
+        }
+        if (!status.hasPayoutAccount()) {
             throw new BadRequestException("Add the bank account your earnings will be paid to before posting a route");
+        }
+        if (status.overOwedLimit()) {
+            throw new BadRequestException("You owe ₦" + status.amountOwed().toPlainString()
+                    + " from refunded trips - pay it back in the app to post routes again");
         }
     }
 
@@ -728,9 +737,13 @@ public class RouteService {
                 blockedReason = requireApproved ? "VEHICLE_PENDING_APPROVAL" : "VEHICLE_REQUIRED";
             }
         }
-        boolean payoutAccountOk = !Boolean.FALSE.equals(paymentServiceClient.hasPayoutAccount(driverId));
+        PaymentServiceClient.PostingStatus payment = paymentServiceClient.postingStatus(driverId);
+        boolean payoutAccountOk = payment == null || payment.hasPayoutAccount();
         if (blockedReason == null && !payoutAccountOk) {
             blockedReason = "PAYOUT_ACCOUNT_REQUIRED";
+        }
+        if (blockedReason == null && payment != null && payment.overOwedLimit()) {
+            blockedReason = "AMOUNT_OWED";
         }
         if (blockedReason == null && !approved && !verificationPolicy.neverEnforces() && graceOver) {
             blockedReason = "DOCUMENTS_OVERDUE";
@@ -745,6 +758,7 @@ public class RouteService {
                 identityOk,
                 vehicleOk,
                 payoutAccountOk,
+                payment == null ? null : payment.amountOwed(),
                 blockedReason,
                 verificationPolicy.getPrerequisiteLevel().name(),
                 verificationPolicy.getEnforcement().name(),

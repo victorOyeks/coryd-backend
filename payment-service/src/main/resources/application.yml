@@ -45,6 +45,8 @@ jwt:
 # Every fare is split at charge time: the driver's share goes to their Paystack subaccount and
 # settles to their bank on the schedule below. Settlements are mirrored for the earnings screen.
 payment:
+  # A driver owing more than this from refunded trips can't post routes until they pay it back.
+  driver-owed-limit: ${DRIVER_OWED_LIMIT:10000}
   settlement-sync:
     cron: ${PAYMENT_SETTLEMENT_SYNC_CRON:0 15 */6 * * *}
 

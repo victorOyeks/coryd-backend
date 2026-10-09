@@ -9,6 +9,7 @@ import org.coryd.common.kafka.events.DocumentExpiringEvent;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverArrivedEvent;
 import org.coryd.common.kafka.events.DriverEnRouteEvent;
+import org.coryd.common.kafka.events.DriverOwedChangedEvent;
 import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.common.kafka.events.EmergencyContactPayload;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
@@ -89,6 +90,28 @@ public class NotificationEventListener {
         dispatchService.sendPush(event.getRiderId(), "Refund issued",
                 "You've been refunded ₦" + event.getAmount().toPlainString() + " for a cancelled booking.",
                 "REFUND_ISSUED", event.getBookingId());
+    }
+
+    @KafkaListener(topics = KafkaTopics.DRIVER_OWED_CHANGED, groupId = KafkaConfig.GROUP_ID_TRIP)
+    public void onDriverOwedChanged(DriverOwedChangedEvent event) {
+        dispatchService.sendPush(event.getDriverId(), owedTitle(event), owedCopy(event), "DRIVER_OWED_CHANGED", event.getBookingId());
+    }
+
+    static String owedTitle(DriverOwedChangedEvent event) {
+        return "REFUNDED_TRIP".equals(event.getReason()) ? "A trip you were paid for was refunded" : "Payment received";
+    }
+
+    /** Always says what's owed now, and - if posting is blocked - the least to pay to post again. */
+    static String owedCopy(DriverOwedChangedEvent event) {
+        String owed = "₦" + event.getAmountOwed().toPlainString();
+        String blocked = event.isOverLimit()
+                ? " Pay at least ₦" + event.getAmountOwed().subtract(event.getOwedLimit()).toPlainString() + " in the app to post trips again."
+                : "";
+        if ("REFUNDED_TRIP".equals(event.getReason())) {
+            return "₦" + event.getChange().toPlainString() + " will be taken from your next earnings. You now owe " + owed + "." + blocked;
+        }
+        String paid = "Thanks - you've paid ₦" + event.getChange().negate().toPlainString() + ".";
+        return event.getAmountOwed().signum() == 0 ? paid + " You don't owe anything now." : paid + " You still owe " + owed + "." + blocked;
     }
 
     @KafkaListener(topics = KafkaTopics.DRIVER_EN_ROUTE, groupId = KafkaConfig.GROUP_ID_TRIP)

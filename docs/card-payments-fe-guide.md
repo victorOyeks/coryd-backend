@@ -101,7 +101,7 @@ The driver's share of each fare goes to their Paystack account the moment the ri
 | `paidToBank` | **"Paid to your bank"**: total Paystack has paid out |
 | `payoutInProgress` | A payout Paystack has started but not finished. Show it only when it's above 0 |
 | `lastPayoutAt` | "Last payout on …". `null` before the first payout |
-| `settlementDebt` | Money the driver owes back after a refund we paid for them. Show it plainly when above 0; their next fares pay it off |
+| `settlementDebt` | **Owed from refunded trips.** Show it plainly when above 0 (see below) |
 
 `paidToBank` and `payoutInProgress` come from Paystack's records, which we check every few hours, so a payout can take a little while to show up. `earnedSinceLastPayout` is our own figure for trips completed since the last payout. It's a close guide, but Paystack's payout amount is the final word (Paystack's fees and refunds can make it differ slightly).
 
@@ -130,6 +130,60 @@ A row is a completed trip, or a late-cancellation fee the driver kept. `routePos
 ```
 
 `status` is `PENDING`, `PROCESSING`, `SUCCESS` (in the bank) or `FAILED`. Payouts still in progress, which have no date yet, come first, then newest first.
+
+### Owed from refunded trips
+
+A driver is paid their share the moment a rider books. If that trip is cancelled or refunded, Paystack takes the whole refund from CoRyd, so the driver's share of it is owed back:
+
+- Full refund on a ₦1,200 fare: the driver owes ₦1,140, their 95% share.
+- Late rider cancellation: the driver owes their share of the 75% refunded, ₦855. They keep the fee.
+
+It's paid back automatically from the driver's next fares. The driver gets a push each time something changes (type `DRIVER_OWED_CHANGED`):
+- *"A trip you were paid for was refunded"*: "₦1,140 will be taken from your next earnings. You now owe ₦1,140."
+- *"Payment received"*: after they pay by card.
+
+#### Balance card: `GET /payment/earnings/drivers/{driverId}/owed`
+
+```json
+{ "amountOwed": 12500.00, "owedLimit": 10000.00, "blocked": true, "minimumToUnblock": 2500.00 }
+```
+
+| Field | Show as |
+|---|---|
+| `amountOwed` | "Owed from cancelled trips". Hide the card when it's 0 |
+| `blocked` | `true` once `amountOwed` is over `owedLimit` (₦10,000). The driver can't post trips |
+| `minimumToUnblock` | The least they must pay to post again (0 when not blocked) |
+
+#### Paying it back: `POST /payment/earnings/drivers/{driverId}/repay`
+
+```json
+{ "amount": 2500, "callbackUrl": "coryd://payment-return" }
+```
+
+- Leave out `amount` to pay everything owed. A part payment must be at least ₦100 and no more than what's owed.
+- When blocked, offer two buttons: **Pay ₦2,500 to post again** (`amount` = `minimumToUnblock`) and **Pay all ₦12,500** (no `amount`).
+- The response works like a booking payment: open `authorizationUrl` in Paystack checkout. Once Paystack confirms, the amount owed drops and, if it's back under the limit, the driver can post straight away. Re-fetch `/owed` and posting eligibility when they return from checkout.
+- Errors (`400`): *"You don't owe anything"*, *"You only owe ₦…"*, *"The least you can pay is ₦100.00"*.
+
+A blocked driver still has their already-booked trips, and those fares keep paying the debt down too.
+
+#### History: `GET /payment/earnings/drivers/{driverId}/owed/history?page=0&size=20`
+
+Standard paged list, newest first:
+
+```json
+{ "id": "…", "type": "REFUNDED_TRIP", "amount": 1140.00, "balanceAfter": 1140.00,
+  "bookingId": "…", "reference": null, "note": null, "occurredAt": "…" }
+```
+
+| `type` | Means | `amount` |
+|---|---|---|
+| `REFUNDED_TRIP` | A trip they were paid for was refunded (`bookingId` set) | positive |
+| `RECOVERED_FROM_FARE` | Taken from a fare they earned (`bookingId` set) | negative |
+| `PAID_BY_CARD` | They paid by card (`reference` is the Paystack reference) | negative |
+| `OPS_ADJUSTMENT` | A correction by CoRyd (`note` explains it) | positive |
+
+`balanceAfter` is what they owed right after that entry, so the newest row always matches the balance card.
 
 ### Removed driver endpoints
 
