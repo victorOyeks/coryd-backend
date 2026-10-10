@@ -13,6 +13,10 @@ import org.coryd.common.entity.BaseEntity;
 
 import java.time.Instant;
 
+/**
+ * A rider's "Notify me when a driver is heading this way". One-off: desiredDepartureTime, expiring a day
+ * later. Repeating: daysMask (Mon=1 ... Sun=64) and timeMinutes (Lagos time) instead, until expiresAt.
+ */
 @Entity
 @Table(name = "notify_me_requests", schema = "trip")
 @Getter
@@ -34,8 +38,14 @@ public class NotifyMeRequest extends BaseEntity {
     @Column(nullable = false)
     private Double destinationLng;
 
-    @Column(nullable = false)
+    private String originLabel;
+    private String destinationLabel;
+
     private Instant desiredDepartureTime;
+
+    private Integer daysMask;
+
+    private Integer timeMinutes;
 
     @Column(nullable = false)
     private Instant expiresAt;
@@ -43,4 +53,12 @@ public class NotifyMeRequest extends BaseEntity {
     @Builder.Default
     @Column(nullable = false)
     private boolean fulfilled = false;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean cancelled = false;
+
+    public boolean isRepeating() {
+        return daysMask != null;
+    }
 }

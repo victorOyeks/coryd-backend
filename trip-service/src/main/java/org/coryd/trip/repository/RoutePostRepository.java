@@ -50,6 +50,14 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
             """)
     List<RoutePost> findLiveForOps(@Param("boardingFrom") Instant boardingFrom);
 
+    /** Where drivers have been driving lately - what rider demand is matched against. Cancelled routes still say where a driver goes. */
+    List<RoutePost> findByCreatedAtAfter(Instant since);
+
+    List<RoutePost> findByDriverIdAndCreatedAtAfter(String driverId, Instant since);
+
+    /** Upcoming rides in a window - a demand already being served isn't pushed to more drivers. */
+    List<RoutePost> findByStatusInAndDepartureTimeBetween(Collection<RouteStatus> statuses, Instant from, Instant to);
+
     /** A driver's routes that still occupy them - the overlap rule and the active/upcoming split. */
     List<RoutePost> findByDriverIdAndStatusIn(String driverId, Collection<RouteStatus> statuses);
 

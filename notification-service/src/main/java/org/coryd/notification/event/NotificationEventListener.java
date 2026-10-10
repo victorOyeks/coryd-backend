@@ -8,9 +8,9 @@ import org.coryd.common.kafka.events.BookingConfirmedEvent;
 import org.coryd.common.kafka.events.DocumentExpiringEvent;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverArrivedEvent;
+import org.coryd.common.kafka.events.DriverDemandAlertEvent;
 import org.coryd.common.kafka.events.DriverEnRouteEvent;
 import org.coryd.common.kafka.events.DriverOwedChangedEvent;
-import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.common.kafka.events.EmergencyContactPayload;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
@@ -22,6 +22,7 @@ import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.common.kafka.events.TripShareRequestedEvent;
+import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.notification.config.KafkaConfig;
 import org.coryd.notification.service.NotificationDispatchService;
 import org.slf4j.Logger;
@@ -31,12 +32,19 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
 public class NotificationEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationEventListener.class);
+
+    /** "Mon 13 Oct at 7:00 AM", Lagos time. */
+    private static final DateTimeFormatter RIDE_TIME = DateTimeFormatter.ofPattern("EEE d MMM 'at' h:mm a", Locale.ENGLISH)
+            .withZone(ZoneId.of("Africa/Lagos"));
 
     private final NotificationDispatchService dispatchService;
 
@@ -215,10 +223,66 @@ public class NotificationEventListener {
         }
     }
 
+    /** Carries the route, so tapping it opens the ride. */
     @KafkaListener(topics = KafkaTopics.NOTIFY_ME_MATCHED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onNotifyMeMatched(NotifyMeMatchedEvent event) {
-        dispatchService.sendPush(event.getRiderId(), "A ride is available",
-                "A driver just posted a route matching your search.", "NOTIFY_ME_MATCHED", null);
+        dispatchService.sendRoutePush(event.getRiderId(), event.isSeatOpened() ? "A seat just opened" : "A ride is available",
+                notifyMeCopy(event), "NOTIFY_ME_MATCHED", event.getRoutePostId());
+    }
+
+    static String notifyMeCopy(NotifyMeMatchedEvent event) {
+        boolean named = event.getOriginLabel() != null && event.getDestinationLabel() != null && event.getDepartureTime() != null;
+        if (event.isSeatOpened()) {
+            return named
+                    ? "A seat just opened on the " + event.getOriginLabel() + " → " + event.getDestinationLabel() + " ride on "
+                            + RIDE_TIME.format(event.getDepartureTime()) + ". Book it before it goes."
+                    : "A seat just opened on a ride matching your search. Book it before it goes.";
+        }
+        if (!named) {
+            return "A driver just posted a ride matching your search. Book your seat.";
+        }
+        return "A driver is heading from " + event.getOriginLabel() + " to " + event.getDestinationLabel() + " on "
+                + RIDE_TIME.format(event.getDepartureTime()) + ". Book your seat.";
+    }
+
+    @KafkaListener(topics = KafkaTopics.DRIVER_DEMAND_ALERT, groupId = KafkaConfig.GROUP_ID_TRIP)
+    public void onDriverDemandAlert(DriverDemandAlertEvent event) {
+        if (event.getRoutes() == null || event.getRoutes().isEmpty()) {
+            return;
+        }
+        dispatchService.sendPush(event.getDriverId(), "Riders are looking for a ride", demandCopy(event), "DRIVER_DEMAND_ALERT", null);
+    }
+
+    /** One route is named; several are summed up so the push stays short. */
+    static String demandCopy(DriverDemandAlertEvent event) {
+        if (event.getRoutes().size() > 1) {
+            return "Riders are looking for " + event.getRoutes().size() + " routes you drive tomorrow. See them in the app and post a ride.";
+        }
+        DriverDemandAlertEvent.DemandRoute route = event.getRoutes().get(0);
+        String where = route.getOriginLabel() != null && route.getDestinationLabel() != null
+                ? route.getOriginLabel() + " → " + route.getDestinationLabel()
+                : "a route you drive";
+        return count(route.getRiderCount(), "rider wants", "riders want") + " " + where + " tomorrow "
+                + window(route.getWindowStart(), route.getWindowEnd()) + ". Post a ride.";
+    }
+
+    /** "around 7:15 AM", "between 6:30 and 8:10 AM", or "between 11:30 AM and 1:00 PM". */
+    static String window(String start, String end) {
+        if (start == null || end == null) {
+            return "";
+        }
+        if (start.equals(end)) {
+            return "around " + clock(start, true);
+        }
+        boolean sameHalf = (Integer.parseInt(start.substring(0, 2)) < 12) == (Integer.parseInt(end.substring(0, 2)) < 12);
+        return "between " + clock(start, !sameHalf) + " and " + clock(end, true);
+    }
+
+    /** "07:05" as "7:05 AM" - or "7:05" when the AM/PM is said once at the end. */
+    static String clock(String hhmm, boolean withHalf) {
+        int hour = Integer.parseInt(hhmm.substring(0, 2));
+        int h = hour % 12 == 0 ? 12 : hour % 12;
+        return h + ":" + hhmm.substring(3) + (withHalf ? (hour < 12 ? " AM" : " PM") : "");
     }
 
     @KafkaListener(topics = KafkaTopics.SEAT_RESERVED, groupId = KafkaConfig.GROUP_ID_TRIP)

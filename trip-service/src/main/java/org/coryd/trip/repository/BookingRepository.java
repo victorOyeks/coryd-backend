@@ -64,6 +64,8 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
      * deliberately excluded from that list so an unanswered offer never blocks booking elsewhere). */
     Optional<Booking> findFirstByRiderIdAndRoutePostIdAndStatus(String riderId, String routePostId, BookingStatus status);
 
+    boolean existsByRiderIdAndRoutePostIdAndStatusIn(String riderId, String routePostId, Collection<BookingStatus> statuses);
+
     /** Trip History screen - search matches the "origin -> destination" snapshot, so it works without joining route_posts. */
     @Query("""
             select b from Booking b

@@ -22,6 +22,58 @@ class NotificationCopyTest {
     private final NotificationEventListener listener = new NotificationEventListener(dispatch);
 
     @Test
+    void aWaitingRiderIsToldWhereAndWhenAndThePushOpensTheRide() {
+        listener.onNotifyMeMatched(org.coryd.common.kafka.events.NotifyMeMatchedEvent.builder()
+                .riderId("rider-1").routePostId("route-9").originLabel("Ikorodu").destinationLabel("Victoria Island")
+                .departureTime(Instant.parse("2026-10-13T06:00:00Z")).build());
+
+        verify(dispatch).sendRoutePush(eq("rider-1"), eq("A ride is available"),
+                eq("A driver is heading from Ikorodu to Victoria Island on Tue 13 Oct at 7:00 AM. Book your seat."),
+                eq("NOTIFY_ME_MATCHED"), eq("route-9"));
+    }
+
+    @Test
+    void aRiderIsToldWhenASeatOpensOnARideThatHadFilled() {
+        listener.onNotifyMeMatched(org.coryd.common.kafka.events.NotifyMeMatchedEvent.builder()
+                .riderId("rider-1").routePostId("route-9").originLabel("Ikorodu").destinationLabel("Victoria Island")
+                .departureTime(Instant.parse("2026-10-13T06:00:00Z")).seatOpened(true).build());
+
+        verify(dispatch).sendRoutePush(eq("rider-1"), eq("A seat just opened"),
+                eq("A seat just opened on the Ikorodu → Victoria Island ride on Tue 13 Oct at 7:00 AM. Book it before it goes."),
+                eq("NOTIFY_ME_MATCHED"), eq("route-9"));
+    }
+
+    @Test
+    void aDriverIsToldAboutOneRouteByNameOrSeveralInSum() {
+        var one = org.coryd.common.kafka.events.DriverDemandAlertEvent.builder().driverId("driver-1").routes(List.of(
+                demandRoute("Ikorodu", "Victoria Island", "06:30", "08:10", 9))).build();
+        listener.onDriverDemandAlert(one);
+        verify(dispatch).sendPush(eq("driver-1"), eq("Riders are looking for a ride"),
+                eq("9 riders want Ikorodu → Victoria Island tomorrow between 6:30 and 8:10 AM. Post a ride."), eq("DRIVER_DEMAND_ALERT"), any());
+
+        var several = org.coryd.common.kafka.events.DriverDemandAlertEvent.builder().driverId("driver-2").routes(List.of(
+                demandRoute("Ikorodu", "Victoria Island", "07:00", "08:00", 9), demandRoute("Ikorodu", "Lekki", "17:00", "18:00", 5))).build();
+        listener.onDriverDemandAlert(several);
+        verify(dispatch).sendPush(eq("driver-2"), any(),
+                eq("Riders are looking for 2 routes you drive tomorrow. See them in the app and post a ride."), any(), any());
+    }
+
+    @Test
+    void timeWindowsReadLikeAClock() {
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.window("07:15", "07:15")).isEqualTo("around 7:15 AM");
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.window("06:30", "08:10")).isEqualTo("between 6:30 and 8:10 AM");
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.window("11:30", "13:00")).isEqualTo("between 11:30 AM and 1:00 PM");
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.window("00:05", "00:05")).isEqualTo("around 12:05 AM");
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.window("17:00", "18:30")).isEqualTo("between 5:00 and 6:30 PM");
+    }
+
+    private static org.coryd.common.kafka.events.DriverDemandAlertEvent.DemandRoute demandRoute(String from, String to, String start,
+                                                                                                String end, int riders) {
+        return org.coryd.common.kafka.events.DriverDemandAlertEvent.DemandRoute.builder()
+                .originLabel(from).destinationLabel(to).windowStart(start).windowEnd(end).riderCount(riders).build();
+    }
+
+    @Test
     void aDriverIsToldWhatARefundAddsAndHowToPostAgainWhenBlocked() {
         listener.onDriverOwedChanged(owed("REFUNDED_TRIP", "1140.00", "1140.00", false));
         verify(dispatch).sendPush(eq("driver-1"), eq("A trip you were paid for was refunded"),

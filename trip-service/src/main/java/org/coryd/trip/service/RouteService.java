@@ -11,18 +11,17 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
-import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.RoutePublishedEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.PaymentServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
-import org.coryd.trip.config.policy.DriverVerificationPolicy;
 import org.coryd.trip.config.MatchingProperties;
-import org.coryd.trip.dto.DriverPostingEligibilityResponse;
+import org.coryd.trip.config.policy.DriverVerificationPolicy;
 import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
+import org.coryd.trip.dto.DriverPostingEligibilityResponse;
 import org.coryd.trip.dto.MultiStopRoutePreview;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.NearbyRidePin;
@@ -30,26 +29,24 @@ import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.RoutePreview;
-import org.coryd.trip.event.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.DriverVerificationCache;
 import org.coryd.trip.entity.FareReport;
-import org.coryd.trip.entity.NotifyMeRequest;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
+import org.coryd.trip.event.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.coryd.trip.repository.FareReportRepository;
-import org.coryd.trip.repository.NotifyMeRequestRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -99,7 +96,8 @@ public class RouteService {
     private final RoutePostRepository routePostRepository;
     private final FareReportRepository fareReportRepository;
     private final SuggestedFareRangeRepository suggestedFareRangeRepository;
-    private final NotifyMeRequestRepository notifyMeRequestRepository;
+    private final NotifyMeService notifyMeService;
+    private final DemandService demandService;
     private final BookingRepository bookingRepository;
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
     private final RatingRepository ratingRepository;
@@ -298,30 +296,11 @@ public class RouteService {
         if (routePostRepository.reopenIfSeatsAvailable(routePostId) == 0) {
             return;
         }
-        routePostRepository.findById(routePostId).ifPresent(this::notifyMatchingWaitlist);
+        routePostRepository.findById(routePostId).ifPresent(notifyMeService::notifySeatOpened);
     }
 
     private void notifyMatchingWaitlist(RoutePost route) {
-        double radiusKm = matchingProperties.getGeoToleranceMeters() / 1000.0;
-        Instant earliest = route.getDepartureTime().minus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
-        Instant latest = route.getDepartureTime().plus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
-
-        List<NotifyMeRequest> matches = notifyMeRequestRepository.findMatching(
-                Instant.now(), earliest, latest,
-                route.getOriginLat(), route.getOriginLng(),
-                route.getDestinationLat(), route.getDestinationLng(),
-                radiusKm
-        );
-
-        for (NotifyMeRequest request : matches) {
-            request.setFulfilled(true);
-            notifyMeRequestRepository.save(request);
-            kafkaTemplate.send(KafkaTopics.NOTIFY_ME_MATCHED, NotifyMeMatchedEvent.builder()
-                    .notifyMeRequestId(request.getId())
-                    .riderId(request.getRiderId())
-                    .routePostId(route.getId())
-                    .build());
-        }
+        notifyMeService.notifyMatching(route);
     }
 
     public List<RideSearchResult> search(SearchRequest request) {
@@ -346,6 +325,9 @@ public class RouteService {
      * sessionId skips registration entirely - a real search always has an authenticated caller. */
     public List<RideSearchResult> search(SearchRequest request, String sessionId, String riderId) {
         List<RideSearchResult> results = search(request);
+        if (riderId != null) {
+            demandService.recordSearch(riderId, request, results.size());
+        }
         if (sessionId != null) {
             liveSearchSessionRegistry.registerOrRefresh(sessionId, riderId, request, results);
         }
@@ -588,19 +570,6 @@ public class RouteService {
 
     public Optional<SuggestedFareRange> suggestedFare(String originLabel, String destinationLabel) {
         return suggestedFareRangeRepository.findByCorridorKey(corridorKey(originLabel, destinationLabel));
-    }
-
-    @Transactional
-    public NotifyMeRequest requestNotification(String riderId, SearchRequest request) {
-        return notifyMeRequestRepository.save(NotifyMeRequest.builder()
-                .riderId(riderId)
-                .originLat(request.originLat())
-                .originLng(request.originLng())
-                .destinationLat(request.destinationLat())
-                .destinationLng(request.destinationLng())
-                .desiredDepartureTime(request.desiredDepartureTime())
-                .expiresAt(Instant.now().plus(24, ChronoUnit.HOURS))
-                .build());
     }
 
     /** "Start Trip" button on the Ready to Depart screen - moves the route out of the booking window and into its in-progress phase, where manifest marking and Complete Trip become available. */

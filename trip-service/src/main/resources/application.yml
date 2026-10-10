@@ -111,3 +111,10 @@ springdoc:
 # Routes cannot depart further ahead than the payout settlement cycle
 trip:
   max-days-ahead: ${TRIP_MAX_DAYS_AHEAD:3}
+  # Rider demand: drivers see a route once this many different riders want it, and get the 7 PM push
+  # when it reaches min-riders-for-alert and matches their own trips. See DemandProperties.
+  demand:
+    min-riders-shown: ${DEMAND_MIN_RIDERS_SHOWN:3}
+    min-riders-for-alert: ${DEMAND_MIN_RIDERS_FOR_ALERT:5}
+    match-radius-km: ${DEMAND_MATCH_RADIUS_KM:5}
+    max-alerts-per-week: ${DEMAND_MAX_ALERTS_PER_WEEK:3}

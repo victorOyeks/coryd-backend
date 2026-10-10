@@ -36,6 +36,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic driverDemandAlertTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_DEMAND_ALERT).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic seatReservedTopic() {
         return TopicBuilder.name(KafkaTopics.SEAT_RESERVED).partitions(3).replicas(1).build();
     }

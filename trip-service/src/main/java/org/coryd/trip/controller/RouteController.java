@@ -13,7 +13,6 @@ import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
-import org.coryd.trip.entity.NotifyMeRequest;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
 import org.coryd.trip.service.RouteService;
@@ -107,11 +106,6 @@ public class RouteController {
     public ApiResponse<Optional<SuggestedFareRange>> suggestedFare(@RequestParam String originLabel,
                                                                      @RequestParam String destinationLabel) {
         return ApiResponse.ok(routeService.suggestedFare(originLabel, destinationLabel));
-    }
-
-    @PostMapping("/notify-me/riders/{riderId}")
-    public ApiResponse<NotifyMeRequest> notifyMe(@PathVariable String riderId, @Valid @RequestBody SearchRequest request) {
-        return ApiResponse.ok(routeService.requestNotification(riderId, request));
     }
 
     @DeleteMapping("/{routePostId}")

@@ -67,7 +67,8 @@ import static org.mockito.Mockito.verify;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({BookingService.class, RouteService.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class})
+@Import({BookingService.class, RouteService.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
+        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class})
 class BookingFlowIntegrationTest {
 
     @Container
