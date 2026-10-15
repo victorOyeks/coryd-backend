@@ -73,4 +73,9 @@ public class Booking extends BaseEntity {
     private String pickupLabel;
     private Double pickupLat;
     private Double pickupLng;
+
+    /** Where the rider gets out, when they join part-way - null means the route's end. */
+    private String dropoffLabel;
+    private Double dropoffLat;
+    private Double dropoffLng;
 }

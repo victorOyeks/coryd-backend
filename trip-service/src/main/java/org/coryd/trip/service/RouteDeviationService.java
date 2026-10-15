@@ -34,6 +34,8 @@ public class RouteDeviationService {
     private static final Duration REROUTE_COOLDOWN = Duration.ofSeconds(75);
 
     private static final String POLYLINE_KEY_PREFIX = "trip:route:polyline:";
+    /** The line planned at departure - reroutes never move it, so the safety check measures from it. */
+    public static final String BASELINE_KEY_PREFIX = "trip:route:baseline:";
     private static final Duration POLYLINE_TTL = Duration.ofHours(6);
     private static final String DEVIATION_COUNT_KEY_PREFIX = "trip:route:deviation:count:";
     private static final Duration DEVIATION_COUNT_TTL = Duration.ofMinutes(2);
@@ -98,6 +100,7 @@ public class RouteDeviationService {
         MultiStopRoutePreview preview = routeService.getMultiStopRoutePreview(routePostId);
         if (preview.overviewPolyline() != null) {
             redisTemplate.opsForValue().set(polylineKey, preview.overviewPolyline(), POLYLINE_TTL);
+            redisTemplate.opsForValue().setIfAbsent(BASELINE_KEY_PREFIX + routePostId, preview.overviewPolyline(), POLYLINE_TTL);
         }
     }
 
@@ -117,7 +120,7 @@ public class RouteDeviationService {
     /** Nearest distance from a point to any SEGMENT of the polyline, not just the nearest vertex -
      * overview polylines have long, sparse stretches on highways where a vertex-only check would
      * false-positive a deviation the driver never actually made. */
-    private double distanceToPolylineMeters(double lat, double lng, List<LatLng> routePoints) {
+    static double distanceToPolylineMeters(double lat, double lng, List<LatLng> routePoints) {
         double min = Double.MAX_VALUE;
         for (int i = 0; i < routePoints.size() - 1; i++) {
             double d = distanceToSegmentMeters(lat, lng, routePoints.get(i), routePoints.get(i + 1));
@@ -131,7 +134,7 @@ public class RouteDeviationService {
     /** Projects the point onto the segment (flat-plane approximation - fine at the scale of two
      * adjacent polyline vertices) and measures the real Haversine distance to the closest point
      * on it, clamped to the segment's endpoints. */
-    private double distanceToSegmentMeters(double lat, double lng, LatLng a, LatLng b) {
+    private static double distanceToSegmentMeters(double lat, double lng, LatLng a, LatLng b) {
         double dx = b.lng() - a.lng();
         double dy = b.lat() - a.lat();
         double lengthSquared = dx * dx + dy * dy;

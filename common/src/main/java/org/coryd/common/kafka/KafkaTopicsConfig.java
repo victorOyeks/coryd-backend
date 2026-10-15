@@ -134,4 +134,29 @@ public class KafkaTopicsConfig {
     public NewTopic documentExpiringTopic() {
         return TopicBuilder.name(KafkaTopics.DOCUMENT_EXPIRING).partitions(3).replicas(1).build();
     }
+
+    @Bean
+    public NewTopic userSuspendedTopic() {
+        return TopicBuilder.name(KafkaTopics.USER_SUSPENDED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic userReinstatedTopic() {
+        return TopicBuilder.name(KafkaTopics.USER_REINSTATED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic tripSafetyCheckTopic() {
+        return TopicBuilder.name(KafkaTopics.TRIP_SAFETY_CHECK).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic tripSafetyEscalatedTopic() {
+        return TopicBuilder.name(KafkaTopics.TRIP_SAFETY_ESCALATED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic identityVerificationChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.IDENTITY_VERIFICATION_CHANGED).partitions(3).replicas(1).build();
+    }
 }

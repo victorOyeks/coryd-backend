@@ -242,7 +242,6 @@ public class BookingController {
     /** Who triggered it is the caller - triggeredBy is still accepted from older apps but no longer used. */
     @PostMapping("/{bookingId}/sos")
     public ApiResponse<SosIncident> sos(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String bookingId,
-                                         @RequestParam(required = false) String triggeredBy,
                                          @RequestParam(required = false) Double latitude,
                                          @RequestParam(required = false) Double longitude) {
         return ApiResponse.ok(bookingService.triggerSos(bookingId, principal.getUserId(), latitude, longitude));

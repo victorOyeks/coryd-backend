@@ -8,6 +8,7 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.trip.config.DemandProperties;
+import org.coryd.trip.config.GeoCapabilities;
 import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.dto.NotifyMeCreateRequest;
 import org.coryd.trip.dto.NotifyMeResponse;
@@ -27,7 +28,10 @@ import java.time.LocalTime;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -46,6 +50,9 @@ public class NotifyMeService {
     private final DemandProperties demandProperties;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final BookingRepository bookingRepository;
+    private final UserBlockService userBlockService;
+    private final RouteMatcher routeMatcher;
+    private final GeoCapabilities geoCapabilities;
 
     /** Holding a seat (paying for it) or seated on the ride. */
     private static final List<BookingStatus> BOOKED = Stream.concat(Stream.of(BookingStatus.HELD),
@@ -169,6 +176,45 @@ public class NotifyMeService {
                 .stream()
                 .filter(r -> minutesApart(r.getTimeMinutes(), departureMinutes) <= tolerance)
                 .forEach(r -> tell(r, route));
+
+        if (routeMatcher.enabled()) {
+            notifyAlongTheWay(route, now, tolerance);
+        }
+    }
+
+    /**
+     * Riders the route passes, not just ones at its ends - their wait is matched against when the car
+     * reaches their pickup. Anyone already told through the end-to-end match above isn't told twice.
+     */
+    private void notifyAlongTheWay(RoutePost route, Instant now, int tolerance) {
+        List<NotifyMeRequest> waiting = geoCapabilities.postgis()
+                ? notifyMeRequestRepository.findWaitingAlongRoute(route.getId(), now, matchingProperties.getWalkMeters())
+                : notifyMeRequestRepository.findByCancelledFalseAndFulfilledFalseAndExpiresAtAfter(now);
+        for (NotifyMeRequest request : waiting) {
+            Optional<RouteMatcher.Match> match = routeMatcher.match(route, request.getOriginLat(), request.getOriginLng(),
+                    request.getDestinationLat(), request.getDestinationLng());
+            if (match.isEmpty()) {
+                continue;
+            }
+            Instant pickup = match.get().pickup().time();
+            if (request.isRepeating()) {
+                ZonedDateTime local = GeoMath.lagos(pickup);
+                if ((request.getDaysMask() & GeoMath.dayBit(local.getDayOfWeek())) == 0
+                        || minutesApart(request.getTimeMinutes(), local.getHour() * 60 + local.getMinute()) > tolerance) {
+                    continue;
+                }
+            } else {
+                if (Duration.between(request.getDesiredDepartureTime(), pickup).abs().toMinutes() > tolerance) {
+                    continue;
+                }
+                if (notifyMeRequestRepository.hasSeatOnAnnouncedRide(request.getId(), request.getRiderId(), BOOKED_NAMES)) {
+                    request.setFulfilled(true);
+                    notifyMeRequestRepository.save(request);
+                    continue;
+                }
+            }
+            tell(request, route);
+        }
     }
 
     /**
@@ -177,21 +223,30 @@ public class NotifyMeService {
      */
     @Transactional
     public void notifySeatOpened(RoutePost route) {
+        Set<String> told = new HashSet<>();
         for (NotifyMeRequest request : notifyMeRequestRepository.findToldAboutRide(route.getId(), Instant.now())) {
             if (request.getRiderId().equals(route.getDriverId()) || onRide(request.getRiderId(), route)
                     || notifyMeRequestRepository.claimSeatOpened(request.getId(), route.getId()) == 0) {
                 continue;
             }
-            send(request, route, true);
+            // Every request of theirs is claimed above, but the rider hears once.
+            if (told.add(request.getRiderId())) {
+                send(request, route, true);
+            }
         }
         notifyMatching(route);
     }
 
     private void tell(NotifyMeRequest request, RoutePost route) {
-        if (request.getRiderId().equals(route.getDriverId()) || onRide(request.getRiderId(), route)) {
+        if (request.getRiderId().equals(route.getDriverId()) || onRide(request.getRiderId(), route)
+                || userBlockService.keptApart(request.getRiderId(), route.getDriverId())) {
             return;
         }
-        if (notifyMeRequestRepository.recordNotification(UUID.randomUUID().toString(), request.getId(), route.getId()) == 0) {
+        // Checked before recording: the ride is still recorded against this request (so a seat on it
+        // fulfils this request too), but a rider already told through another request isn't pushed again.
+        boolean alreadyTold = notifyMeRequestRepository.riderToldAboutRide(request.getRiderId(), route.getId());
+        if (notifyMeRequestRepository.recordNotification(UUID.randomUUID().toString(), request.getId(), route.getId()) == 0
+                || alreadyTold) {
             return;
         }
         send(request, route, false);

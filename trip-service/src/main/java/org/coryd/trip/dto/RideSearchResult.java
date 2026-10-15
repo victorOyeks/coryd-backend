@@ -28,6 +28,11 @@ public record RideSearchResult(
         Double ratingAvg,
         long ratingCount,
         Integer pickupEtaMinutes,
-        String routeNote
+        String routeNote,
+        /** True when the rider joins part-way: pickup and dropoff are on the driver's road, not at its ends. */
+        boolean alongTheWay,
+        /** Where to meet the car and when - null when the rider is matched at the route's start, as before. */
+        RideStop pickup,
+        RideStop dropoff
 ) {
 }

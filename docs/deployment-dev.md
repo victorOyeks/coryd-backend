@@ -87,6 +87,19 @@ Fill in at minimum:
 - `PAYSTACK_SECRET_KEY` — test key to start
 - `TERMII_API_KEY` / `TERMII_SENDER_ID`
 - `REPORT_ENABLED` / `REPORT_TIMEZONE` / `REPORT_RECIPIENTS` / `REPORT_LOGO_URL` — ops reports emailed at 06:00 Africa/Lagos (daily), Mon 06:05 (weekly), 1st 06:10 (monthly). `REPORT_RECIPIENTS` is comma-separated.
+- `SOS_OPS_PHONES` / `SOS_OPS_EMAILS` — every SOS is texted to each ops phone and emailed to each ops address, comma-separated. Leave both empty and ops hear nothing (the service logs an error on each SOS).
+- `IDENTITY_VERIFICATION_ENFORCEMENT` (trip-service) — `STRICT` (default): nobody books (riders) or posts routes (drivers) until their NIN + selfie check is approved, by Prembly or ops (Ops Console identity queue). `OFF` only where nobody can be verified yet. On dev, the seeded test accounts start verified.
+- `PREMBLY_NIN_CHECK` (profile-service) — which Prembly product checks riders: `NIN_WITH_FACE` (default; NIN record + the selfie matched to the NIN photo) or `NIN_BASIC` (fallback if the account doesn't have NIN with face: NIN record + a liveness check on the selfie - proves a real NIN, the rider's own name and a live person, but doesn't compare the face). Thresholds: `PREMBLY_FACE_MATCH_THRESHOLD` (70-100, sent to Prembly as `face_confidence_threshold`, default `80`) and `PREMBLY_LIVENESS_THRESHOLD` (percent, Basic only, default `80`). Paths are overridable (`PREMBLY_NIN_FACE_PATH`, `PREMBLY_NIN_BASIC_PATH`, `PREMBLY_LIVENESS_PATH`).
+- `TRIP_SAFETY_ENABLED`, `TRIP_SAFETY_STOP_MINUTES` (10), `TRIP_SAFETY_STOP_RADIUS_METERS` (50), `TRIP_SAFETY_KNOWN_STOP_RADIUS_METERS` (300), `TRIP_SAFETY_OFF_ROUTE_METERS` (1000), `TRIP_SAFETY_OFF_ROUTE_MINUTES` (5), `TRIP_SAFETY_SIGNAL_LOST_MINUTES` (10), `TRIP_SAFETY_ANSWER_MINUTES` (3) (trip-service) — the "Are you OK?" checks. Unanswered checks go to the same `SOS_OPS_PHONES` / `SOS_OPS_EMAILS`. `ROUTE_TEMPLATES_CRON` (default hourly at :05) is how often regular routes post their trips.
+- `MATCHING_ALONG_ROUTE_ENABLED` / `MATCHING_WALK_METERS` / `MATCHING_MAX_TRIP_MINUTES` (trip-service, defaults `true` / `1000` / `240`) — along-the-way matching: riders whose start and end are both within the walk of a driver's road, in order. Switching it off also lifts the "pickup must be on the route" rule.
+- `MATCHING_TIME_TOLERANCE_MINUTES` / `MATCHING_GEO_TOLERANCE_METERS` (trip-service, defaults `60` / `2000`) — how close a trip's time and ends must be to a rider's for search and notify-me. Commuter defaults; widen only if searches come back empty too often (pilot metrics: search success rate).
+- **PostGIS (along-the-way matching).** trip-service uses PostGIS when the database has it, and matches in Java otherwise - it starts either way. To turn it on, once, as the Postgres admin (the app user isn't a superuser):
+  ```bash
+  sudo apt install postgresql-16-postgis-3   # match the server's Postgres major version
+  sudo -u postgres psql -d coryd -c "CREATE EXTENSION IF NOT EXISTS postgis SCHEMA public;"
+  sudo systemctl restart coryd-trip-service   # the next start adds the road column, its index and trigger
+  ```
+  Install it in `public`: trip-service's connection searches `trip,public`. The log line "Along-the-way matching uses PostGIS (indexed)" confirms it (on the first search). `MATCHING_USE_POSTGIS=false` forces the Java path.
 
 
 ### Firing a report on demand

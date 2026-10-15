@@ -17,8 +17,10 @@ import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.PaymentServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
+import org.coryd.trip.config.GeoCapabilities;
 import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.config.policy.DriverVerificationPolicy;
+import org.coryd.trip.config.policy.IdentityVerificationPolicy;
 import org.coryd.trip.dto.DirectionsMultiStopResult;
 import org.coryd.trip.dto.DistanceMatrixResult;
 import org.coryd.trip.dto.DriverPostingEligibilityResponse;
@@ -28,6 +30,7 @@ import org.coryd.trip.dto.NearbyRidePin;
 import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
+import org.coryd.trip.dto.RideStop;
 import org.coryd.trip.dto.RoutePreview;
 import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
@@ -41,7 +44,9 @@ import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.coryd.trip.repository.FareReportRepository;
 import org.coryd.trip.repository.RatingRepository;
+import org.coryd.trip.repository.IdentityVerificationCacheRepository;
 import org.coryd.trip.repository.RoutePostRepository;
+import org.coryd.trip.repository.SuspendedUserRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -58,6 +63,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -100,6 +108,10 @@ public class RouteService {
     private final DemandService demandService;
     private final BookingRepository bookingRepository;
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
+    private final SuspendedUserRepository suspendedUserRepository;
+    private final UserBlockService userBlockService;
+    private final IdentityVerificationCacheRepository identityVerificationCacheRepository;
+    private final IdentityVerificationPolicy identityVerificationPolicy;
     private final RatingRepository ratingRepository;
     private final ProfileServiceClient profileServiceClient;
     private final PaymentServiceClient paymentServiceClient;
@@ -109,6 +121,8 @@ public class RouteService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ChatService chatService;
     private final LiveSearchSessionRegistry liveSearchSessionRegistry;
+    private final RouteMatcher routeMatcher;
+    private final GeoCapabilities geoCapabilities;
     private final ApplicationEventPublisher eventPublisher;
     private final TripScheduleService tripScheduleService;
 
@@ -125,6 +139,12 @@ public class RouteService {
 
     @Transactional
     public RoutePost post(String driverId, String callerId, PostRouteRequest request) {
+        return post(driverId, callerId, request, null);
+    }
+
+    /** routeTemplateId marks a trip posted from a driver's regular route - every check is the same as by hand. */
+    @Transactional
+    public RoutePost post(String driverId, String callerId, PostRouteRequest request, String routeTemplateId) {
         if (!callerId.equals(driverId)) {
             throw new UnauthorizedException("Only this driver can post their own route");
         }
@@ -133,6 +153,12 @@ public class RouteService {
         }
         if (request.departureTime().isAfter(Instant.now().plus(Duration.ofDays(maxDaysAhead)))) {
             throw new BadRequestException("Routes can only be posted up to " + maxDaysAhead + " days ahead");
+        }
+        if (suspendedUserRepository.existsById(driverId)) {
+            throw new BadRequestException("This account is suspended. Contact CoRyd support.");
+        }
+        if (identityVerificationPolicy.blocksUnverified() && !identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(driverId)) {
+            throw new BadRequestException("Verify your identity to post a route");
         }
         requirePostingEligibility(driverId);
         requirePaymentStanding(driverId);
@@ -165,8 +191,10 @@ public class RouteService {
             }
         }
 
+        RoutePreview preview = previewFor(request);
         RoutePost route = RoutePost.builder()
-                .estimatedDurationMinutes(estimateDurationMinutes(request))
+                .estimatedDurationMinutes(preview == null || preview.durationMinutes() <= 0 ? null : preview.durationMinutes())
+                .routePolyline(preview == null ? null : preview.overviewPolyline())
                 .driverId(driverId)
                 .vehicleId(request.vehicleId())
                 .originLabel(request.originLabel())
@@ -181,6 +209,7 @@ public class RouteService {
                 .farePerSeat(request.farePerSeat())
                 .status(RouteStatus.PUBLISHED)
                 .routeNote(request.routeNote())
+                .routeTemplateId(routeTemplateId)
                 .build();
         tripScheduleService.requireNoOverlap(driverId, route);
         routePostRepository.save(route);
@@ -221,11 +250,11 @@ public class RouteService {
 
     /** Driving time for the overlap window - a Maps failure falls back to the default rather than
      * blocking the post. Same cached preview the route screen already uses. */
-    private Integer estimateDurationMinutes(PostRouteRequest request) {
+    /** Driving time and the road line, from one Directions call - null when Maps is unavailable. */
+    private RoutePreview previewFor(PostRouteRequest request) {
         try {
-            RoutePreview preview = mapsService.getRoutePreview(request.originLat(), request.originLng(),
+            return mapsService.getRoutePreview(request.originLat(), request.originLng(),
                     request.destinationLat(), request.destinationLng());
-            return preview == null || preview.durationMinutes() <= 0 ? null : preview.durationMinutes();
         } catch (Exception e) {
             log.warn("No driving time for new route {} -> {}: {}", request.originLabel(), request.destinationLabel(), e.getMessage());
             return null;
@@ -304,18 +333,54 @@ public class RouteService {
     }
 
     public List<RideSearchResult> search(SearchRequest request) {
+        return searchAsRider(request, null);
+    }
+
+    /**
+     * search() without the drivers this rider is kept apart from (blocked either way). Two kinds of match,
+     * merged: routes starting and ending near the rider's ends (as before), and routes whose road passes
+     * within a walk of both, in order, reaching the rider's pickup around the time they want - see
+     * RouteMatcher. Sorted by when the car reaches the rider.
+     */
+    public List<RideSearchResult> searchAsRider(SearchRequest request, String riderId) {
         double radiusKm = matchingProperties.getGeoToleranceMeters() / 1000.0;
-        Instant earliest = request.desiredDepartureTime().minus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
-        Instant latest = request.desiredDepartureTime().plus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
+        int tolerance = matchingProperties.getTimeToleranceMinutes();
+        Instant earliest = request.desiredDepartureTime().minus(tolerance, ChronoUnit.MINUTES);
+        Instant latest = request.desiredDepartureTime().plus(tolerance, ChronoUnit.MINUTES);
 
-        List<RoutePost> matches = routePostRepository.search(
-                earliest, latest,
-                request.originLat(), request.originLng(),
-                request.destinationLat(), request.destinationLng(),
-                radiusKm
-        );
+        Map<String, RoutePost> routes = new LinkedHashMap<>();
+        routePostRepository.search(earliest, latest, request.originLat(), request.originLng(),
+                request.destinationLat(), request.destinationLng(), radiusKm).forEach(r -> routes.put(r.getId(), r));
+        Set<String> endToEnd = Set.copyOf(routes.keySet());
 
-        return enrich(matches, request.originLat(), request.originLng());
+        Map<String, RouteMatcher.Match> along = new HashMap<>();
+        if (routeMatcher.enabled()) {
+            // A route can leave before the window and still reach a rider partway along inside it.
+            Instant leavesFrom = earliest.minus(matchingProperties.getMaxTripMinutes(), ChronoUnit.MINUTES);
+            List<RoutePost> candidates = geoCapabilities.postgis()
+                    ? routePostRepository.findPassingNear(leavesFrom, latest, request.originLat(), request.originLng(),
+                            request.destinationLat(), request.destinationLng(), matchingProperties.getWalkMeters())
+                    : routePostRepository.findBookableDepartingBetween(leavesFrom, latest);
+            for (RoutePost route : candidates) {
+                routeMatcher.match(route, request.originLat(), request.originLng(), request.destinationLat(), request.destinationLng())
+                        .filter(m -> !m.pickup().time().isBefore(earliest) && !m.pickup().time().isAfter(latest))
+                        .ifPresent(m -> {
+                            along.put(route.getId(), m);
+                            routes.putIfAbsent(route.getId(), route);
+                        });
+            }
+        }
+
+        List<RoutePost> matched = withoutBlocked(new ArrayList<>(routes.values()), riderId).stream()
+                .sorted(Comparator.comparing((RoutePost r) -> along.containsKey(r.getId()) ? along.get(r.getId()).pickup().time() : r.getDepartureTime()))
+                .toList();
+        Set<String> partWay = along.keySet().stream().filter(id -> !endToEnd.contains(id)).collect(Collectors.toSet());
+        return enrich(matched, request.originLat(), request.originLng(), along, partWay);
+    }
+
+    private List<RoutePost> withoutBlocked(List<RoutePost> routes, String riderId) {
+        Set<String> apart = userBlockService.keptApartFrom(riderId);
+        return apart.isEmpty() ? routes : routes.stream().filter(r -> !apart.contains(r.getDriverId())).toList();
     }
 
     /** Same search, but also registers/refreshes a live-search session so the rider can subscribe
@@ -324,7 +389,7 @@ public class RouteService {
      * app keeps for the life of the search screen); riderId is null-safe only in that a null
      * sessionId skips registration entirely - a real search always has an authenticated caller. */
     public List<RideSearchResult> search(SearchRequest request, String sessionId, String riderId) {
-        List<RideSearchResult> results = search(request);
+        List<RideSearchResult> results = searchAsRider(request, riderId);
         if (riderId != null) {
             demandService.recordSearch(riderId, request, results.size());
         }
@@ -339,7 +404,7 @@ public class RouteService {
      * relaxed radius and a much wider time window, capped to a handful of results. Not a
      * separate query strategy, just wider parameters on the same Haversine search.
      */
-    public List<RideSearchResult> getNearbyOptions(SearchRequest request) {
+    public List<RideSearchResult> getNearbyOptions(SearchRequest request, String riderId) {
         double radiusKm = (matchingProperties.getGeoToleranceMeters() / 1000.0) * NEARBY_OPTIONS_RADIUS_MULTIPLIER;
         Instant earliest = request.desiredDepartureTime();
         Instant latest = request.desiredDepartureTime().plus(NEARBY_OPTIONS_TIME_WINDOW_HOURS, ChronoUnit.HOURS);
@@ -351,7 +416,7 @@ public class RouteService {
                 radiusKm
         );
 
-        List<RoutePost> capped = matches.stream().limit(NEARBY_OPTIONS_LIMIT).toList();
+        List<RoutePost> capped = withoutBlocked(matches, riderId).stream().limit(NEARBY_OPTIONS_LIMIT).toList();
         return enrich(capped, request.originLat(), request.originLng());
     }
 
@@ -378,7 +443,7 @@ public class RouteService {
 
     /** Why this rider can't book this route right now, in words the app shows as-is - null when they can.
      * Mirrors reserveSeats()'s checks; the overlap rule is left to the reserve call itself. */
-    private static String unavailableReason(RoutePost route, String callerId) {
+    private String unavailableReason(RoutePost route, String callerId) {
         if (callerId != null && callerId.equals(route.getDriverId())) {
             return "This is your own route";
         }
@@ -390,9 +455,26 @@ public class RouteService {
                 if (!route.getDepartureTime().isAfter(Instant.now())) {
                     yield "This ride has already departed";
                 }
-                yield route.getSeatsAvailable() == null || route.getSeatsAvailable() <= 0 ? "This ride is full" : null;
+                if (route.getSeatsAvailable() == null || route.getSeatsAvailable() <= 0) {
+                    yield "This ride is full";
+                }
+                yield callerId == null ? null : riderReason(route, callerId);
             }
         };
+    }
+
+    /** The rider's own reasons, same wording as reserveSeats() - so the button says it before they tap. */
+    private String riderReason(RoutePost route, String riderId) {
+        if (suspendedUserRepository.existsById(riderId)) {
+            return "This account is suspended. Contact CoRyd support.";
+        }
+        if (userBlockService.keptApart(riderId, route.getDriverId())) {
+            return "This ride isn't available to you";
+        }
+        if (identityVerificationPolicy.blocksUnverified() && !identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(riderId)) {
+            return "Verify your identity to book a ride";
+        }
+        return null;
     }
 
     /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern as pickupEtaMinutesBatch() - a Directions failure means no line on the map, not a broken screen. Cached 7 days in MapsService keyed by rounded coordinates, so this is a fresh Directions call only the first time any two points are looked up. Boxed params (not primitives) - unboxing a null before this method's own try/catch could see it would throw uncaught, not degrade gracefully. */
@@ -454,6 +536,13 @@ public class RouteService {
 
     /** Batch-joins driver/vehicle/rating data onto raw route matches, plus one batched Google Distance Matrix call for pickup-ETA - four calls total for the whole page, never one per row. */
     private List<RideSearchResult> enrich(List<RoutePost> routes, double riderLat, double riderLng) {
+        return enrich(routes, riderLat, riderLng, Map.of(), Set.of());
+    }
+
+    /** along: where the rider meets each route on its road (their card carries the pickup and dropoff, and the pickup
+     * ETA is to that point). partWay: the ones the rider joins part-way, which wouldn't have matched end to end. */
+    private List<RideSearchResult> enrich(List<RoutePost> routes, double riderLat, double riderLng,
+                                          Map<String, RouteMatcher.Match> along, Set<String> partWay) {
         List<String> driverIds = routes.stream().map(RoutePost::getDriverId).distinct().toList();
         List<String> vehicleIds = routes.stream().map(RoutePost::getVehicleId).filter(Objects::nonNull).distinct().toList();
 
@@ -461,7 +550,7 @@ public class RouteService {
         Map<String, ProfileServiceClient.VehicleSummaryItem> vehicles = profileServiceClient.fetchVehicleSummaries(vehicleIds);
         Map<String, RatingRepository.RatingSummary> ratings = ratingRepository.summarize(driverIds).stream()
                 .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, r -> r));
-        List<Integer> pickupEtaMinutes = pickupEtaMinutesBatch(routes, riderLat, riderLng);
+        List<Integer> pickupEtaMinutes = pickupEtaMinutesBatch(routes, riderLat, riderLng, along);
 
         return IntStream.range(0, routes.size()).mapToObj(i -> {
             RoutePost route = routes.get(i);
@@ -487,19 +576,32 @@ public class RouteService {
                     rating == null ? null : rating.getAvgStars(),
                     rating == null ? 0L : rating.getRatingCount(),
                     pickupEtaMinutes.get(i),
-                    route.getRouteNote()
+                    route.getRouteNote(),
+                    partWay.contains(route.getId()),
+                    stop(along.get(route.getId()), true),
+                    stop(along.get(route.getId()), false)
             );
         }).toList();
     }
 
     /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern as BookingService.routeViaSummary() - on failure every row in the batch gets null instead of the whole search failing. */
-    private List<Integer> pickupEtaMinutesBatch(List<RoutePost> routes, double riderLat, double riderLng) {
+    private static RideStop stop(RouteMatcher.Match match, boolean pickup) {
+        if (match == null) {
+            return null;
+        }
+        RouteMatcher.Point p = pickup ? match.pickup() : match.dropoff();
+        return new RideStop(p.lat(), p.lng(), p.walkMeters(), p.time());
+    }
+
+    private List<Integer> pickupEtaMinutesBatch(List<RoutePost> routes, double riderLat, double riderLng, Map<String, RouteMatcher.Match> along) {
         if (routes.isEmpty()) {
             return List.of();
         }
         try {
             List<double[]> origins = routes.stream()
-                    .map(r -> new double[]{r.getOriginLat(), r.getOriginLng()})
+                    .map(r -> along.containsKey(r.getId())
+                            ? new double[]{along.get(r.getId()).pickup().lat(), along.get(r.getId()).pickup().lng()}
+                            : new double[]{r.getOriginLat(), r.getOriginLng()})
                     .toList();
             List<DistanceMatrixResult> results = mapsService.getDistanceMatrixBatch(riderLat, riderLng, origins);
             // enrich() zips this by index - a short or missing answer must blank the ETAs, not crash the search.
@@ -540,8 +642,8 @@ public class RouteService {
      * that's a Maps call per pin; the details screen computes it for the one route tapped. */
     public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm, String callerId) {
         Instant now = Instant.now();
-        List<RoutePost> nearby = routePostRepository.findNearbyOrigins(lat, lng, radiusKm, now,
-                now.plus(NEARBY_OPTIONS_TIME_WINDOW_HOURS, ChronoUnit.HOURS), callerId);
+        List<RoutePost> nearby = withoutBlocked(routePostRepository.findNearbyOrigins(lat, lng, radiusKm, now,
+                now.plus(NEARBY_OPTIONS_TIME_WINDOW_HOURS, ChronoUnit.HOURS), callerId), callerId);
         if (nearby.isEmpty()) {
             return new NearbyActivityResponse(0, List.of());
         }

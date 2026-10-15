@@ -39,4 +39,16 @@ public final class KafkaTopics {
      * edits) - trip-service listens to seed each new driver/rider's system starting rating. */
     public static final String DRIVER_PROFILE_CREATED = "coryd-driver-profile-created";
     public static final String RIDER_PROFILE_CREATED = "coryd-rider-profile-created";
+
+    /** Ops suspended or reinstated an account - trip-service stops (or lets again) the user post and book. */
+    public static final String USER_SUSPENDED = "coryd-user-suspended";
+    public static final String USER_REINSTATED = "coryd-user-reinstated";
+
+    /** A person's NIN + selfie check was approved or rejected - trip-service gates booking and posting on it. */
+    public static final String IDENTITY_VERIFICATION_CHANGED = "coryd-identity-verification-changed";
+
+    /** A trip looks wrong (long stop, off route, no signal) - everyone on board is asked "Are you OK?". */
+    public static final String TRIP_SAFETY_CHECK = "coryd-trip-safety-check";
+    /** Nobody answered in time - ops is alerted. */
+    public static final String TRIP_SAFETY_ESCALATED = "coryd-trip-safety-escalated";
 }

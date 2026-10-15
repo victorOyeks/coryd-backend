@@ -2,11 +2,13 @@ package org.coryd.identity.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.HeardAboutUs;
 import org.coryd.common.enums.OtpChannel;
 import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.util.Names;
 import org.coryd.common.exception.RoleNotHeldException;
 import org.coryd.common.kafka.KafkaTopics;
@@ -109,6 +111,11 @@ public class AuthService {
             user.setRoles(new HashSet<>(Set.of(role)));
         } else {
             user.getRoles().add(role);
+        }
+        if (user.getHeardAboutUs() == null && request.heardAboutUs() != null) {
+            user.setHeardAboutUs(request.heardAboutUs());
+            String other = request.heardAboutUsOther() == null ? "" : request.heardAboutUsOther().trim();
+            user.setHeardAboutUsOther(request.heardAboutUs() == HeardAboutUs.OTHER && !other.isEmpty() ? other : null);
         }
         userRepository.save(user);
 
@@ -322,10 +329,11 @@ public class AuthService {
 
         boolean phoneVerified = user.getPhoneVerifiedAt() != null;
         boolean passwordSet = user.getPasswordHash() != null;
-        boolean profileComplete = profileServiceClient.hasProfile(principal.getActiveRole(), bearerToken);
+        ProfileServiceClient.ProfileStatus profile = profileServiceClient.profileStatus(principal.getActiveRole(), bearerToken);
         boolean termsAccepted = user.getTermsAcceptedAt() != null;
 
-        return new OnboardingStatusResponse(phoneVerified, passwordSet, profileComplete, termsAccepted);
+        return new OnboardingStatusResponse(phoneVerified, passwordSet, profile.exists(), termsAccepted,
+                profile.identityVerified(), profile.identityVerificationStatus());
     }
 
     /** The one place a logged-in user's own phone number is available - profile-service's DriverProfile/RiderProfile never store it, and the only other place it lives (GET /internal/users/{userId}/contact) is service-to-service only, not reachable with a user's own JWT. */
@@ -493,6 +501,7 @@ public class AuthService {
     }
 
     private AuthResponse issueTokens(User user, UserRole activeRole, DeviceInfo device) {
+        requireActive(user);
         return issueTokens(user, activeRole, registerDevice(user.getId(), device), null);
     }
 
@@ -502,6 +511,7 @@ public class AuthService {
      *                 one lineage.
      */
     private AuthResponse issueTokens(User user, UserRole activeRole, String deviceId, String familyId) {
+        requireActive(user);
         String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(), activeRole);
 
         String refreshTokenValue = UUID.randomUUID().toString();
@@ -524,6 +534,13 @@ public class AuthService {
                 refreshToken.getActiveRole());
         return buildAuthResponse(user, refreshToken.getActiveRole(), accessToken, refreshToken.getToken(),
                 refreshToken.getExpiresAt());
+    }
+
+    /** Every way in - login, OTP, refresh, role add/switch - ends here, so a suspended account gets no tokens at all. */
+    private static void requireActive(User user) {
+        if (!user.isActive()) {
+            throw new UnauthorizedException("This account has been suspended. Contact CoRyd support.");
+        }
     }
 
     private AuthResponse buildAuthResponse(User user, UserRole activeRole, String accessToken,

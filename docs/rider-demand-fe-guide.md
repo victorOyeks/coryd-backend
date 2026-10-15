@@ -55,7 +55,7 @@ Every search is recorded so drivers can see which routes riders want - only as t
 ```
 
 - `repeatTime` is Lagos time, `HH:mm`. `repeatWeeks` is 1-12.
-- A ride counts as a match if it starts and ends within about 4 km and leaves within about 3 hours of the rider's time, on one of their days.
+- A ride counts as a match if it starts and ends within about 2 km and leaves within about an hour of the rider's time, on one of their days - or if its road passes within a 1 km walk of both ends, in order, reaching the rider within an hour of their time.
 - A request keeps going until `activeUntil` (for a one-off, shortly after the time asked for) and is told about each matching ride once. If the first ride fills up, the rider still hears about the next one.
 - A one-off request stops as soon as the rider has a seat on one of the rides it told them about. Riders are never told about a ride they're already booked on.
 - A rider can have up to 10 waiting at a time.

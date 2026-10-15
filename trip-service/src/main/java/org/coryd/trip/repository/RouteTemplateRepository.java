@@ -7,4 +7,8 @@ import java.util.List;
 
 public interface RouteTemplateRepository extends JpaRepository<RouteTemplate, String> {
     List<RouteTemplate> findByDriverId(String driverId);
+
+    List<RouteTemplate> findByDriverIdOrderByCreatedAtDesc(String driverId);
+
+    List<RouteTemplate> findByPausedFalse();
 }

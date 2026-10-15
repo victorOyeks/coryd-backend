@@ -21,11 +21,16 @@ import java.time.Instant;
 @AllArgsConstructor
 public class SosIncident extends BaseEntity {
 
-    @Column(nullable = false)
+    /** Null for a driver's SOS raised on the route itself. */
     private String bookingId;
+
+    private String routePostId;
 
     @Column(nullable = false)
     private String triggeredBy;
+
+    /** RIDER or DRIVER. */
+    private String triggeredByRole;
 
     private Double latitude;
     private Double longitude;

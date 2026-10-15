@@ -66,12 +66,13 @@ import static org.mockito.Mockito.verify;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @TestPropertySource(properties = "trip.demand.max-active-notify-me=3")
-@Import({NotifyMeService.class, DemandService.class, MatchingProperties.class, DemandProperties.class})
+@Import({NotifyMeService.class, DemandService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, MatchingProperties.class, DemandProperties.class})
 class DemandIntegrationTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
+            org.testcontainers.utility.DockerImageName.parse("postgis/postgis:16-3.4-alpine").asCompatibleSubstituteFor("postgres"));
 
     private static final ZoneId LAGOS = ZoneId.of("Africa/Lagos");
     private static final double[] IKORODU = {6.62, 3.51};
@@ -181,6 +182,23 @@ class DemandIntegrationTest {
     }
 
     @Test
+    void aRiderWaitingPartWayAlongIsToldAboutARideThatPassesThem() {
+        double[] ketu = {6.57, 3.485};
+        double[] obalende = {6.47, 3.435};
+        Instant tomorrow7 = tomorrowAt(7, 0);
+        notifyMeService.create("rider-1", oneOff(ketu, obalende, tomorrow7.plus(15, ChronoUnit.MINUTES)));
+        notifyMeService.create("rider-2", oneOff(obalende, ketu, tomorrow7.plus(45, ChronoUnit.MINUTES)));
+        RoutePost ride = routePostRepository.save(RoutePost.builder().driverId("driver-1").vehicleId("vehicle-1")
+                .originLabel("Ikorodu").originLat(6.62).originLng(3.51).destinationLabel("VI").destinationLat(6.42).destinationLng(3.41)
+                .departureTime(tomorrow7).estimatedDurationMinutes(60).seatCapacity(4).seatsAvailable(4)
+                .farePerSeat(new BigDecimal("2500.00")).status(RouteStatus.PUBLISHED).build());
+
+        notifyMeService.notifyMatching(ride);
+
+        assertThat(sentNotifyMe()).extracting(NotifyMeMatchedEvent::getRiderId).as("not the one going the other way").containsExactly("rider-1");
+    }
+
+    @Test
     void aRepeatingRequestMatchesItsDaysAndTimeAndKeepsGoing() {
         notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:00"));
         RoutePost tuesday = ride("driver-1", IKORODU, VI, next(DayOfWeek.TUESDAY, 7, 30), RouteStatus.PUBLISHED);
@@ -243,6 +261,21 @@ class DemandIntegrationTest {
         notifyMeService.create("rider-1", oneOff(VI, IKORODU, tomorrow7));
         notifyMeService.create("rider-2", oneOff(IKORODU, VI, tomorrow7));
         assertThat(notifyMeService.mine("rider-1")).as("later that day and the way back are new").hasSize(3);
+    }
+
+    @Test
+    void twoOverlappingRequestsPushOncePerRide() {
+        Instant tomorrow7 = tomorrowAt(7, 0);
+        notifyMeService.create("rider-1", oneOff(IKORODU, VI, tomorrow7));
+        notifyMeService.create("rider-1", oneOff(IKORODU, VI, tomorrow7.plus(90, ChronoUnit.MINUTES)));
+        RoutePost ride = ride("driver-1", IKORODU, VI, tomorrow7.plus(45, ChronoUnit.MINUTES), RouteStatus.PUBLISHED);
+
+        notifyMeService.notifyMatching(ride);
+        assertThat(sentNotifyMe()).as("both requests match, one push").hasSize(1);
+
+        clearInvocations(kafkaTemplate);
+        notifyMeService.notifySeatOpened(ride);
+        assertThat(sentNotifyMe()).extracting(NotifyMeMatchedEvent::isSeatOpened).containsExactly(true);
     }
 
     @Test

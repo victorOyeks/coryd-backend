@@ -23,7 +23,9 @@ import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
+import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.config.policy.CancellationPolicy;
+import org.coryd.trip.config.policy.IdentityVerificationPolicy;
 import org.coryd.trip.dto.LocationResponse;
 import org.coryd.trip.dto.AcceptReservationRequest;
 import org.coryd.trip.dto.BookSeatsRequest;
@@ -41,6 +43,7 @@ import org.coryd.trip.dto.RateRequest;
 import org.coryd.trip.dto.RatingSummaryResponse;
 import org.coryd.trip.dto.ReceiptPassenger;
 import org.coryd.trip.dto.SharedTripResponse;
+import org.coryd.trip.event.UserSuspensionEventListener;
 import org.coryd.trip.dto.TripHistoryItem;
 import org.coryd.trip.dto.TripReceiptResponse;
 import org.coryd.trip.dto.UpcomingRideItem;
@@ -58,7 +61,9 @@ import org.coryd.trip.repository.IssueReportRepository;
 import org.coryd.trip.repository.DriverVerificationCacheRepository;
 import org.coryd.trip.repository.RatingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
+import org.coryd.trip.repository.IdentityVerificationCacheRepository;
 import org.coryd.trip.repository.SosIncidentRepository;
+import org.coryd.trip.repository.SuspendedUserRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -102,6 +107,12 @@ public class BookingService {
     private final RatingRepository ratingRepository;
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
     private final SosIncidentRepository sosIncidentRepository;
+    private final SuspendedUserRepository suspendedUserRepository;
+    private final UserBlockService userBlockService;
+    private final IdentityVerificationCacheRepository identityVerificationCacheRepository;
+    private final IdentityVerificationPolicy identityVerificationPolicy;
+    private final RouteMatcher routeMatcher;
+    private final MatchingProperties matchingProperties;
     private final IssueReportRepository issueReportRepository;
     private final CancellationPolicy cancellationPolicy;
     /**
@@ -127,6 +138,8 @@ public class BookingService {
     private final ApplicationEventPublisher eventPublisher;
 
     private static final int SHARE_LINK_VALID_HOURS = 4;
+    /** A driver can raise an SOS or share their trip until it ends. */
+    private static final List<RouteStatus> SOS_ROUTE_STATUSES = List.of(RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS);
 
     /** Last 5 bookings, newest first - powers the Home screen's "Recent Routes" list. */
     public List<Booking> getRecentRoutesForRider(String riderId, String callerId) {
@@ -335,7 +348,7 @@ public class BookingService {
         return "CRY-" + datePart + "-" + idSuffix.substring(0, Math.min(6, idSuffix.length()));
     }
 
-    private static BookingSummary toSummary(Booking booking, Map<String, RatingRepository.RatingSummary> riderRatings,
+    private BookingSummary toSummary(Booking booking, Map<String, RatingRepository.RatingSummary> riderRatings,
                                              Map<String, ProfileServiceClient.RiderSummaryItem> riders) {
         RatingRepository.RatingSummary rating = riderRatings.get(booking.getRiderId());
         ProfileServiceClient.RiderSummaryItem rider = riders.get(booking.getRiderId());
@@ -344,8 +357,10 @@ public class BookingService {
                 booking.getSeatCount(),
                 booking.getFareTotal(), booking.getStatus(), booking.getPickupConfirmedAt(),
                 booking.getPickupLabel(), booking.getPickupLat(), booking.getPickupLng(),
+                booking.getDropoffLabel(), booking.getDropoffLat(), booking.getDropoffLng(),
                 rating == null ? null : rating.getAvgStars(),
-                rating == null ? null : rating.getRatingCount());
+                rating == null ? null : rating.getRatingCount(),
+                identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(booking.getRiderId()));
     }
 
     private Map<String, ProfileServiceClient.RiderSummaryItem> ridersFor(List<Booking> bookings) {
@@ -489,10 +504,32 @@ public class BookingService {
         return link;
     }
 
+    /** Driver taps "Share trip" - the same signed link, for the whole route, texted to the driver's own contacts. */
+    @Transactional
+    public String shareRoute(String routePostId, String callerId) {
+        RoutePost route = activeRouteOfDriver(routePostId, callerId, "share it");
+        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchEmergencyContacts(callerId);
+        if (contacts.isEmpty()) {
+            throw new BadRequestException("Add an emergency contact to your profile before sharing a trip");
+        }
+        String link = shareTokenService.generateLink(ShareTokenService.ROUTE_PREFIX + routePostId,
+                route.getDepartureTime().plus(SHARE_LINK_VALID_HOURS, ChronoUnit.HOURS));
+
+        kafkaTemplate.send(KafkaTopics.TRIP_SHARE_REQUESTED, TripShareRequestedEvent.builder()
+                .shareLink(link)
+                .contacts(toEventPayload(contacts))
+                .requestedAt(LocalDateTime.now())
+                .build());
+        return link;
+    }
+
     /** What a "share trip" link resolves to - no auth, the whole point is the recipient has no account. */
     public SharedTripResponse getSharedTripView(String token) {
         String bookingId = shareTokenService.verifyAndExtractBookingId(token)
                 .orElseThrow(() -> new BadRequestException("This trip link has expired or is invalid"));
+        if (bookingId.startsWith(ShareTokenService.ROUTE_PREFIX)) {
+            return sharedRouteView(bookingId.substring(ShareTokenService.ROUTE_PREFIX.length()));
+        }
 
         Booking booking = getOrThrow(bookingId);
         RoutePost route = routePostRepository.findById(booking.getRoutePostId())
@@ -515,6 +552,30 @@ public class BookingService {
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
                 locationService.getLocation(bookingId)
+        );
+    }
+
+    /** A driver's shared trip - no booking, so no booking status; the location is the driver's own. */
+    private SharedTripResponse sharedRouteView(String routePostId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        ProfileServiceClient.DriverSummaryItem driver = profileServiceClient
+                .fetchDriverSummaries(List.of(route.getDriverId()))
+                .get(route.getDriverId());
+        ProfileServiceClient.VehicleSummaryItem vehicle = route.getVehicleId() == null ? null
+                : profileServiceClient.fetchVehicleSummaries(List.of(route.getVehicleId())).get(route.getVehicleId());
+
+        return new SharedTripResponse(
+                route.getOriginLabel(), route.getDestinationLabel(), route.getDepartureTime(),
+                null,
+                driver == null ? null : driver.legalName(),
+                driver == null ? null : driver.photoUrl(),
+                isFullyVerified(route.getDriverId()),
+                vehicle == null ? null : vehicle.make(),
+                vehicle == null ? null : vehicle.model(),
+                vehicle == null ? null : vehicle.plateNumber(),
+                vehicle != null && vehicle.hasAC(),
+                locationService.peekRouteLocation(routePostId)
         );
     }
 
@@ -603,11 +664,16 @@ public class BookingService {
     @Transactional
     public Booking reserveSeats(String routePostId, String riderId, BookSeatsRequest request) {
         bookingRepository.lockUser(riderId);
+        requireNotSuspended(riderId);
+        requireVerifiedRider(riderId);
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
 
         if (riderId.equals(route.getDriverId())) {
             throw new BadRequestException("You can't book a seat on your own route");
+        }
+        if (userBlockService.keptApart(riderId, route.getDriverId())) {
+            throw new BadRequestException("This ride isn't available to you");
         }
         if (route.getStatus() == RouteStatus.FULL) {
             throw new BadRequestException("This ride is full");
@@ -628,6 +694,10 @@ public class BookingService {
             if (sameAttempt) {
                 return held;
             }
+        }
+        if (routeMatcher.enabled()
+                && routeMatcher.metersFromRoute(route, request.pickupLat(), request.pickupLng()) > matchingProperties.getWalkMeters()) {
+            throw new BadRequestException("Pick a pickup point on the driver's route");
         }
         tripScheduleService.requireNoOverlap(riderId, route);
         releaseOtherHolds(riderId, null);
@@ -656,6 +726,9 @@ public class BookingService {
                 .pickupLabel(request.pickupLabel())
                 .pickupLat(request.pickupLat())
                 .pickupLng(request.pickupLng())
+                .dropoffLabel(request.dropoffLabel())
+                .dropoffLat(request.dropoffLat())
+                .dropoffLng(request.dropoffLng())
                 .build();
         bookingRepository.save(booking);
         recordHistory(booking.getId(), BookingStatus.HELD, "Seat held pending payment");
@@ -750,6 +823,7 @@ public class BookingService {
         if (!callerId.equals(booking.getRiderId())) {
             throw new UnauthorizedException("Only this reservation's rider can accept it");
         }
+        requireVerifiedRider(callerId);
         if (booking.getStatus() == BookingStatus.RESERVED) {
             tripScheduleService.requireNoOverlap(callerId, routeOf(booking));
             releaseOtherHolds(callerId, bookingId);
@@ -778,6 +852,36 @@ public class BookingService {
         }
         if (!releaseUnpaid(booking, BookingStatus.RESERVED, "Reservation declined - seat released")) {
             throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
+        }
+    }
+
+    /** Every upcoming seat of a suspended rider: unpaid ones released, paid ones cancelled with a full refund. */
+    @Transactional
+    public void cancelForSuspension(String riderId) {
+        List<BookingStatus> upcoming = Stream.concat(Stream.of(BookingStatus.RESERVED, BookingStatus.HELD),
+                RIDER_CANCELLABLE_STATUSES.stream()).toList();
+        for (Booking booking : bookingRepository.findByRiderIdAndStatusIn(riderId, upcoming)) {
+            if (booking.getStatus() == BookingStatus.HELD || booking.getStatus() == BookingStatus.RESERVED) {
+                releaseUnpaid(booking, booking.getStatus(), "Rider suspended - seat released");
+                continue;
+            }
+            if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
+                continue;
+            }
+            RoutePost route = routeOf(booking);
+            routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+            routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
+            recordHistory(booking.getId(), BookingStatus.CANCELLED_RIDER, "Rider suspended - refunded in full");
+            kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
+                    .bookingId(booking.getId())
+                    .routePostId(booking.getRoutePostId())
+                    .riderId(riderId)
+                    .driverId(route.getDriverId())
+                    .cancelledBy(UserSuspensionEventListener.CANCELLED_BY)
+                    .feeApplied(false)
+                    .paid(true)
+                    .cancelledAt(LocalDateTime.now())
+                    .build());
         }
     }
 
@@ -1096,6 +1200,18 @@ public class BookingService {
 
     /** Ends an unpaid booking and returns its seat - only if this call is the one that moved it, so
      * the expiry sweep, a failure webhook and the rider backing out can't each release the same seat. */
+    private void requireVerifiedRider(String riderId) {
+        if (identityVerificationPolicy.blocksUnverified() && !identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(riderId)) {
+            throw new BadRequestException("Verify your identity to book a ride");
+        }
+    }
+
+    private void requireNotSuspended(String userId) {
+        if (suspendedUserRepository.existsById(userId)) {
+            throw new BadRequestException("This account is suspended. Contact CoRyd support.");
+        }
+    }
+
     private boolean releaseUnpaid(Booking booking, BookingStatus from, String note) {
         if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, List.of(from))) {
             return false;
@@ -1179,11 +1295,50 @@ public class BookingService {
     @Transactional
     public SosIncident triggerSos(String bookingId, String callerId, Double latitude, Double longitude) {
         Booking booking = getOrThrow(bookingId);
-        requireParticipant(booking, routeOf(booking), callerId);
+        RoutePost route = routeOf(booking);
+        requireParticipant(booking, route, callerId);
+        return raiseSos(route, booking, callerId, identityServiceClient.fetchPhone(booking.getRiderId()),
+                booking.getDriverNameSnapshot(), booking.getVehiclePlateSnapshot(), booking.getRouteSummarySnapshot(), latitude, longitude);
+    }
 
+    /** The driver's own SOS on their trip - works before anyone has booked, and with several riders on board. */
+    @Transactional
+    public SosIncident triggerRouteSos(String routePostId, String callerId, Double latitude, Double longitude) {
+        RoutePost route = activeRouteOfDriver(routePostId, callerId, "raise an SOS on it");
+        String riderPhones = bookingRepository.findByRoutePostId(routePostId).stream()
+                .filter(b -> TripScheduleService.SEATED_STATUSES.contains(b.getStatus()))
+                .map(b -> identityServiceClient.fetchPhone(b.getRiderId()))
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.joining(", "));
+        return raiseSos(route, null, callerId, riderPhones.isEmpty() ? null : riderPhones,
+                profileServiceClient.fetchDriverName(route.getDriverId()),
+                route.getVehicleId() == null ? null : profileServiceClient.fetchVehiclePlate(route.getVehicleId()),
+                route.getOriginLabel() + " → " + route.getDestinationLabel(), latitude, longitude);
+    }
+
+    private RoutePost activeRouteOfDriver(String routePostId, String callerId, String action) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        if (!callerId.equals(route.getDriverId())) {
+            throw new UnauthorizedException("Only this route's driver can " + action);
+        }
+        if (!SOS_ROUTE_STATUSES.contains(route.getStatus())) {
+            throw new BadRequestException("This trip has already ended");
+        }
+        return route;
+    }
+
+    private SosIncident raiseSos(RoutePost route, Booking booking, String callerId, String riderPhone, String driverName,
+                                 String vehiclePlate, String routeSummary, Double latitude, Double longitude) {
+        String bookingId = booking == null ? null : booking.getId();
+        String role = callerId.equals(route.getDriverId()) ? "DRIVER" : "RIDER";
+        // opsNotifiedAt is when the alert left for ops (SOS_TRIGGERED below) - delivery per SMS and email
+        // is in notification-service's notification_log.
         SosIncident incident = sosIncidentRepository.save(SosIncident.builder()
                 .bookingId(bookingId)
+                .routePostId(route.getId())
                 .triggeredBy(callerId)
+                .triggeredByRole(role)
                 .latitude(latitude)
                 .longitude(longitude)
                 .opsNotifiedAt(Instant.now())
@@ -1197,7 +1352,14 @@ public class BookingService {
         kafkaTemplate.send(KafkaTopics.SOS_TRIGGERED, SosTriggeredEvent.builder()
                 .incidentId(incident.getId())
                 .bookingId(bookingId)
+                .routePostId(route.getId())
                 .triggeredBy(callerId)
+                .triggeredByRole(role)
+                .riderPhone(riderPhone)
+                .driverPhone(identityServiceClient.fetchPhone(route.getDriverId()))
+                .driverName(driverName)
+                .vehiclePlate(vehiclePlate)
+                .routeSummary(routeSummary)
                 .latitude(latitude)
                 .longitude(longitude)
                 .triggeredAt(LocalDateTime.now())

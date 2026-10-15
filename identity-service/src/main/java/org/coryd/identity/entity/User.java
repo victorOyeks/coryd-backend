@@ -16,6 +16,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
+import org.coryd.common.enums.HeardAboutUs;
 import org.coryd.common.enums.UserRole;
 
 import java.time.Instant;
@@ -59,4 +60,19 @@ public class User extends BaseEntity {
     @Builder.Default
     @Column(nullable = false)
     private boolean active = true;
+
+    /** Set while ops has the account suspended - no tokens are issued to it. */
+    private Instant suspendedAt;
+
+    @Column(length = 500)
+    private String suspensionReason;
+
+    /** "How did you hear about us?" from signup - first answer wins. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private HeardAboutUs heardAboutUs;
+
+    /** What they wrote when heardAboutUs is OTHER. */
+    @Column(length = 100)
+    private String heardAboutUsOther;
 }

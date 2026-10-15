@@ -15,9 +15,6 @@ public interface RatingRepository extends JpaRepository<Rating, String> {
     long deleteByBookingIdIn(List<String> bookingIds);
     List<Rating> findByRateeId(String rateeId);
 
-    /** Idempotency guard for the system-seed listener - Kafka's at-least-once delivery means the same DriverProfileCreatedEvent/RiderProfileCreatedEvent could arrive more than once. */
-    boolean existsByRateeId(String rateeId);
-
     boolean existsByBookingIdAndDirection(String bookingId, RatingDirection direction);
 
     /** The Trip Receipt's per-passenger stars - one query for every booking on the route, not one per passenger. A booking can have a Rating row in each direction; this narrows to just the one the receipt cares about. */

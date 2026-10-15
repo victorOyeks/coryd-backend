@@ -89,11 +89,14 @@ public class NotificationDispatchService {
                 .build());
 
         for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
-            boolean delivered = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, bookingId, routePostId);
+            FcmService.PushResult result = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, bookingId, routePostId);
             notificationLogRepository.save(NotificationLog.builder()
+                    .userId(userId)
                     .channel(NotificationChannel.PUSH)
                     .eventType(eventType)
-                    .delivered(delivered)
+                    .delivered(result.delivered())
+                    .providerMessageId(result.messageId())
+                    .errorCode(result.errorCode())
                     .build());
         }
     }

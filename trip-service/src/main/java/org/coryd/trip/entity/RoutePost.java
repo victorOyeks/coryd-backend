@@ -1,5 +1,6 @@
 package org.coryd.trip.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -83,4 +84,12 @@ public class RoutePost extends BaseEntity {
 
     /** Google's driving time at posting - null on older routes and when Maps was unavailable. */
     private Integer estimatedDurationMinutes;
+
+    /** Google's encoded road line from start to end, saved at posting - what along-the-way matching measures against. */
+    @Column(columnDefinition = "TEXT")
+    @JsonIgnore
+    private String routePolyline;
+
+    /** Set when RouteTemplateService posted this trip from a driver's regular route. */
+    private String routeTemplateId;
 }

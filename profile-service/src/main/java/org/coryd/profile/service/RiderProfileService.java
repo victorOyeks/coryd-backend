@@ -1,6 +1,7 @@
 package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RiderProfileCreatedEvent;
@@ -10,7 +11,9 @@ import org.coryd.profile.dto.RiderProfileResponse;
 import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
 import org.coryd.profile.entity.RiderProfile;
+import org.coryd.profile.entity.IdentityVerification;
 import org.coryd.profile.repository.RiderProfileRepository;
+import org.coryd.profile.repository.IdentityVerificationRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +28,7 @@ public class RiderProfileService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final IdentityServiceClient identityServiceClient;
     private final EmergencyContactService emergencyContactService;
+    private final IdentityVerificationRepository identityVerificationRepository;
 
     /** Internal/batch use (RiderProfileController.get, getBatch below) - no phone, no extra cross-service call. */
     public RiderProfile get(String userId) {
@@ -86,6 +90,9 @@ public class RiderProfileService {
 
     private RiderProfileResponse toResponse(RiderProfile profile) {
         return RiderProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()),
-                emergencyContactService.getPrimary(profile.getUserId()).orElse(null));
+                emergencyContactService.getPrimary(profile.getUserId()).orElse(null),
+                identityVerificationRepository.findByUserId(profile.getUserId())
+                        .map(IdentityVerification::getStatus)
+                        .orElse(VerificationStatus.PENDING));
     }
 }

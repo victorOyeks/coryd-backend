@@ -28,5 +28,15 @@
     <include file="db/changelog/017-booking-pickup-code.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/018-route-schedule-fields.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/019-route-demand.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/020-sos-route-and-role.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/021-suspended-users.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/022-drop-system-ratings.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/023-user-blocks.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/024-identity-verification-cache.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/025-regular-routes.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/026-trip-safety-alerts.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/027-notify-me-created-index.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/028-along-the-way.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/029-postgis-route-geography.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

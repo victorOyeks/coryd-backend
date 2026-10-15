@@ -93,6 +93,12 @@ services:
   internal:
     api-key: ${INTERNAL_API_KEY}
 
+# Every SOS texts each ops phone and emails each ops address (comma-separated), as well as the
+# emergency contacts of whoever pressed it.
+sos:
+  ops-phones: ${SOS_OPS_PHONES:}
+  ops-emails: ${SOS_OPS_EMAILS:}
+
 # Ops reports. All three fire at 06:00 in report.timezone; recipients is comma-separated.
 report:
   enabled: ${REPORT_ENABLED:true}

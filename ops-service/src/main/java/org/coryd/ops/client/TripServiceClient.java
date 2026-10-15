@@ -9,6 +9,7 @@ import org.coryd.common.enums.OpsTripStatus;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -81,6 +82,37 @@ public class TripServiceClient {
                 .retrieve()
                 .body(JsonNode.class));
         return trips == null ? List.of() : Arrays.asList(trips);
+    }
+
+    public SosPage sos(int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, SosPage.class, () -> restClient.get()
+                .uri(b -> b.path("/internal/ops/sos").queryParam("page", page).queryParam("size", size).build())
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode pilotMetrics(int days) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/internal/ops/pilot-metrics").queryParam("days", days).build())
+                .retrieve().body(JsonNode.class));
+    }
+
+    /** Passed through as trip-service shapes it - the alert, its kind and status, and each answer. */
+    public JsonNode safetyAlerts(int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/internal/ops/sos/safety-alerts").queryParam("page", page).queryParam("size", size).build())
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SosRow(String id, Instant triggeredAt, String triggeredBy, String triggeredByRole, String bookingId,
+                         String routePostId, String driverId, String originLabel, String destinationLabel, RouteStatus routeStatus,
+                         Double latitude, Double longitude, Instant opsNotifiedAt) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SosPage(List<SosRow> content, int page, int size, long totalElements, int totalPages, boolean last) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

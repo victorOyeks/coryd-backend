@@ -9,9 +9,11 @@ import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.trip.dto.LocationResponse;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.RoutePost;
+import org.coryd.trip.event.DriverLocationRecordedEvent;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -44,6 +46,7 @@ public class LocationService {
     private final StringRedisTemplate redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
     private final RouteDeviationService routeDeviationService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** Dev/staging-only escape hatch for the 30-min-before-departure gate below - never true outside application-dev.yml. */
     @Value("${app.testing.bypass-time-gates:false}")
@@ -143,6 +146,7 @@ public class LocationService {
 
         messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/location", response);
         routeDeviationService.checkAndHandleDeviation(routePostId, lat, lng);
+        eventPublisher.publishEvent(new DriverLocationRecordedEvent(routePostId, lat, lng));
         return response;
     }
 

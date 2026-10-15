@@ -67,13 +67,16 @@ import static org.mockito.Mockito.verify;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({BookingService.class, RouteService.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
+// The identity (NIN) gate is on by default; these tests cover everything else, and the gate's own tests switch it on.
+@org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
+@Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
         NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class})
 class BookingFlowIntegrationTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
+            org.testcontainers.utility.DockerImageName.parse("postgis/postgis:16-3.4-alpine").asCompatibleSubstituteFor("postgres"));
 
     private static final String DRIVER = "driver-1";
     private static final String RIDER = "rider-1";
@@ -90,6 +93,16 @@ class BookingFlowIntegrationTest {
     @Autowired org.coryd.trip.repository.DriverVerificationCacheRepository driverVerificationCacheRepository;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired OpsTripQueryService opsTripQueryService;
+    @Autowired org.coryd.trip.repository.SuspendedUserRepository suspendedUserRepository;
+    @Autowired org.coryd.trip.repository.UserBlockRepository userBlockRepository;
+    @Autowired UserBlockService userBlockService;
+    @Autowired org.coryd.trip.repository.TripSafetyAlertRepository tripSafetyAlertRepository;
+    @Autowired org.coryd.trip.config.GeoCapabilities geoCapabilities;
+    @Autowired MatchingProperties matchingProperties;
+    @Autowired RouteTemplateService routeTemplateService;
+    @Autowired org.coryd.trip.repository.RouteTemplateRepository routeTemplateRepository;
+    @Autowired org.coryd.trip.config.policy.IdentityVerificationPolicy identityVerificationPolicy;
+    @Autowired org.coryd.trip.repository.IdentityVerificationCacheRepository identityVerificationCacheRepository;
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockBean ProfileServiceClient profileServiceClient;
@@ -110,6 +123,10 @@ class BookingFlowIntegrationTest {
                     .isEqualTo(postgres.getJdbcUrl());
         }
         driverVerificationCacheRepository.deleteAll();
+        suspendedUserRepository.deleteAll();
+        userBlockRepository.deleteAll();
+        identityVerificationCacheRepository.deleteAll();
+        routeTemplateRepository.deleteAll();
         org.mockito.Mockito.when(paymentServiceClient.postingStatus(org.mockito.ArgumentMatchers.anyString())).thenReturn(standing(true, "0", false));
         ratingRepository.deleteAll();
         historyRepository.deleteAll();
@@ -983,6 +1000,8 @@ class BookingFlowIntegrationTest {
         confirm(booking);
         org.mockito.Mockito.when(profileServiceClient.fetchEmergencyContacts(DRIVER))
                 .thenReturn(List.of(new ProfileServiceClient.RiderContact("Wife", "08050000000")));
+        org.mockito.Mockito.when(identityServiceClient.fetchPhone(RIDER)).thenReturn("08030000000");
+        org.mockito.Mockito.when(identityServiceClient.fetchPhone(DRIVER)).thenReturn("08040000000");
 
         bookingService.triggerSos(booking.getId(), DRIVER, 6.45, 3.39);
 
@@ -990,10 +1009,245 @@ class BookingFlowIntegrationTest {
         verify(profileServiceClient, never()).fetchEmergencyContacts(RIDER);
         verify(kafkaTemplate).send(eq(KafkaTopics.SOS_TRIGGERED), argThat(e -> {
             var event = (org.coryd.common.kafka.events.SosTriggeredEvent) e;
-            return DRIVER.equals(event.getTriggeredBy()) && event.getContacts().size() == 1
-                    && "08050000000".equals(event.getContacts().get(0).getPhone());
+            return DRIVER.equals(event.getTriggeredBy()) && "DRIVER".equals(event.getTriggeredByRole())
+                    && "08030000000".equals(event.getRiderPhone()) && "08040000000".equals(event.getDriverPhone())
+                    && event.getContacts().size() == 1 && "08050000000".equals(event.getContacts().get(0).getPhone());
         }));
         assertThatThrownBy(() -> bookingService.triggerSos(booking.getId(), OTHER_RIDER, null, null)).isInstanceOf(UnauthorizedException.class);
+    }
+
+    @Test
+    void aDriverCanRaiseAnSosOnTheirRouteWithNoBookings() {
+        RoutePost route = route(4);
+        org.mockito.Mockito.when(profileServiceClient.fetchEmergencyContacts(DRIVER))
+                .thenReturn(List.of(new ProfileServiceClient.RiderContact("Wife", "08050000000")));
+        org.mockito.Mockito.when(profileServiceClient.fetchDriverName(DRIVER)).thenReturn("Tunde");
+
+        var incident = bookingService.triggerRouteSos(route.getId(), DRIVER, 6.45, 3.39);
+
+        assertThat(incident.getBookingId()).isNull();
+        assertThat(incident.getRoutePostId()).isEqualTo(route.getId());
+        assertThat(incident.getTriggeredByRole()).isEqualTo("DRIVER");
+        verify(kafkaTemplate).send(eq(KafkaTopics.SOS_TRIGGERED), argThat(e -> {
+            var event = (org.coryd.common.kafka.events.SosTriggeredEvent) e;
+            return event.getBookingId() == null && route.getId().equals(event.getRoutePostId())
+                    && "Tunde".equals(event.getDriverName()) && event.getRiderPhone() == null && event.getContacts().size() == 1;
+        }));
+
+        assertThatThrownBy(() -> bookingService.triggerRouteSos(route.getId(), RIDER, null, null))
+                .isInstanceOf(UnauthorizedException.class);
+        route.setStatus(RouteStatus.COMPLETED);
+        routePostRepository.save(route);
+        assertThatThrownBy(() -> bookingService.triggerRouteSos(route.getId(), DRIVER, null, null))
+                .isInstanceOf(org.coryd.common.exception.BadRequestException.class);
+    }
+
+    @Test
+    void aDriverSharesTheirTripWithTheirOwnContacts() {
+        RoutePost route = route(4);
+        org.mockito.Mockito.when(shareTokenService.generateLink(eq("route:" + route.getId()), any())).thenReturn("https://coryd.ng/shared/x");
+
+        assertThatThrownBy(() -> bookingService.shareRoute(route.getId(), DRIVER))
+                .as("no emergency contact yet").isInstanceOf(org.coryd.common.exception.BadRequestException.class);
+
+        org.mockito.Mockito.when(profileServiceClient.fetchEmergencyContacts(DRIVER))
+                .thenReturn(List.of(new ProfileServiceClient.RiderContact("Wife", "08050000000")));
+        assertThat(bookingService.shareRoute(route.getId(), DRIVER)).isEqualTo("https://coryd.ng/shared/x");
+        verify(kafkaTemplate).send(eq(KafkaTopics.TRIP_SHARE_REQUESTED), argThat(e ->
+                "https://coryd.ng/shared/x".equals(((org.coryd.common.kafka.events.TripShareRequestedEvent) e).getShareLink())));
+        assertThatThrownBy(() -> bookingService.shareRoute(route.getId(), RIDER)).isInstanceOf(UnauthorizedException.class);
+    }
+
+    // ---- suspension and blocking ----------------------------------------------------------------
+
+    @Test
+    void aSuspendedRiderIsRefundedInFullAndCantBookAgain() {
+        RoutePost route = route(4);
+        Booking booking = book(route, RIDER, 1);
+        confirm(booking);
+        clearInvocations(kafkaTemplate);
+
+        suspendedUserRepository.save(new org.coryd.trip.entity.SuspendedUser(RIDER, "Threatened a driver", Instant.now()));
+        bookingService.cancelForSuspension(RIDER);
+
+        assertThat(reload(booking).getStatus()).isEqualTo(BookingStatus.CANCELLED_RIDER);
+        assertThat(routePostRepository.findById(route.getId()).orElseThrow().getSeatsAvailable()).isEqualTo(4);
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e -> {
+            var event = (org.coryd.common.kafka.events.BookingCancelledEvent) e;
+            return "SUSPENDED".equals(event.getCancelledBy()) && !event.isFeeApplied() && event.isPaid();
+        }));
+        assertThatThrownBy(() -> book(route, RIDER, 1))
+                .isInstanceOf(org.coryd.common.exception.BadRequestException.class).hasMessageContaining("suspended");
+    }
+
+    @Test
+    void aBlockedPairNeverSeeOrBookEachOther() {
+        RoutePost route = route(4);
+        var request = new org.coryd.trip.dto.SearchRequest(6.45, 3.39, 6.44, 3.40, route.getDepartureTime(), null, null);
+        assertThat(routeService.searchAsRider(request, RIDER)).hasSize(1);
+
+        userBlockService.block(DRIVER, RIDER);
+
+        assertThat(routeService.searchAsRider(request, RIDER)).as("blocked by the driver").isEmpty();
+        assertThat(routeService.searchAsRider(request, OTHER_RIDER)).hasSize(1);
+        assertThatThrownBy(() -> book(route, RIDER, 1)).isInstanceOf(org.coryd.common.exception.BadRequestException.class);
+
+        userBlockService.unblock(DRIVER, RIDER);
+        assertThat(routeService.searchAsRider(request, RIDER)).hasSize(1);
+        assertThatThrownBy(() -> userBlockService.block(RIDER, RIDER)).isInstanceOf(org.coryd.common.exception.BadRequestException.class);
+    }
+
+    @Test
+    void withStrictVerificationAnUnverifiedDriverCantPost() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.STRICT);
+        try {
+            assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(1, ChronoUnit.DAYS))))
+                    .isInstanceOf(BadRequestException.class).hasMessageContaining("Verify your identity to post a route");
+
+            identityVerificationCacheRepository.save(new org.coryd.trip.entity.IdentityVerificationCache(DRIVER, true, Instant.now()));
+            assertThat(routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(1, ChronoUnit.DAYS))).getId()).isNotNull();
+        } finally {
+            identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.OFF);
+        }
+    }
+
+    @Test
+    void withStrictVerificationOnlyAVerifiedRiderCanBookAndTheDriverSeesTheBadge() {
+        RoutePost route = route(4);
+        identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.STRICT);
+        try {
+            assertThatThrownBy(() -> book(route, RIDER, 1))
+                    .isInstanceOf(org.coryd.common.exception.BadRequestException.class).hasMessageContaining("Verify your identity");
+
+            identityVerificationCacheRepository.save(new org.coryd.trip.entity.IdentityVerificationCache(RIDER, true, Instant.now()));
+            confirm(book(route, RIDER, 1));
+
+            assertThat(bookingService.getManifestForRoute(route.getId(), DRIVER))
+                    .singleElement().satisfies(b -> assertThat(b.riderVerified()).isTrue());
+        } finally {
+            identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.OFF);
+        }
+    }
+
+    // ---- regular routes ----------------------------------------------------------------------------
+
+    @Test
+    void aRegularRoutePostsEachTripOnceAndStopsWhenPaused() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        org.mockito.Mockito.when(mapsService.getRoutePreview(org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble(),
+                        org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble()))
+                .thenReturn(new org.coryd.trip.dto.RoutePreview(9.5, 40, "40 mins", "", ""));
+        var everyDay = new org.coryd.trip.dto.RouteTemplateRequest(null, "Campos Memorial Mini Stadium", 6.45, 3.39,
+                "Obalende Bridge", 6.44, 3.40, List.of(java.time.DayOfWeek.values()), "07:00", 4, FARE, null, null, null);
+
+        var template = routeTemplateService.create(DRIVER, everyDay);
+        int posted = routeTemplateService.postUpcomingTrips(DRIVER, template.id());
+
+        // 07:00 on each day inside the 3-day posting window and at least 30 minutes away - 2 or 3 depending on the hour.
+        assertThat(posted).isBetween(2, 3);
+        assertThat(routePostRepository.findAll()).hasSize(posted)
+                .allSatisfy(r -> assertThat(r.getRouteTemplateId()).isEqualTo(template.id()));
+        assertThat(routeTemplateService.postUpcomingTrips(DRIVER, template.id())).as("never twice").isZero();
+
+        routePostRepository.deleteAll();
+        routeTemplateService.setPaused(DRIVER, template.id(), true);
+        assertThat(routeTemplateService.postUpcomingTrips()).as("paused").isZero();
+        assertThatThrownBy(() -> routeTemplateService.setPaused(OTHER_RIDER, template.id(), false)).isInstanceOf(UnauthorizedException.class);
+    }
+
+    @Test
+    void aRegularRouteCantHoldMoreStandingSeatsThanItOffers() {
+        var tooMany = new org.coryd.trip.dto.RouteTemplateRequest(null, "A", 6.45, 3.39, "B", 6.44, 3.40,
+                List.of(java.time.DayOfWeek.MONDAY), "07:00", 2, FARE, null, null,
+                List.of(new org.coryd.trip.dto.PostRouteRequest.ReservationRequest(RIDER, 3)));
+
+        assertThatThrownBy(() -> routeTemplateService.create(DRIVER, tooMany)).isInstanceOf(BadRequestException.class);
+    }
+
+    // ---- along the way ----------------------------------------------------------------------------
+
+    @Test
+    void aRiderPartWayAlongTheDriversRoadFindsTheRideAndBooksOnTheRoad() {
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+        RoutePost route = routePostRepository.save(routeBuilder(4)
+                .originLabel("Ikorodu").originLat(6.62).originLng(3.51)
+                .destinationLabel("Victoria Island").destinationLat(6.42).destinationLng(3.41)
+                .departureTime(departure).estimatedDurationMinutes(60).build());
+        // A quarter of the way to three-quarters - neither end is near the route's ends.
+        var request = new org.coryd.trip.dto.SearchRequest(6.57, 3.485, 6.47, 3.435, departure.plus(15, ChronoUnit.MINUTES), null, null);
+
+        var results = routeService.searchAsRider(request, RIDER);
+
+        assertThat(results).singleElement().satisfies(r -> {
+            assertThat(r.alongTheWay()).isTrue();
+            assertThat(r.pickup().walkMeters()).isLessThan(50);
+            assertThat(r.pickup().time()).isAfter(departure);
+            assertThat(r.dropoff()).isNotNull();
+        });
+
+        assertThatThrownBy(() -> bookingService.reserveSeats(route.getId(), RIDER,
+                new BookSeatsRequest(null, 1, "My house", 6.57, 3.515)))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("on the driver's route");
+
+        Booking booking = bookingService.reserveSeats(route.getId(), RIDER, new BookSeatsRequest(null, 1, "Ketu", 6.57, 3.485,
+                "Obalende", 6.47, 3.435));
+        assertThat(reload(booking).getDropoffLabel()).isEqualTo("Obalende");
+    }
+
+    @Test
+    void postgisKeepsEachRoutesRoadAndFindsTheSameRidesAsTheFallback() {
+        assertThat(geoCapabilities.postgis()).as("tests run on a PostGIS database").isTrue();
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+        RoutePost passing = routePostRepository.save(routeBuilder(4).originLat(6.62).originLng(3.51).destinationLat(6.42).destinationLng(3.41)
+                .departureTime(departure).estimatedDurationMinutes(60).build());
+        routePostRepository.save(routeBuilder(4).originLat(6.60).originLng(3.35).destinationLat(6.47).destinationLng(3.28)
+                .departureTime(departure).estimatedDurationMinutes(60).build());
+        assertThat(jdbcTemplate.queryForObject("select count(*) from trip.route_posts where route_geog is null", Integer.class))
+                .as("the trigger fills every route's road").isZero();
+
+        var request = new org.coryd.trip.dto.SearchRequest(6.57, 3.485, 6.47, 3.435, departure.plus(15, ChronoUnit.MINUTES), null, null);
+        var withPostgis = routeService.searchAsRider(request, RIDER);
+        matchingProperties.setUsePostgis(false);
+        try {
+            var inMemory = routeService.searchAsRider(request, RIDER);
+            assertThat(withPostgis).isEqualTo(inMemory).singleElement()
+                    .satisfies(r -> assertThat(r.routePostId()).isEqualTo(passing.getId()));
+        } finally {
+            matchingProperties.setUsePostgis(true);
+        }
+    }
+
+    @Test
+    void aBadlyEncodedRoadFallsBackToTheStraightLineInsteadOfFailingTheSave() {
+        RoutePost route = routePostRepository.save(routeBuilder(4).routePolyline("not a polyline").build());
+
+        assertThat(jdbcTemplate.queryForObject("select ST_NPoints(route_geog::geometry) from trip.route_posts where id = ?",
+                Integer.class, route.getId())).isEqualTo(2);
+    }
+
+    @Test
+    void aRiderGoingTheOtherWayDoesNotMatch() {
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+        routePostRepository.save(routeBuilder(4).originLat(6.62).originLng(3.51).destinationLat(6.42).destinationLng(3.41)
+                .departureTime(departure).estimatedDurationMinutes(60).build());
+
+        assertThat(routeService.searchAsRider(new org.coryd.trip.dto.SearchRequest(6.47, 3.435, 6.57, 3.485,
+                departure.plus(45, ChronoUnit.MINUTES), null, null), RIDER)).isEmpty();
+    }
+
+    @Test
+    void aSafetyCheckKeepsEveryoneItAskedEvenBeforeTheyAnswer() {
+        var alert = org.coryd.trip.entity.TripSafetyAlert.builder().routePostId("route-x")
+                .kind(org.coryd.trip.entity.TripSafetyAlert.Kind.STOPPED).build();
+        alert.getAnswers().put(DRIVER, org.coryd.trip.entity.TripSafetyAlert.Answer.WAITING);
+        alert.getAnswers().put(RIDER, org.coryd.trip.entity.TripSafetyAlert.Answer.WAITING);
+        String id = tripSafetyAlertRepository.save(alert).getId();
+
+        assertThat(tripSafetyAlertRepository.findById(id).orElseThrow().getAnswers())
+                .containsOnlyKeys(DRIVER, RIDER)
+                .containsValue(org.coryd.trip.entity.TripSafetyAlert.Answer.WAITING);
+        tripSafetyAlertRepository.deleteById(id);
     }
 
     // ---- rides nearby ----------------------------------------------------------------------------

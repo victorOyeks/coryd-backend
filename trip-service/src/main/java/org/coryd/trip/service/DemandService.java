@@ -69,6 +69,7 @@ public class DemandService {
     private final DemandProperties properties;
     private final PaymentServiceClient paymentServiceClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final RouteMatcher routeMatcher;
 
     /** Never lets a demand-logging problem break the search itself - no transaction of its own here, so a
      * failed insert surfaces inside the try rather than at a commit after it. */
@@ -286,7 +287,9 @@ public class DemandService {
 
     /** Where a driver goes, and when: their recent routes, or what they told us if they haven't posted yet.
      * times holds [from, to] ranges in minutes after midnight - a single departure is a range of one minute. */
-    private record Reference(double originLat, double originLng, double destinationLat, double destinationLng, List<int[]> times) {
+    /** route is set when the reference is one of the driver's own trips - its road counts, not just its ends. */
+    private record Reference(double originLat, double originLng, double destinationLat, double destinationLng, List<int[]> times,
+                             RoutePost route) {
     }
 
     private List<Reference> referencesFor(String driverId, Instant now) {
@@ -311,7 +314,7 @@ public class DemandService {
     private static Reference fromRoute(RoutePost route) {
         int minutes = minutesOf(route.getDepartureTime());
         return new Reference(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(),
-                List.<int[]>of(new int[]{minutes, minutes}));
+                List.<int[]>of(new int[]{minutes, minutes}), route);
     }
 
     private static Optional<Reference> fromPreference(DriverDrivingPreference p) {
@@ -328,7 +331,7 @@ public class DemandService {
         if (times.isEmpty()) {
             times.add(new int[]{0, DAY_MINUTES - 1});
         }
-        return Optional.of(new Reference(p.getStartLat(), p.getStartLng(), p.getEndLat(), p.getEndLng(), times));
+        return Optional.of(new Reference(p.getStartLat(), p.getStartLng(), p.getEndLat(), p.getEndLng(), times, null));
     }
 
     private DemandRelevance relevance(Corridor c, List<Reference> references) {
@@ -336,6 +339,11 @@ public class DemandService {
         for (Reference r : references) {
             boolean start = GeoMath.distanceKm(r.originLat, r.originLng, c.originLat, c.originLng) <= properties.getMatchRadiusKm();
             boolean end = GeoMath.distanceKm(r.destinationLat, r.destinationLng, c.destinationLat, c.destinationLng) <= properties.getMatchRadiusKm();
+            // Riders the driver passes on their usual road are on their route too.
+            if (!(start && end) && passes(r.route, c)) {
+                start = true;
+                end = true;
+            }
             boolean time = r.times.stream().anyMatch(range -> nearWindow(range[0], range[1], c));
             DemandRelevance fit = start && end ? (time ? DemandRelevance.MATCHES_YOUR_ROUTES : DemandRelevance.DIFFERENT_TIME)
                     : start ? DemandRelevance.SAME_START
@@ -353,13 +361,19 @@ public class DemandService {
         return from <= c.windowEnd + properties.getTimeSlackMinutes() && to >= c.windowStart - properties.getTimeSlackMinutes();
     }
 
-    /** A posted ride that already covers this demand - same ends, same kind of day, leaving in or near the window. */
+    private boolean passes(RoutePost route, Corridor c) {
+        return route != null && routeMatcher.enabled()
+                && routeMatcher.match(route, c.originLat, c.originLng, c.destinationLat, c.destinationLng).isPresent();
+    }
+
+    /** A posted ride that already covers this demand - same ends (or passing both on its road), same kind of day, leaving in or near the window. */
     private boolean serves(RoutePost route, Corridor c) {
         int minutes = minutesOf(route.getDepartureTime());
         return GeoMath.isWeekend(GeoMath.lagos(route.getDepartureTime()).getDayOfWeek()) == c.weekend
                 && nearWindow(minutes, minutes, c)
-                && GeoMath.distanceKm(route.getOriginLat(), route.getOriginLng(), c.originLat, c.originLng) <= properties.getMatchRadiusKm()
-                && GeoMath.distanceKm(route.getDestinationLat(), route.getDestinationLng(), c.destinationLat, c.destinationLng) <= properties.getMatchRadiusKm();
+                && ((GeoMath.distanceKm(route.getOriginLat(), route.getOriginLng(), c.originLat, c.originLng) <= properties.getMatchRadiusKm()
+                && GeoMath.distanceKm(route.getDestinationLat(), route.getDestinationLng(), c.destinationLat, c.destinationLng) <= properties.getMatchRadiusKm())
+                || passes(route, c));
     }
 
     /** Pushing a driver who can't post would only frustrate them. Verified, or past the posting prerequisites. */

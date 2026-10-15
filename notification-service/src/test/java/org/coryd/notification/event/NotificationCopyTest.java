@@ -19,7 +19,8 @@ import static org.mockito.Mockito.verify;
 class NotificationCopyTest {
 
     private final NotificationDispatchService dispatch = mock(NotificationDispatchService.class);
-    private final NotificationEventListener listener = new NotificationEventListener(dispatch);
+    private final org.coryd.notification.config.SosAlertProperties sos = new org.coryd.notification.config.SosAlertProperties();
+    private final NotificationEventListener listener = new NotificationEventListener(dispatch, sos);
 
     @Test
     void aWaitingRiderIsToldWhereAndWhenAndThePushOpensTheRide() {
@@ -30,6 +31,69 @@ class NotificationCopyTest {
         verify(dispatch).sendRoutePush(eq("rider-1"), eq("A ride is available"),
                 eq("A driver is heading from Ikorodu to Victoria Island on Tue 13 Oct at 7:00 AM. Book your seat."),
                 eq("NOTIFY_ME_MATCHED"), eq("route-9"));
+    }
+
+    @Test
+    void anSosTextsTheContactsAndEveryOpsPhoneAndEmailsEveryOpsAddress() {
+        sos.setOpsPhones(List.of("08011111111", " 08022222222 ", ""));
+        sos.setOpsEmails(List.of("ops@coryd.ng", "founder@coryd.ng"));
+
+        listener.onSosTriggered(sosEvent().contacts(List.of(
+                org.coryd.common.kafka.events.EmergencyContactPayload.builder().name("Wife").phone("08050000000").build())).build());
+
+        verify(dispatch).sendSms(eq("08050000000"), any(), eq("SOS_TRIGGERED"));
+        String sms = "CoRyd SOS: the driver pressed SOS on Eko Hotel → Ikorodu. Rider 08030000000. Driver Tunde 08040000000, "
+                + "car LND123AB. https://maps.google.com/?q=6.45,3.39";
+        verify(dispatch).sendSms(eq("08011111111"), eq(sms), eq("SOS_OPS_ALERT"));
+        verify(dispatch).sendSms(eq("08022222222"), eq(sms), eq("SOS_OPS_ALERT"));
+        verify(dispatch, org.mockito.Mockito.times(3)).sendSms(any(), any(), any());
+        verify(dispatch).sendEmail(eq("ops@coryd.ng"), eq("SOS: driver on Eko Hotel → Ikorodu"), any(), eq("SOS_OPS_ALERT"));
+        verify(dispatch).sendEmail(eq("founder@coryd.ng"), any(), any(), eq("SOS_OPS_ALERT"));
+    }
+
+    @Test
+    void theOpsEmailSaysWhoToCallAndWhereAndMissingDetailsReadAsUnknown() {
+        String body = NotificationEventListener.sosOpsEmail(sosEvent().driverPhone(null).latitude(null).longitude(null).build(),
+                Instant.parse("2026-10-15T18:05:00Z"));
+
+        org.assertj.core.api.Assertions.assertThat(body)
+                .contains("The driver on this trip pressed SOS at 15 Oct, 7:05 PM (Lagos time).")
+                .contains("Rider phone: 08030000000")
+                .contains("Driver: Tunde, unknown")
+                .contains("Car: LND123AB")
+                .contains("Location: not shared")
+                .contains("Incident sos-1, booking booking-1");
+    }
+
+    @Test
+    void withNoOpsConfiguredOnlyTheContactsAreTexted() {
+        listener.onSosTriggered(sosEvent().contacts(List.of(
+                org.coryd.common.kafka.events.EmergencyContactPayload.builder().name("Wife").phone("08050000000").build())).build());
+
+        verify(dispatch).sendSms(eq("08050000000"), any(), eq("SOS_TRIGGERED"));
+        verify(dispatch, org.mockito.Mockito.never()).sendSms(any(), any(), eq("SOS_OPS_ALERT"));
+        verify(dispatch, org.mockito.Mockito.never()).sendEmail(any(), any(), any(), any());
+    }
+
+    @Test
+    void everyoneOnBoardIsAskedIfTheyAreOk() {
+        listener.onTripSafetyCheck(org.coryd.common.kafka.events.TripSafetyCheckEvent.builder()
+                .alertId("alert-1").kind("STOPPED").userIds(List.of("driver-1", "rider-1")).build());
+
+        String body = "Your car has been stopped for a while away from any pickup. Tap to tell us you're fine, or get help.";
+        verify(dispatch).sendPush(eq("driver-1"), eq("Are you OK?"), eq(body), eq("SAFETY_CHECK"), eq("alert-1"));
+        verify(dispatch).sendPush(eq("rider-1"), eq("Are you OK?"), eq(body), eq("SAFETY_CHECK"), eq("alert-1"));
+    }
+
+    @Test
+    void anUnansweredSafetyCheckTextsOps() {
+        sos.setOpsPhones(List.of("08011111111"));
+        listener.onTripSafetyEscalated(org.coryd.common.kafka.events.TripSafetyEscalatedEvent.builder()
+                .alertId("alert-1").kind("OFF_ROUTE").routeSummary("Ikorodu → VI").driverName("Tunde").driverPhone("0804")
+                .vehiclePlate("LND1").riderPhones("0803").unanswered(2).latitude(6.5).longitude(3.4).build());
+
+        verify(dispatch).sendSms(eq("08011111111"), eq("CoRyd safety: trip Ikorodu → VI far off its route and 2 on board didn't answer. "
+                + "Driver Tunde 0804, car LND1. Riders 0803. https://maps.google.com/?q=6.5,3.4"), eq("SAFETY_ESCALATED"));
     }
 
     @Test
@@ -179,5 +243,12 @@ class NotificationCopyTest {
                 .routePostId("route-1").driverId("driver-1").cancelledBy(cancelledBy)
                 .affectedBookingIds(java.util.stream.IntStream.range(0, refunded).mapToObj(i -> "b-" + i).toList())
                 .build();
+    }
+
+    private static org.coryd.common.kafka.events.SosTriggeredEvent.SosTriggeredEventBuilder sosEvent() {
+        return org.coryd.common.kafka.events.SosTriggeredEvent.builder()
+                .incidentId("sos-1").bookingId("booking-1").triggeredBy("driver-1").triggeredByRole("DRIVER")
+                .riderPhone("08030000000").driverPhone("08040000000").driverName("Tunde").vehiclePlate("LND123AB")
+                .routeSummary("Eko Hotel → Ikorodu").latitude(6.45).longitude(3.39).contacts(List.of());
     }
 }

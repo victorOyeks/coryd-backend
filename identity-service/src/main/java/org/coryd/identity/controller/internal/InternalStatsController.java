@@ -3,6 +3,7 @@ package org.coryd.identity.controller.internal;
 import io.swagger.v3.oas.annotations.Hidden;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.identity.dto.HeardAboutUsStatsResponse;
 import org.coryd.identity.dto.IdentityStatsResponse;
 import org.coryd.identity.service.PlatformStatsService;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -27,5 +28,13 @@ public class InternalStatsController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
         return ApiResponse.ok(platformStatsService.statsFor(from, to));
+    }
+
+    /** For the Ops Console - sign-ups by "How did you hear about us?". */
+    @GetMapping("/heard-about-us")
+    public ApiResponse<HeardAboutUsStatsResponse> heardAboutUs(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        return ApiResponse.ok(platformStatsService.heardAboutUs(from, to));
     }
 }

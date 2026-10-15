@@ -40,7 +40,7 @@ public class LiveSearchPushService {
 
     private void pushIfChanged(String sessionId, LiveSearchSessionRegistry.Session session) {
         try {
-            List<RideSearchResult> results = routeService.search(session.request());
+            List<RideSearchResult> results = routeService.searchAsRider(session.request(), session.riderId());
             // Compared whole, because everything on the card can move without the route set moving:
             // seats taken, fare edited, driver newly verified, note changed.
             if (results.equals(session.lastResults())) {

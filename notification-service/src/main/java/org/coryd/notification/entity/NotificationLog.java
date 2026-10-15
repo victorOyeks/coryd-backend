@@ -38,4 +38,16 @@ public class NotificationLog extends BaseEntity {
 
     @Column(nullable = false)
     private boolean delivered;
+
+    /** Pushes only - whose device it went to, so one user's pushes can be traced. */
+    @Column(length = 36)
+    private String userId;
+
+    /** Firebase's message id when it accepted the push. */
+    @Column(length = 255)
+    private String providerMessageId;
+
+    /** Firebase's error code when it refused (UNREGISTERED, SENDER_ID_MISMATCH, ...). */
+    @Column(length = 100)
+    private String errorCode;
 }

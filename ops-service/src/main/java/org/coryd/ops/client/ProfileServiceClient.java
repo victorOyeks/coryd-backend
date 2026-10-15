@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -77,6 +78,26 @@ public class ProfileServiceClient {
                 .uri("/drivers/{driverId}/verification", driverId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(new DecisionBatch(decisions, reviewedBy))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** People whose identity check waits on ops - profile-service checks the forwarded token is OPS_ADMIN. */
+    public JsonNode identityVerificationQueue(int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/identity-verification/queue").queryParam("page", page).queryParam("size", size).build())
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode decideIdentityVerification(String userId, boolean approve, String reason) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("approve", approve);
+        body.put("reason", reason);
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.patch()
+                .uri("/identity-verification/{userId}", userId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
                 .retrieve()
                 .body(JsonNode.class));
     }

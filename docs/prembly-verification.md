@@ -11,6 +11,7 @@ register. It lives in `profile-service` and is **off until you give it a key**.
 |---|---|---|---|
 | Driver's licence | `POST /verification/drivers_license/advance/v2` | `PUT /profile/drivers/me` (licence number changed) | `GOVERNMENT_ID` auto-approves |
 | Plate number | `POST /verification/vehicle` | Registering or editing a vehicle | Recorded only — ops still approves the vehicle |
+| NIN + selfie (riders and drivers) | `PREMBLY_NIN_CHECK=NIN_WITH_FACE` (default): [`POST /verification/nin_w_face`](https://docs.prembly.com/docs/nin-with-face-copy) with `number`, `image` (the selfie URL) and `face_confidence_threshold`. Fallback `NIN_BASIC`: [`POST /verification/vnin-basic`](https://docs.prembly.com/docs/national-id-basic-1) then [`POST /verification/biometrics/face/liveliness_check`](https://docs.prembly.com/docs/face-livelinness-check) on the selfie | `POST /profile/identity-verification` | Rider verified when the NIN is found, its name matches the person's, and the selfie matches the NIN photo per `face_data.status` (or, on Basic, is a live person). Otherwise ops decides from the identity queue |
 
 The plate record names a car, not an owner, so it cannot show that this driver may drive it. That
 is why it informs the decision instead of making it.

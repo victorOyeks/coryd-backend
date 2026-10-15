@@ -21,9 +21,12 @@ import org.coryd.common.kafka.events.RouteDepartureReminderEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
+import org.coryd.common.kafka.events.TripSafetyCheckEvent;
+import org.coryd.common.kafka.events.TripSafetyEscalatedEvent;
 import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.notification.config.KafkaConfig;
+import org.coryd.notification.config.SosAlertProperties;
 import org.coryd.notification.service.NotificationDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +37,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Locale;
 
 @Component
@@ -43,10 +47,15 @@ public class NotificationEventListener {
     private static final Logger log = LoggerFactory.getLogger(NotificationEventListener.class);
 
     /** "Mon 13 Oct at 7:00 AM", Lagos time. */
+    /** "13 Oct, 7:05 PM", Lagos time. */
+    private static final DateTimeFormatter SOS_TIME = DateTimeFormatter.ofPattern("d MMM, h:mm a", Locale.ENGLISH)
+            .withZone(ZoneId.of("Africa/Lagos"));
+
     private static final DateTimeFormatter RIDE_TIME = DateTimeFormatter.ofPattern("EEE d MMM 'at' h:mm a", Locale.ENGLISH)
             .withZone(ZoneId.of("Africa/Lagos"));
 
     private final NotificationDispatchService dispatchService;
+    private final SosAlertProperties sosAlertProperties;
 
     @KafkaListener(topics = KafkaTopics.OTP_ISSUED, groupId = KafkaConfig.GROUP_ID_OTP)
     public void onOtpIssued(OtpIssuedEvent event) {
@@ -357,6 +366,8 @@ public class NotificationEventListener {
             }
         }
 
+        alertOps(event);
+
         // Confirmation push to whoever triggered it, once - regardless of how many contacts were
         // just alerted - matches the app's own "will be shared immediately" promise with a single
         // acknowledgement, not silence (or a flood) after tapping the button.
@@ -365,5 +376,103 @@ public class NotificationEventListener {
                 anyContact ? "Your emergency contact has been notified by SMS."
                         : "We couldn't alert anyone - add an emergency contact in your profile.",
                 "SOS_TRIGGERED", event.getBookingId());
+    }
+
+    /** Everyone on board is asked; the push's referenceId is the alertId the app answers on. */
+    @KafkaListener(topics = KafkaTopics.TRIP_SAFETY_CHECK, groupId = KafkaConfig.GROUP_ID_SAFETY)
+    public void onTripSafetyCheck(TripSafetyCheckEvent event) {
+        if (event.getUserIds() == null) {
+            return;
+        }
+        String body = safetyCheckCopy(event.getKind());
+        event.getUserIds().forEach(userId ->
+                dispatchService.sendPush(userId, "Are you OK?", body, "SAFETY_CHECK", event.getAlertId()));
+    }
+
+    static String safetyCheckCopy(String kind) {
+        String why = switch (kind == null ? "" : kind) {
+            case "STOPPED" -> "Your car has been stopped for a while away from any pickup.";
+            case "OFF_ROUTE" -> "Your car is a long way off the planned route.";
+            case "SIGNAL_LOST" -> "We've lost the driver's location.";
+            default -> "Something about your trip looks unusual.";
+        };
+        return why + " Tap to tell us you're fine, or get help.";
+    }
+
+    /** Nobody answered "Are you OK?" in time - ops hears about it the same way as an SOS. */
+    @KafkaListener(topics = KafkaTopics.TRIP_SAFETY_ESCALATED, groupId = KafkaConfig.GROUP_ID_SAFETY)
+    public void onTripSafetyEscalated(TripSafetyEscalatedEvent event) {
+        List<String> phones = sosAlertProperties.phones();
+        List<String> emails = sosAlertProperties.emails();
+        if (phones.isEmpty() && emails.isEmpty()) {
+            log.error("Trip safety alert {} unanswered - no ops phones or emails configured, ops not alerted", event.getAlertId());
+            return;
+        }
+        String sms = safetyEscalationSms(event);
+        phones.forEach(phone -> dispatchService.sendSms(phone, sms, "SAFETY_ESCALATED"));
+        emails.forEach(email -> dispatchService.sendEmail(email,
+                "Unanswered safety check: " + orUnknown(event.getRouteSummary()), sms + "\n\nAlert " + event.getAlertId()
+                        + ", route " + event.getRoutePostId(), "SAFETY_ESCALATED"));
+    }
+
+    static String safetyEscalationSms(TripSafetyEscalatedEvent event) {
+        String what = switch (event.getKind() == null ? "" : event.getKind()) {
+            case "STOPPED" -> "stopped for a long time";
+            case "OFF_ROUTE" -> "far off its route";
+            case "SIGNAL_LOST" -> "has lost the driver's location";
+            default -> "looks unusual";
+        };
+        return "CoRyd safety: trip " + orUnknown(event.getRouteSummary()) + " " + what + " and " + event.getUnanswered()
+                + " on board didn't answer. Driver " + orUnknown(event.getDriverName()) + " " + orUnknown(event.getDriverPhone())
+                + ", car " + orUnknown(event.getVehiclePlate()) + ". Riders " + orUnknown(event.getRiderPhones()) + "."
+                + (event.getLatitude() == null ? "" : " https://maps.google.com/?q=" + event.getLatitude() + "," + event.getLongitude());
+    }
+
+    /** Every ops phone gets an SMS and every ops address an email - who pressed it, both phones, the car, the place. */
+    private void alertOps(SosTriggeredEvent event) {
+        List<String> phones = sosAlertProperties.phones();
+        List<String> emails = sosAlertProperties.emails();
+        if (phones.isEmpty() && emails.isEmpty()) {
+            log.error("SOS {} on booking {} - no ops phones or emails configured (SOS_OPS_PHONES / SOS_OPS_EMAILS), ops not alerted",
+                    event.getIncidentId(), event.getBookingId());
+            return;
+        }
+        String sms = sosOpsSms(event);
+        phones.forEach(phone -> dispatchService.sendSms(phone, sms, "SOS_OPS_ALERT"));
+        String subject = "SOS: " + who(event) + " on " + orUnknown(event.getRouteSummary());
+        String body = sosOpsEmail(event, Instant.now());
+        emails.forEach(email -> dispatchService.sendEmail(email, subject, body, "SOS_OPS_ALERT"));
+    }
+
+    static String sosOpsSms(SosTriggeredEvent event) {
+        return "CoRyd SOS: the " + who(event) + " pressed SOS on " + orUnknown(event.getRouteSummary())
+                + ". Rider " + orUnknown(event.getRiderPhone())
+                + ". Driver " + orUnknown(event.getDriverName()) + " " + orUnknown(event.getDriverPhone())
+                + ", car " + orUnknown(event.getVehiclePlate()) + "." + mapLink(event);
+    }
+
+    static String sosOpsEmail(SosTriggeredEvent event, Instant receivedAt) {
+        return "The " + who(event) + " on this trip pressed SOS at " + SOS_TIME.format(receivedAt) + " (Lagos time).\n\n"
+                + "Route: " + orUnknown(event.getRouteSummary()) + "\n"
+                + "Rider phone: " + orUnknown(event.getRiderPhone()) + "\n"
+                + "Driver: " + orUnknown(event.getDriverName()) + ", " + orUnknown(event.getDriverPhone()) + "\n"
+                + "Car: " + orUnknown(event.getVehiclePlate()) + "\n"
+                + (event.getLatitude() == null ? "Location: not shared\n"
+                        : "Location: https://maps.google.com/?q=" + event.getLatitude() + "," + event.getLongitude() + "\n")
+                + "\nCall them now. Their emergency contacts have also been texted.\n\n"
+                + "Incident " + event.getIncidentId()
+                + (event.getBookingId() != null ? ", booking " + event.getBookingId() : ", route " + event.getRoutePostId());
+    }
+
+    private static String who(SosTriggeredEvent event) {
+        return "DRIVER".equals(event.getTriggeredByRole()) ? "driver" : "rider";
+    }
+
+    private static String mapLink(SosTriggeredEvent event) {
+        return event.getLatitude() == null ? "" : " https://maps.google.com/?q=" + event.getLatitude() + "," + event.getLongitude();
+    }
+
+    private static String orUnknown(String value) {
+        return value == null || value.isBlank() ? "unknown" : value;
     }
 }

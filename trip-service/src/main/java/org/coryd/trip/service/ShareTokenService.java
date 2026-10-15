@@ -23,6 +23,9 @@ public class ShareTokenService {
 
     private static final String HMAC_ALGORITHM = "HmacSHA256";
 
+    /** A driver shares the whole route, not a booking - the signed id is "route:<routePostId>". */
+    public static final String ROUTE_PREFIX = "route:";
+
     private final SecretKeySpec signingKey;
     private final String baseUrl;
 

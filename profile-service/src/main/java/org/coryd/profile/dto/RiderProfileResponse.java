@@ -1,5 +1,6 @@
 package org.coryd.profile.dto;
 
+import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.entity.EmergencyContact;
 import org.coryd.profile.entity.RiderProfile;
 
@@ -19,14 +20,18 @@ public record RiderProfileResponse(
         String phone,
         String photoUrl,
         String emergencyContactName,
-        String emergencyContactPhone
+        String emergencyContactPhone,
+        /** The identity check - PENDING until the rider submits NIN + selfie; only APPROVED may book. */
+        VerificationStatus identityVerificationStatus
 ) {
-    public static RiderProfileResponse from(RiderProfile profile, String phone, EmergencyContact primaryContact) {
+    public static RiderProfileResponse from(RiderProfile profile, String phone, EmergencyContact primaryContact,
+                                            VerificationStatus identityVerificationStatus) {
         return new RiderProfileResponse(
                 profile.getId(), profile.getCustomId(), profile.getCreatedAt(), profile.getUpdatedAt(),
                 profile.getUserId(), profile.getFirstName(), profile.getLastName(), profile.getEmail(), phone, profile.getPhotoUrl(),
                 primaryContact == null ? null : primaryContact.getName(),
-                primaryContact == null ? null : primaryContact.getPhone()
+                primaryContact == null ? null : primaryContact.getPhone(),
+                identityVerificationStatus
         );
     }
 }

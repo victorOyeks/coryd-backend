@@ -15,6 +15,8 @@ import org.coryd.trip.dto.RouteSummary;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
+import org.coryd.trip.entity.SosIncident;
+import org.coryd.trip.service.BookingService;
 import org.coryd.trip.service.RouteService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -37,6 +39,7 @@ import java.util.Optional;
 public class RouteController {
 
     private final RouteService routeService;
+    private final BookingService bookingService;
 
     /** Whether this driver may post routes, and how long they have left to upload documents. Always self-scoped. */
     @GetMapping("/drivers/me/posting-eligibility")
@@ -63,8 +66,9 @@ public class RouteController {
 
     /** Called by the client only when /search comes back empty - relaxed radius/time window, capped result count. */
     @PostMapping("/search/nearby-options")
-    public ApiResponse<List<RideSearchResult>> nearbyOptions(@Valid @RequestBody SearchRequest request) {
-        return ApiResponse.ok(routeService.getNearbyOptions(request));
+    public ApiResponse<List<RideSearchResult>> nearbyOptions(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                             @Valid @RequestBody SearchRequest request) {
+        return ApiResponse.ok(routeService.getNearbyOptions(request, principal == null ? null : principal.getUserId()));
     }
 
     @GetMapping("/drivers/{driverId}")
@@ -119,5 +123,19 @@ public class RouteController {
     public ApiResponse<Void> start(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
         routeService.startTrip(routePostId, principal.getUserId());
         return ApiResponse.ok("Trip started", null);
+    }
+
+    /** The driver's SOS - on the route itself, so it works with no bookings or several. Driver only, until the trip ends. */
+    @PostMapping("/{routePostId}/sos")
+    public ApiResponse<SosIncident> sos(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId,
+                                        @RequestParam(required = false) Double latitude,
+                                        @RequestParam(required = false) Double longitude) {
+        return ApiResponse.ok(bookingService.triggerRouteSos(routePostId, principal.getUserId(), latitude, longitude));
+    }
+
+    /** The driver's "Share trip" - texts a live-tracking link to the driver's own emergency contacts. */
+    @PostMapping("/{routePostId}/share")
+    public ApiResponse<String> share(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
+        return ApiResponse.ok(bookingService.shareRoute(routePostId, principal.getUserId()));
     }
 }

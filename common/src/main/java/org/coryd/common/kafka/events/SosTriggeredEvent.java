@@ -14,8 +14,18 @@ import java.util.List;
 @AllArgsConstructor
 public class SosTriggeredEvent {
     private String incidentId;
+    /** Null when a driver raised it on the route itself. */
     private String bookingId;
+    private String routePostId;
     private String triggeredBy;
+    /** RIDER or DRIVER - which side of the trip pressed it. */
+    private String triggeredByRole;
+    /** For the ops alert - who to call on both sides, and which car. Any of these may be null if a lookup failed. */
+    private String riderPhone;
+    private String driverPhone;
+    private String driverName;
+    private String vehiclePlate;
+    private String routeSummary;
     private Double latitude;
     private Double longitude;
     private LocalDateTime triggeredAt;

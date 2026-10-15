@@ -18,7 +18,13 @@ public record BookingSummary(
         String pickupLabel,
         Double pickupLat,
         Double pickupLng,
+        /** Where the rider gets out - null means the route's end. */
+        String dropoffLabel,
+        Double dropoffLat,
+        Double dropoffLng,
         Double riderRatingAvg,
-        Long riderRatingCount
+        Long riderRatingCount,
+        /** Passed the NIN + selfie check - the "Verified rider" badge on the driver's side. */
+        boolean riderVerified
 ) {
 }

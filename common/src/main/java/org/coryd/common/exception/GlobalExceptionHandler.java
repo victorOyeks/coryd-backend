@@ -1,11 +1,13 @@
 package org.coryd.common.exception;
 
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.RoleNotHeldError;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.ErrorResponse;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.Arrays;
 import java.util.stream.Collectors;
 
 /**
@@ -61,6 +64,27 @@ public class GlobalExceptionHandler {
         String message = e.getBindingResult().getFieldErrors().stream()
                 .map(err -> err.getField() + ": " + err.getDefaultMessage())
                 .collect(Collectors.joining(", "));
+        return ResponseEntity.badRequest().body(ApiResponse.error(message));
+    }
+
+    /**
+     * A body that can't be read - broken JSON, or a value that doesn't fit its field, like an enum
+     * the API doesn't have. It's the caller's mistake, so a 400 that names the field and, for an
+     * enum, the values it takes - never the catch-all's 500.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnreadable(HttpMessageNotReadableException e) {
+        String message = "The request body couldn't be read";
+        if (e.getCause() instanceof InvalidFormatException invalid) {
+            String field = invalid.getPath().stream()
+                    .map(ref -> ref.getFieldName() != null ? ref.getFieldName() : "[" + ref.getIndex() + "]")
+                    .collect(Collectors.joining("."));
+            Class<?> type = invalid.getTargetType();
+            message = type != null && type.isEnum()
+                    ? field + " must be one of: " + Arrays.stream(type.getEnumConstants()).map(Object::toString).collect(Collectors.joining(", "))
+                    : field + " has an invalid value";
+        }
+        log.warn("Rejected unreadable request body: {}", e.getMostSpecificCause().getMessage());
         return ResponseEntity.badRequest().body(ApiResponse.error(message));
     }
 

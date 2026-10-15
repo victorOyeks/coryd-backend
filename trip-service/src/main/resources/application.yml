@@ -11,7 +11,8 @@ spring:
   application:
     name: trip-service
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coryd}?currentSchema=trip
+    # trip first (its tables, Liquibase's log); public second, where PostGIS's types and functions live.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coryd}?currentSchema=trip,public
     username: ${DB_USERNAME:coryd}
     password: ${DB_PASSWORD:coryd}
     hikari:
@@ -71,9 +72,23 @@ google:
     base-url: https://maps.googleapis.com/maps/api
 
 matching:
-  time-tolerance-minutes: 180
-  geo-tolerance-meters: 4000
+  time-tolerance-minutes: ${MATCHING_TIME_TOLERANCE_MINUTES:60}
+  geo-tolerance-meters: ${MATCHING_GEO_TOLERANCE_METERS:2000}
   min-fare-reports: 5
+  # Along the way: riders whose start and end are both within walk-meters of a driver's road, in order.
+  # Off also lifts the "pickup must be on the driver's road" booking rule - e.g. until the app sends it.
+  along-route-enabled: ${MATCHING_ALONG_ROUTE_ENABLED:true}
+  walk-meters: ${MATCHING_WALK_METERS:1000}
+  # Longest trip assumed when looking for routes that pass a rider after they left their start.
+  max-trip-minutes: ${MATCHING_MAX_TRIP_MINUTES:240}
+  # Ask PostGIS for along-the-way candidates when it's installed; false forces the in-memory path.
+  use-postgis: ${MATCHING_USE_POSTGIS:true}
+
+# STRICT (default): nobody books (riders) or posts (drivers) until their NIN + selfie check is approved.
+# OFF only where nobody can be verified yet.
+identity:
+  verification:
+    enforcement: ${IDENTITY_VERIFICATION_ENFORCEMENT:STRICT}
 
 # Unverified drivers may post routes for grace-period-days after their first one. Flip to STRICT
 # once ops can approve drivers; OFF disables the gate entirely.
@@ -111,6 +126,19 @@ springdoc:
 # Routes cannot depart further ahead than the payout settlement cycle
 trip:
   max-days-ahead: ${TRIP_MAX_DAYS_AHEAD:3}
+  # Regular routes: how often each driver's upcoming trips are posted (Lagos time).
+  route-templates:
+    cron: ${ROUTE_TEMPLATES_CRON:0 5 * * * *}
+  # "Are you OK?" checks on trips in progress - see TripSafetyProperties.
+  safety:
+    enabled: ${TRIP_SAFETY_ENABLED:true}
+    stop-radius-meters: ${TRIP_SAFETY_STOP_RADIUS_METERS:50}
+    stop-minutes: ${TRIP_SAFETY_STOP_MINUTES:10}
+    known-stop-radius-meters: ${TRIP_SAFETY_KNOWN_STOP_RADIUS_METERS:300}
+    off-route-meters: ${TRIP_SAFETY_OFF_ROUTE_METERS:1000}
+    off-route-minutes: ${TRIP_SAFETY_OFF_ROUTE_MINUTES:5}
+    signal-lost-minutes: ${TRIP_SAFETY_SIGNAL_LOST_MINUTES:10}
+    answer-minutes: ${TRIP_SAFETY_ANSWER_MINUTES:3}
   # Rider demand: drivers see a route once this many different riders want it, and get the 7 PM push
   # when it reaches min-riders-for-alert and matches their own trips. See DemandProperties.
   demand:

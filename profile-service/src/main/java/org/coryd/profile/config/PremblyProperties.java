@@ -33,4 +33,29 @@ public class PremblyProperties {
 
     /** A vehicle whose declared make or colour contradicts the plate record goes to ops, not straight through. */
     private boolean crossCheckVehicleDetails = true;
+
+    /**
+     * How a rider's NIN + selfie is checked - whichever Prembly product the account is on:
+     * NIN_WITH_FACE (default): the NIN record and a face match of the selfie against the NIN photo.
+     * NIN_BASIC (fallback): the NIN record's name (no photo), plus a liveness check on the selfie - proves
+     * a real NIN, the rider's own name and a live person, but not that the face is the NIN holder's.
+     */
+    public enum NinCheck { NIN_BASIC, NIN_WITH_FACE }
+
+    private NinCheck ninCheck = NinCheck.NIN_WITH_FACE;
+
+    /** https://docs.prembly.com/docs/national-id-basic-1 */
+    private String ninBasicPath = "/verification/vnin-basic";
+
+    /** https://docs.prembly.com/docs/nin-with-face-copy */
+    private String ninFacePath = "/verification/nin_w_face";
+
+    /** https://docs.prembly.com/docs/face-livelinness-check */
+    private String livenessPath = "/verification/biometrics/face/liveliness_check";
+
+    /** Sent to NIN-with-face as face_confidence_threshold (70-100) - Prembly decides the match and says so in face_data.status. */
+    private int faceMatchThreshold = 80;
+
+    /** Liveness confidence, in percent, a selfie needs to count as a live person (NIN_BASIC). */
+    private double livenessThreshold = 80.0;
 }

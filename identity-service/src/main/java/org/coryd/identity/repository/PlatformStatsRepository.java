@@ -6,6 +6,7 @@ import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 
 /** Signup counts for the ops reports. A dual-role user counts under both roles, which is intended. */
 public interface PlatformStatsRepository extends Repository<User, String> {
@@ -30,4 +31,28 @@ public interface PlatformStatsRepository extends Repository<User, String> {
             where u.active = true
             """, nativeQuery = true)
     SignupCounts signupCounts(@Param("from") Instant from, @Param("to") Instant to);
+
+    interface SourceCount {
+        String getSource();
+        long getSignups();
+    }
+
+    /** Sign-ups in the window by "How did you hear about us?" - NOT_ANSWERED for anyone who skipped it. */
+    @Query(value = """
+            select coalesce(u.heard_about_us, 'NOT_ANSWERED') as source, count(*) as signups
+            from identity.users u
+            where u.created_at >= :from and u.created_at < :to
+            group by 1 order by 2 desc
+            """, nativeQuery = true)
+    List<SourceCount> heardAboutUs(@Param("from") Instant from, @Param("to") Instant to);
+
+    /** The most common "Other" answers in the window, as typed. */
+    @Query(value = """
+            select lower(u.heard_about_us_other) as source, count(*) as signups
+            from identity.users u
+            where u.created_at >= :from and u.created_at < :to
+              and u.heard_about_us = 'OTHER' and u.heard_about_us_other is not null
+            group by 1 order by 2 desc limit 20
+            """, nativeQuery = true)
+    List<SourceCount> heardAboutUsOther(@Param("from") Instant from, @Param("to") Instant to);
 }

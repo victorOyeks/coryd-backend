@@ -61,6 +61,40 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
     /** A driver's routes that still occupy them - the overlap rule and the active/upcoming split. */
     List<RoutePost> findByDriverIdAndStatusIn(String driverId, Collection<RouteStatus> statuses);
 
+    /** Whether a regular route already has its trip for this departure - posted, or posted then cancelled. */
+    boolean existsByRouteTemplateIdAndDepartureTime(String routeTemplateId, Instant departureTime);
+
+    List<RoutePost> findByStatus(RouteStatus status);
+
+    /** Routes still taking bookings that leave in this window - the candidates along-the-way matching checks. */
+    @Query("""
+            select r from RoutePost r
+            where r.status = org.coryd.common.enums.RouteStatus.PUBLISHED and r.seatsAvailable > 0
+              and r.departureTime between :earliest and :latest
+            order by r.departureTime asc
+            """)
+    List<RoutePost> findBookableDepartingBetween(@Param("earliest") Instant earliest, @Param("latest") Instant latest);
+
+    /**
+     * PostGIS: bookable routes in the window whose road passes within walkMeters of both the rider's
+     * start and end, start first - answered from the spatial index on route_geog. Only callable where
+     * GeoCapabilities.postgis() is true. RouteMatcher still makes the final call on each one.
+     */
+    @Query(value = """
+            select r.* from trip.route_posts r
+            where r.status = 'PUBLISHED' and r.seats_available > 0
+              and r.departure_time between :earliest and :latest
+              and ST_DWithin(r.route_geog, ST_SetSRID(ST_MakePoint(:originLng, :originLat), 4326)::geography, :walkMeters)
+              and ST_DWithin(r.route_geog, ST_SetSRID(ST_MakePoint(:destLng, :destLat), 4326)::geography, :walkMeters)
+              and ST_LineLocatePoint(r.route_geog::geometry, ST_SetSRID(ST_MakePoint(:originLng, :originLat), 4326))
+                < ST_LineLocatePoint(r.route_geog::geometry, ST_SetSRID(ST_MakePoint(:destLng, :destLat), 4326))
+            order by r.departure_time asc
+            """, nativeQuery = true)
+    List<RoutePost> findPassingNear(@Param("earliest") Instant earliest, @Param("latest") Instant latest,
+                                    @Param("originLat") double originLat, @Param("originLng") double originLng,
+                                    @Param("destLat") double destLat, @Param("destLng") double destLng,
+                                    @Param("walkMeters") double walkMeters);
+
     /** Dashboard "Trips this week" count - the routes to check bookings against. */
     List<RoutePost> findByDriverIdAndDepartureTimeBetween(String driverId, Instant start, Instant end);
 

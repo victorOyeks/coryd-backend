@@ -70,6 +70,42 @@ public interface NotifyMeRequestRepository extends JpaRepository<NotifyMeRequest
     boolean hasSeatOnAnnouncedRide(@Param("requestId") String requestId, @Param("riderId") String riderId,
                                    @Param("statuses") Collection<String> statuses);
 
+    long countByCreatedAtAfter(Instant since);
+
+    /**
+     * PostGIS: still-waiting requests whose start and end are both within walkMeters of this route's
+     * road, start first. Only callable where GeoCapabilities.postgis() is true; NotifyMeService still
+     * checks the time and the day.
+     */
+    @Query(value = """
+            select n.* from trip.notify_me_requests n
+            join trip.route_posts r on r.id = :routePostId
+            where n.cancelled = false and n.fulfilled = false and n.expires_at > :now
+              and ST_DWithin(r.route_geog, ST_SetSRID(ST_MakePoint(n.origin_lng, n.origin_lat), 4326)::geography, :walkMeters)
+              and ST_DWithin(r.route_geog, ST_SetSRID(ST_MakePoint(n.destination_lng, n.destination_lat), 4326)::geography, :walkMeters)
+              and ST_LineLocatePoint(r.route_geog::geometry, ST_SetSRID(ST_MakePoint(n.origin_lng, n.origin_lat), 4326))
+                < ST_LineLocatePoint(r.route_geog::geometry, ST_SetSRID(ST_MakePoint(n.destination_lng, n.destination_lat), 4326))
+            """, nativeQuery = true)
+    List<NotifyMeRequest> findWaitingAlongRoute(@Param("routePostId") String routePostId, @Param("now") Instant now,
+                                                @Param("walkMeters") double walkMeters);
+
+    /** Requests made since `since` whose rider took a seat on a ride the request told them about. */
+    @Query(value = """
+            select count(distinct n.id) from trip.notify_me_requests n
+            join trip.notify_me_notifications x on x.request_id = n.id
+            join trip.bookings b on b.route_post_id = x.route_post_id and b.rider_id = n.rider_id
+            where n.created_at > :since and b.confirmed_at is not null
+            """, nativeQuery = true)
+    long countBookedSince(@Param("since") Instant since);
+
+    /** Whether any of this rider's requests was already told about this ride - two overlapping requests push once. */
+    @Query(value = """
+            select count(*) > 0 from trip.notify_me_notifications x
+            join trip.notify_me_requests n on n.id = x.request_id
+            where n.rider_id = :riderId and x.route_post_id = :routePostId
+            """, nativeQuery = true)
+    boolean riderToldAboutRide(@Param("riderId") String riderId, @Param("routePostId") String routePostId);
+
     /** 1 the first time this request is told about this ride, 0 after - so a ride is announced once. */
     @Modifying
     @Query(value = "insert into trip.notify_me_notifications (id, request_id, route_post_id, created_at) "

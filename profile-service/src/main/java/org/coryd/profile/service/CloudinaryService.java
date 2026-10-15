@@ -36,6 +36,14 @@ public class CloudinaryService {
     );
     private static final long MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
+    /**
+     * Cloudinary's client applies no timeouts unless each call passes them - without these a stalled
+     * connection blocks the caller forever (seen with an ops approval stuck mid-handshake). In ms.
+     */
+    private static final int CONNECT_TIMEOUT_MS = 5_000;
+    private static final int DELETE_TIMEOUT_MS = 15_000;
+    private static final int UPLOAD_TIMEOUT_MS = 60_000;
+
     public MediaUploadResponse upload(MultipartFile file) {
         validateFile(file);
 
@@ -52,7 +60,10 @@ public class CloudinaryService {
                     ObjectUtils.asMap(
                             "public_id", publicId,
                             "overwrite", false,
-                            "resource_type", resourceType
+                            "resource_type", resourceType,
+                            "connect_timeout", CONNECT_TIMEOUT_MS,
+                            "connection_request_timeout", CONNECT_TIMEOUT_MS,
+                            "timeout", UPLOAD_TIMEOUT_MS
                     )
             );
 
@@ -89,7 +100,10 @@ public class CloudinaryService {
             @SuppressWarnings("unchecked")
             Map<String, Object> result = cloudinary.uploader().destroy(
                     publicId,
-                    ObjectUtils.asMap("resource_type", resourceType == null ? "image" : resourceType)
+                    ObjectUtils.asMap("resource_type", resourceType == null ? "image" : resourceType,
+                            "connect_timeout", CONNECT_TIMEOUT_MS,
+                            "connection_request_timeout", CONNECT_TIMEOUT_MS,
+                            "timeout", DELETE_TIMEOUT_MS)
             );
 
             String resultStatus = (String) result.get("result");

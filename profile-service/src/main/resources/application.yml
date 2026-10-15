@@ -60,6 +60,15 @@ prembly:
   api-key: ${PREMBLY_API_KEY:}
   name-match-threshold: ${PREMBLY_NAME_MATCH_THRESHOLD:0.85}
   cross-check-vehicle-details: ${PREMBLY_CROSS_CHECK_VEHICLE:true}
+  # Rider identity check - NIN_WITH_FACE (NIN record + selfie matched to the NIN photo) or, if the
+  # account doesn't have it yet, NIN_BASIC (NIN record + selfie liveness).
+  nin-check: ${PREMBLY_NIN_CHECK:NIN_WITH_FACE}
+  nin-basic-path: ${PREMBLY_NIN_BASIC_PATH:/verification/vnin-basic}
+  nin-face-path: ${PREMBLY_NIN_FACE_PATH:/verification/nin_w_face}
+  liveness-path: ${PREMBLY_LIVENESS_PATH:/verification/biometrics/face/liveliness_check}
+  # NIN_WITH_FACE: sent as face_confidence_threshold (70-100). NIN_BASIC: liveness % needed.
+  face-match-threshold: ${PREMBLY_FACE_MATCH_THRESHOLD:80}
+  liveness-threshold: ${PREMBLY_LIVENESS_THRESHOLD:80}
 
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:placeholder}

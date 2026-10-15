@@ -21,11 +21,18 @@ public class FcmService {
 
     private final DeviceTokenRepository deviceTokenRepository;
 
-    public boolean sendPush(String userId, String fcmToken, String title, String body, String eventType, String referenceId,
+    /** What Firebase said: its message id when it took the push, its error code when it didn't. */
+    public record PushResult(boolean delivered, String messageId, String errorCode) {
+        static PushResult failed(String errorCode) {
+            return new PushResult(false, null, errorCode);
+        }
+    }
+
+    public PushResult sendPush(String userId, String fcmToken, String title, String body, String eventType, String referenceId,
                             String routePostId) {
         if (FirebaseApp.getApps().isEmpty()) {
             log.warn("Firebase not initialized - skipping push for userId={}", userId);
-            return false;
+            return PushResult.failed("FIREBASE_NOT_INITIALIZED");
         }
 
         try {
@@ -61,7 +68,7 @@ public class FcmService {
 
             String response = FirebaseMessaging.getInstance().send(builder.build());
             log.info("FCM push sent to userId={} - messageId={}", userId, response);
-            return true;
+            return new PushResult(true, response, null);
         } catch (FirebaseMessagingException e) {
             log.error("FCM send failed for userId={} token={} - code={} message={}",
                     userId, fcmToken, e.getMessagingErrorCode(), e.getMessage());
@@ -70,7 +77,7 @@ public class FcmService {
                 deviceTokenRepository.deleteByUserIdAndFcmToken(userId, fcmToken);
                 log.info("Removed stale FCM token for userId={}", userId);
             }
-            return false;
+            return PushResult.failed(String.valueOf(e.getMessagingErrorCode()));
         } catch (Exception e) {
             // Anything the Admin SDK throws that ISN'T FirebaseMessagingException (a malformed
             // service-account credential surfaces here as IllegalArgumentException/IllegalStateException,
@@ -79,7 +86,7 @@ public class FcmService {
             // async-exception handler swallows it generically, with none of this method's userId/token
             // context attached. Catching it here guarantees every failure on this path is logged.
             log.error("FCM send threw an unexpected exception for userId={} token={}: {}", userId, fcmToken, e.getMessage(), e);
-            return false;
+            return PushResult.failed(e.getClass().getSimpleName());
         }
     }
 }

@@ -45,9 +45,12 @@ class DataSeederTest {
     private final VerificationAggregationService verification = mock(VerificationAggregationService.class);
     private final IdentityAuthClient identityAuthClient = mock(IdentityAuthClient.class);
     private final RiderProfileRepository riderProfileRepository = mock(RiderProfileRepository.class);
+    private final org.coryd.profile.service.IdentityVerificationService identityVerificationService =
+            mock(org.coryd.profile.service.IdentityVerificationService.class);
 
     private final DataSeeder seeder = new DataSeeder(driverProfileService, vehicleService, vehicleRepository,
-            driverDocumentService, riderProfileService, verification, identityAuthClient, riderProfileRepository);
+            driverDocumentService, riderProfileService, verification, identityAuthClient, riderProfileRepository,
+            identityVerificationService);
 
     @BeforeEach
     void ids() {
@@ -85,6 +88,9 @@ class DataSeederTest {
         assertThat(vehicles.getAllValues()).extracting(VehicleRegistrationRequest::plateNumber)
                 .as("a duplicate plate would fail registration for the second driver")
                 .doesNotHaveDuplicates();
+        // Every seeded account starts NIN-verified, or the identity gate blocks testing.
+        verify(identityVerificationService, times(SeedFixtures.DRIVERS.size() + SeedFixtures.RIDERS.size()))
+                .approveForSeed(anyString());
     }
 
     @Test

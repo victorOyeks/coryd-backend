@@ -9,6 +9,7 @@ import org.coryd.common.enums.VerificationCheckOutcome;
 import org.coryd.common.enums.VerificationCheckType;
 import org.coryd.profile.entity.VerificationCheck;
 import org.coryd.profile.repository.DriverProfileRepository;
+import org.coryd.profile.repository.IdentityVerificationRepository;
 import org.coryd.profile.repository.VerificationCheckRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,8 @@ public class PremblyVerificationService {
     private final VerificationCheckRepository verificationCheckRepository;
     private final DriverProfileRepository driverProfileRepository;
     private final VerificationAggregationService verificationAggregationService;
+    private final IdentityVerificationRepository identityVerificationRepository;
+    private final IdentityVerificationDecider identityVerificationDecider;
 
     @Transactional(readOnly = true)
     public List<VerificationCheck> checksFor(String driverId) {
@@ -165,6 +168,98 @@ public class PremblyVerificationService {
 
         record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.MATCH,
                 null, tag(result.sandbox()) + "Register confirmed " + onRecord, result.reference());
+    }
+
+    /**
+     * A rider's NIN and selfie, checked with whichever Prembly product the account is on
+     * (prembly.nin-check): the NIN must exist, its name must match the rider's, and the selfie must be
+     * either the face on the NIN (NIN_WITH_FACE) or a live person (NIN_BASIC). All of it agreeing
+     * verifies the rider; anything less leaves them IN_REVIEW for ops with the reason recorded.
+     * The full NIN is only ever passed through - the cache key is a hash of it and the selfie.
+     */
+    @Async("verificationExecutor")
+    @Transactional
+    public void checkNin(String riderId, String nin, String selfieUrl, String selfiePublicId, String firstName, String lastName) {
+        if (!properties.isEnabled() || isBlank(nin) || isBlank(selfieUrl)) {
+            log.debug("Skipping NIN check for rider {}: enabled={} - left for ops", riderId, properties.isEnabled());
+            return;
+        }
+        boolean withFace = properties.getNinCheck() == PremblyProperties.NinCheck.NIN_WITH_FACE;
+        VerificationCheckType type = VerificationCheckType.NIN_FACE;
+        String subject = hashKey(properties.getNinCheck() + "|" + nin + "|" + selfiePublicId);
+        if (alreadySettled(riderId, type, subject)) {
+            return;
+        }
+
+        PremblyClient.NinResult result = withFace
+                ? premblyClient.verifyNinWithFace(nin, selfieUrl, properties.getFaceMatchThreshold())
+                : premblyClient.verifyNinBasic(nin);
+        if (result == null) {
+            record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, null, "Prembly did not answer - NIN not checked", null);
+            return;
+        }
+        if (!result.status()) {
+            String summary = result.inputError() != null
+                    ? "Prembly rejected this NIN as invalid: " + result.inputError()
+                    : "NIMC has no record for this NIN: " + safe(result.detail());
+            record(riderId, type, subject, VerificationCheckOutcome.NOT_FOUND, null, summary, result.reference());
+            return;
+        }
+        if (result.firstName() == null || result.lastName() == null || (withFace && result.faceMatched() == null)) {
+            record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, null,
+                    "Prembly verified this NIN but the response could not be read", result.reference());
+            return;
+        }
+        if (withFace && !result.faceMatched()) {
+            record(riderId, type, subject, VerificationCheckOutcome.DETAILS_MISMATCH, null,
+                    tag(result.sandbox()) + "Selfie does not match the NIN photo", result.reference());
+            return;
+        }
+        double score = NameMatcher.score(firstName, lastName, result.firstName(), result.lastName());
+        String onRecord = result.firstName() + " " + result.lastName();
+        if (score < properties.getNameMatchThreshold()) {
+            record(riderId, type, subject, VerificationCheckOutcome.NAME_MISMATCH, score,
+                    tag(result.sandbox()) + "NIN is held by " + onRecord + ", rider entered " + firstName + " " + lastName,
+                    result.reference());
+            return;
+        }
+
+        String selfie;
+        if (withFace) {
+            selfie = "selfie matched the NIN photo";
+        } else {
+            // Basic has no photo to compare against - at least make sure a live person took the selfie.
+            PremblyClient.LivenessResult liveness = premblyClient.checkLiveness(selfieUrl);
+            if (liveness == null) {
+                record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, score,
+                        "NIMC confirmed " + onRecord + " but Prembly did not answer the liveness check", result.reference());
+                return;
+            }
+            double percent = liveness.confidencePercent() == null ? 0 : liveness.confidencePercent();
+            if (!liveness.status() || percent < properties.getLivenessThreshold()) {
+                record(riderId, type, subject, VerificationCheckOutcome.DETAILS_MISMATCH, score,
+                        tag(result.sandbox()) + "NIMC confirmed " + onRecord + " but the selfie failed the liveness check ("
+                                + Math.round(percent) + "%)", result.reference());
+                return;
+            }
+            selfie = "selfie passed liveness (" + Math.round(percent) + "%) - not compared to an NIN photo (NIN Basic)";
+        }
+
+        record(riderId, type, subject, VerificationCheckOutcome.MATCH, score,
+                tag(result.sandbox()) + "NIMC confirmed " + onRecord + ", " + selfie, result.reference());
+        identityVerificationRepository.findByUserId(riderId)
+                .filter(v -> v.getStatus() == VerificationStatus.IN_REVIEW && selfiePublicId.equals(v.getSelfiePublicId()))
+                .ifPresent(v -> identityVerificationDecider.approve(v, IdentityVerificationDecider.PREMBLY));
+    }
+
+    /** NINs are never stored - this keys the check cache without keeping one. */
+    private static String hashKey(String value) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest).substring(0, 40);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private void approveGovernmentId(String driverId) {

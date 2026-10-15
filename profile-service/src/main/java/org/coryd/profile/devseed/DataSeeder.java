@@ -19,6 +19,7 @@ import org.coryd.profile.repository.RiderProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
 import org.coryd.profile.service.DriverDocumentService;
 import org.coryd.profile.service.DriverProfileService;
+import org.coryd.profile.service.IdentityVerificationService;
 import org.coryd.profile.service.RiderProfileService;
 import org.coryd.profile.service.VehicleService;
 import org.coryd.profile.service.VerificationAggregationService;
@@ -83,6 +84,7 @@ public class DataSeeder implements ApplicationRunner {
     private final VerificationAggregationService verificationAggregationService;
     private final IdentityAuthClient identityAuthClient;
     private final RiderProfileRepository riderProfileRepository;
+    private final IdentityVerificationService identityVerificationService;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -100,6 +102,8 @@ public class DataSeeder implements ApplicationRunner {
 
     private boolean seedDriver(SeedFixtures.SeedPerson driver, int index) {
         String driverId = identityAuthClient.resolveUserId(driver.phone(), SeedFixtures.SEED_PASSWORD, UserRole.DRIVER);
+        // Seeded accounts start with their NIN check approved, or the identity gate blocks all testing.
+        identityVerificationService.approveForSeed(driverId);
         if (verificationAggregationService.getStatus(driverId).overallStatus() == VerificationStatus.APPROVED) {
             return false;
         }
@@ -172,6 +176,7 @@ public class DataSeeder implements ApplicationRunner {
 
     private boolean seedRider(SeedFixtures.SeedPerson rider) {
         String riderId = identityAuthClient.resolveUserId(rider.phone(), SeedFixtures.SEED_PASSWORD, UserRole.RIDER);
+        identityVerificationService.approveForSeed(riderId);
         if (riderProfileRepository.findByUserId(riderId).isPresent()) {
             return false;
         }
