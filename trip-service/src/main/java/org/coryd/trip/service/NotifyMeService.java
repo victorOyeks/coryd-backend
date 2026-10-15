@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZonedDateTime;
@@ -90,7 +91,34 @@ public class NotifyMeService {
             }
             builder.desiredDepartureTime(request.desiredDepartureTime()).expiresAt(expiresAt);
         }
-        return toResponse(notifyMeRequestRepository.save(builder.build()));
+        NotifyMeRequest created = builder.build();
+        if (notifyMeRequestRepository.findByRiderIdAndCancelledFalseAndFulfilledFalseAndExpiresAtAfterOrderByCreatedAtDesc(riderId, now)
+                .stream().anyMatch(existing -> sameRouteAndTime(existing, created))) {
+            throw new BadRequestException("You're already waiting on this route around this time");
+        }
+        return toResponse(notifyMeRequestRepository.save(created));
+    }
+
+    /** Both ends close by and the times line up - repeating requests on any shared day, a one-off on one of its days. */
+    private boolean sameRouteAndTime(NotifyMeRequest a, NotifyMeRequest b) {
+        double radiusKm = demandProperties.getNotifyMeDuplicateRadiusKm();
+        if (GeoMath.distanceKm(a.getOriginLat(), a.getOriginLng(), b.getOriginLat(), b.getOriginLng()) > radiusKm
+                || GeoMath.distanceKm(a.getDestinationLat(), a.getDestinationLng(), b.getDestinationLat(), b.getDestinationLng()) > radiusKm) {
+            return false;
+        }
+        int window = demandProperties.getNotifyMeDuplicateMinutes();
+        if (!a.isRepeating() && !b.isRepeating()) {
+            return Duration.between(a.getDesiredDepartureTime(), b.getDesiredDepartureTime()).abs().toMinutes() <= window;
+        }
+        if (a.isRepeating() && b.isRepeating()) {
+            return (a.getDaysMask() & b.getDaysMask()) != 0 && minutesApart(a.getTimeMinutes(), b.getTimeMinutes()) <= window;
+        }
+        NotifyMeRequest repeating = a.isRepeating() ? a : b;
+        Instant oneOffTime = (a.isRepeating() ? b : a).getDesiredDepartureTime();
+        ZonedDateTime oneOff = GeoMath.lagos(oneOffTime);
+        return oneOffTime.isBefore(repeating.getExpiresAt())
+                && (repeating.getDaysMask() & GeoMath.dayBit(oneOff.getDayOfWeek())) != 0
+                && minutesApart(repeating.getTimeMinutes(), oneOff.getHour() * 60 + oneOff.getMinute()) <= window;
     }
 
     @Transactional(readOnly = true)

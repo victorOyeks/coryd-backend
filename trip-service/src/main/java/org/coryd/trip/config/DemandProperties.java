@@ -44,4 +44,10 @@ public class DemandProperties {
 
     /** A rider can have at most this many active "Notify me" requests. */
     private int maxActiveNotifyMe = 10;
+
+    /** A new "Notify me" starting and ending this close to an active one of the rider's is the same route. */
+    private double notifyMeDuplicateRadiusKm = 1.0;
+
+    /** ...and within this much of its time is the same request - a second copy would only push twice per ride. */
+    private int notifyMeDuplicateMinutes = 60;
 }

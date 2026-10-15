@@ -59,7 +59,7 @@ Every search is recorded so drivers can see which routes riders want - only as t
 - A request keeps going until `activeUntil` (for a one-off, shortly after the time asked for) and is told about each matching ride once. If the first ride fills up, the rider still hears about the next one.
 - A one-off request stops as soon as the rider has a seat on one of the rides it told them about. Riders are never told about a ride they're already booked on.
 - A rider can have up to 10 waiting at a time.
-- `400` errors: *"Choose a departure time, or the days and time it repeats"*, *"That departure time has already passed"*, *"A repeating request needs repeatTime and repeatWeeks"*, *"You already have 10 routes you're waiting on - remove one to add another"*.
+- `400` errors: *"Choose a departure time, or the days and time it repeats"*, *"That departure time has already passed"*, *"A repeating request needs repeatTime and repeatWeeks"*, *"You already have 10 routes you're waiting on - remove one to add another"*, *"You're already waiting on this route around this time"* (both ends within 1 km of an active request and the time within 60 min; a repeating request covers a one-off on one of its days). Disable the button after the first tap.
 
 **`POST /trip/routes/notify-me/riders/{riderId}` has been removed.** Use the endpoint above for both one-off and repeating requests.
 

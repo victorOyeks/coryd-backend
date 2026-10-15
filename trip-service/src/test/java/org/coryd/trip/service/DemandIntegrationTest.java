@@ -222,11 +222,42 @@ class DemandIntegrationTest {
         assertThatThrownBy(() -> notifyMeService.create("rider-1", oneOff(IKORODU, VI, Instant.now().minus(1, ChronoUnit.DAYS))))
                 .isInstanceOf(BadRequestException.class);
 
-        for (int i = 0; i < 3; i++) {
-            notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:00"));
+        for (String time : List.of("06:00", "08:00", "10:00")) {
+            notifyMeService.create("rider-1", weekdays(IKORODU, VI, time));
         }
-        assertThatThrownBy(() -> notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:00")))
+        assertThatThrownBy(() -> notifyMeService.create("rider-1", weekdays(IKORODU, VI, "12:00")))
                 .isInstanceOf(BadRequestException.class).hasMessageContaining("remove one");
+    }
+
+    @Test
+    void theSameRouteAndTimeIsOnlyWaitedOnOnce() {
+        Instant tomorrow7 = tomorrowAt(7, 0);
+        notifyMeService.create("rider-1", oneOff(IKORODU, VI, tomorrow7));
+
+        assertThatThrownBy(() -> notifyMeService.create("rider-1", oneOff(IKORODU, VI, tomorrow7)))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("already waiting");
+        assertThatThrownBy(() -> notifyMeService.create("rider-1", oneOff(IKORODU, VI, tomorrow7.plus(30, ChronoUnit.MINUTES))))
+                .as("half an hour later is the same request").isInstanceOf(BadRequestException.class);
+
+        notifyMeService.create("rider-1", oneOff(IKORODU, VI, tomorrow7.plus(3, ChronoUnit.HOURS)));
+        notifyMeService.create("rider-1", oneOff(VI, IKORODU, tomorrow7));
+        notifyMeService.create("rider-2", oneOff(IKORODU, VI, tomorrow7));
+        assertThat(notifyMeService.mine("rider-1")).as("later that day and the way back are new").hasSize(3);
+    }
+
+    @Test
+    void aRepeatingRequestAlreadyCoversItsDays() {
+        String weekdays = notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:00")).id();
+
+        assertThatThrownBy(() -> notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:30")))
+                .isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> notifyMeService.create("rider-1", oneOff(IKORODU, VI, next(DayOfWeek.TUESDAY, 7, 0))))
+                .as("a weekday one-off is already covered").isInstanceOf(BadRequestException.class);
+        notifyMeService.create("rider-1", oneOff(IKORODU, VI, next(DayOfWeek.SATURDAY, 7, 0)));
+
+        notifyMeService.cancel("rider-1", weekdays);
+        notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:30"));
+        assertThat(notifyMeService.mine("rider-1")).hasSize(2);
     }
 
     @Test
@@ -235,10 +266,11 @@ class DemandIntegrationTest {
         java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
         List<java.util.concurrent.Future<?>> taps = new java.util.ArrayList<>();
         for (int i = 0; i < 8; i++) {
+            String time = String.format("%02d:00", 6 + 2 * i);
             taps.add(pool.submit(() -> {
                 go.await();
                 try {
-                    notifyMeService.create("rider-1", weekdays(IKORODU, VI, "07:00"));
+                    notifyMeService.create("rider-1", weekdays(IKORODU, VI, time));
                 } catch (BadRequestException limitReached) {
                     // expected for the taps past the limit
                 }
