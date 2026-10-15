@@ -49,7 +49,7 @@ class NinCheckTest {
     void ninBasicWithTheRidersNameAndALiveSelfieVerifiesThem() {
         properties.setNinCheck(PremblyProperties.NinCheck.NIN_BASIC);
         when(client.verifyNinBasic("56182742701")).thenReturn(nin("GRACE", "AMANDA", null));
-        when(client.checkLiveness("https://img/s.jpg")).thenReturn(new PremblyClient.LivenessResult(true, "Liveliness Detected", 99.9, "661"));
+        when(client.checkLiveness("https://img/s.jpg")).thenReturn(new PremblyClient.LivenessResult(true, "Liveliness Detected", 99.9, "661", null));
 
         service.checkNin("rider-1", "56182742701", "https://img/s.jpg", "selfie-1", "Grace", "Amanda");
 
@@ -62,7 +62,7 @@ class NinCheckTest {
     void ninBasicWithAFailedLivenessCheckIsLeftForOps() {
         properties.setNinCheck(PremblyProperties.NinCheck.NIN_BASIC);
         when(client.verifyNinBasic(anyString())).thenReturn(nin("GRACE", "AMANDA", null));
-        when(client.checkLiveness(anyString())).thenReturn(new PremblyClient.LivenessResult(true, "Low", 41.0, "662"));
+        when(client.checkLiveness(anyString())).thenReturn(new PremblyClient.LivenessResult(true, "Low", 41.0, "662", null));
 
         service.checkNin("rider-1", "56182742701", "https://img/s.jpg", "selfie-1", "Grace", "Amanda");
 
@@ -90,7 +90,7 @@ class NinCheckTest {
 
     @Test
     void ninWithFaceTrustsPremblysMatchAndSendsOurThreshold() {
-        PremblyClient.NinResult matched = new PremblyClient.NinResult(true, "ok", false, "Grace", "Amanda", true, 1.0, "r", null);
+        PremblyClient.NinResult matched = new PremblyClient.NinResult(true, "ok", false, "Grace", "Amanda", true, 1.0, "r", null, null);
         when(client.verifyNinWithFace("56182742701", "https://img/s.jpg", 80)).thenReturn(matched);
 
         service.checkNin("rider-1", "56182742701", "https://img/s.jpg", "selfie-1", "Grace", "Amanda");
@@ -103,7 +103,7 @@ class NinCheckTest {
     @Test
     void ninWithFaceNotMatchingIsLeftForOps() {
         when(client.verifyNinWithFace(anyString(), anyString(), anyInt()))
-                .thenReturn(new PremblyClient.NinResult(true, "ok", false, "Grace", "Amanda", false, 0.2, "r", null));
+                .thenReturn(new PremblyClient.NinResult(true, "ok", false, "Grace", "Amanda", false, 0.2, "r", null, null));
 
         service.checkNin("rider-1", "56182742701", "https://img/s.jpg", "selfie-1", "Grace", "Amanda");
 
@@ -122,8 +122,24 @@ class NinCheckTest {
         verify(decider, never()).approve(any(), any());
     }
 
+    @Test
+    void ninBasicKeepsBothPremblyAnswersOnTheCheck() {
+        properties.setNinCheck(PremblyProperties.NinCheck.NIN_BASIC);
+        when(client.verifyNinBasic(anyString()))
+                .thenReturn(new PremblyClient.NinResult(true, "ok", false, "Grace", "Amanda", null, null, "ref", null, "{\"status\":true}"));
+        when(client.checkLiveness(anyString()))
+                .thenReturn(new PremblyClient.LivenessResult(true, "Liveliness Detected", 99.9, "661", "{\"confidence\":0.99}"));
+
+        service.checkNin("rider-1", "56182742701", "https://img/s.jpg", "selfie-1", "Grace", "Amanda");
+
+        ArgumentCaptor<VerificationCheck> saved = ArgumentCaptor.forClass(VerificationCheck.class);
+        verify(checks).save(saved.capture());
+        assertThat(saved.getValue().getRawResponse())
+                .isEqualTo("{\"nin\":{\"status\":true},\"liveness\":{\"confidence\":0.99}}");
+    }
+
     private static PremblyClient.NinResult nin(String first, String last, Boolean face) {
-        return new PremblyClient.NinResult(true, "ok", false, first, last, face, null, "ref", null);
+        return new PremblyClient.NinResult(true, "ok", false, first, last, face, null, "ref", null, null);
     }
 
     private VerificationCheckOutcome recorded() {

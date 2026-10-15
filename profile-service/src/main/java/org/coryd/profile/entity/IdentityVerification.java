@@ -18,8 +18,9 @@ import java.time.Instant;
 
 /**
  * A rider's identity check - NIN plus a selfie - kept apart from RiderProfile because GET /riders/{id}
- * serves the profile to any signed-in user. The full NIN is never stored: only its last four digits
- * for display and a hash for the check cache. The selfie is deleted once a decision is made.
+ * serves the profile to any signed-in user. This table keeps only the NIN's last four digits for
+ * display; the full NIN exists only in Prembly's answer on verification_checks.raw_response. The
+ * selfie is deleted once a decision is made.
  */
 @Entity
 @Table(name = "identity_verifications", schema = "profile")

@@ -78,7 +78,7 @@ public class PremblyVerificationService {
 
         if (result == null) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
-                    null, "Prembly did not answer - licence not checked", null);
+                    null, "Prembly did not answer - licence not checked", null, null);
             return;
         }
         if (!result.status()) {
@@ -86,7 +86,7 @@ public class PremblyVerificationService {
                     ? "Prembly rejected this licence number as invalid: " + result.inputError()
                     : "FRSC has no record for this licence number: " + safe(result.detail());
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.NOT_FOUND,
-                    null, summary, result.reference());
+                    null, summary, result.reference(), result.rawResponse());
             return;
         }
         // Prembly said yes but we could not find the names. That is our parsing, not their record,
@@ -94,7 +94,7 @@ public class PremblyVerificationService {
         PremblyClient.DriversLicenceResult.FrscData frsc = result.frscData();
         if (frsc == null) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
-                    null, "Prembly verified this licence but the response could not be read", result.reference());
+                    null, "Prembly verified this licence but the response could not be read", result.reference(), result.rawResponse());
             return;
         }
 
@@ -105,12 +105,12 @@ public class PremblyVerificationService {
         if (score < properties.getNameMatchThreshold()) {
             record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.NAME_MISMATCH,
                     score, tag(result.sandbox()) + "Licence is held by " + onRecord + ", driver entered " + entered,
-                    result.reference());
+                    result.reference(), result.rawResponse());
             return;
         }
 
         record(driverId, VerificationCheckType.DRIVERS_LICENCE, subject, VerificationCheckOutcome.MATCH,
-                score, tag(result.sandbox()) + "FRSC confirmed " + onRecord, result.reference());
+                score, tag(result.sandbox()) + "FRSC confirmed " + onRecord, result.reference(), result.rawResponse());
         approveGovernmentId(driverId);
     }
 
@@ -137,7 +137,7 @@ public class PremblyVerificationService {
 
         if (result == null) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
-                    null, "Prembly did not answer - plate not checked", null);
+                    null, "Prembly did not answer - plate not checked", null, null);
             return;
         }
         if (!result.status()) {
@@ -145,13 +145,13 @@ public class PremblyVerificationService {
                     ? "Prembly rejected this plate number as invalid: " + result.inputError()
                     : "No vehicle registered against this plate: " + safe(result.detail());
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.NOT_FOUND,
-                    null, summary, result.reference());
+                    null, summary, result.reference(), result.rawResponse());
             return;
         }
         PremblyClient.VehicleResult.Data data = result.data();
         if (data == null) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.PROVIDER_ERROR,
-                    null, "Prembly verified this plate but the response could not be read", result.reference());
+                    null, "Prembly verified this plate but the response could not be read", result.reference(), result.rawResponse());
             return;
         }
 
@@ -162,12 +162,12 @@ public class PremblyVerificationService {
                 && contradicts(declaredMake, data.vehicleName(), declaredColor, data.vehicleColor())) {
             record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.DETAILS_MISMATCH,
                     null, tag(result.sandbox()) + "Plate is registered to a " + onRecord + ", driver declared a "
-                            + declared, result.reference());
+                            + declared, result.reference(), result.rawResponse());
             return;
         }
 
         record(driverId, VerificationCheckType.VEHICLE_PLATE, subject, VerificationCheckOutcome.MATCH,
-                null, tag(result.sandbox()) + "Register confirmed " + onRecord, result.reference());
+                null, tag(result.sandbox()) + "Register confirmed " + onRecord, result.reference(), result.rawResponse());
     }
 
     /**
@@ -175,7 +175,8 @@ public class PremblyVerificationService {
      * (prembly.nin-check): the NIN must exist, its name must match the rider's, and the selfie must be
      * either the face on the NIN (NIN_WITH_FACE) or a live person (NIN_BASIC). All of it agreeing
      * verifies the rider; anything less leaves them IN_REVIEW for ops with the reason recorded.
-     * The full NIN is only ever passed through - the cache key is a hash of it and the selfie.
+     * The cache key is a hash of the NIN and the selfie; the NIN itself is kept only inside Prembly's
+     * answer on the check (raw_response).
      */
     @Async("verificationExecutor")
     @Transactional
@@ -195,24 +196,24 @@ public class PremblyVerificationService {
                 ? premblyClient.verifyNinWithFace(nin, selfieUrl, properties.getFaceMatchThreshold())
                 : premblyClient.verifyNinBasic(nin);
         if (result == null) {
-            record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, null, "Prembly did not answer - NIN not checked", null);
+            record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, null, "Prembly did not answer - NIN not checked", null, null);
             return;
         }
         if (!result.status()) {
             String summary = result.inputError() != null
                     ? "Prembly rejected this NIN as invalid: " + result.inputError()
                     : "NIMC has no record for this NIN: " + safe(result.detail());
-            record(riderId, type, subject, VerificationCheckOutcome.NOT_FOUND, null, summary, result.reference());
+            record(riderId, type, subject, VerificationCheckOutcome.NOT_FOUND, null, summary, result.reference(), result.rawResponse());
             return;
         }
         if (result.firstName() == null || result.lastName() == null || (withFace && result.faceMatched() == null)) {
             record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, null,
-                    "Prembly verified this NIN but the response could not be read", result.reference());
+                    "Prembly verified this NIN but the response could not be read", result.reference(), result.rawResponse());
             return;
         }
         if (withFace && !result.faceMatched()) {
             record(riderId, type, subject, VerificationCheckOutcome.DETAILS_MISMATCH, null,
-                    tag(result.sandbox()) + "Selfie does not match the NIN photo", result.reference());
+                    tag(result.sandbox()) + "Selfie does not match the NIN photo", result.reference(), result.rawResponse());
             return;
         }
         double score = NameMatcher.score(firstName, lastName, result.firstName(), result.lastName());
@@ -220,11 +221,12 @@ public class PremblyVerificationService {
         if (score < properties.getNameMatchThreshold()) {
             record(riderId, type, subject, VerificationCheckOutcome.NAME_MISMATCH, score,
                     tag(result.sandbox()) + "NIN is held by " + onRecord + ", rider entered " + firstName + " " + lastName,
-                    result.reference());
+                    result.reference(), result.rawResponse());
             return;
         }
 
         String selfie;
+        String raw = result.rawResponse();
         if (withFace) {
             selfie = "selfie matched the NIN photo";
         } else {
@@ -232,27 +234,28 @@ public class PremblyVerificationService {
             PremblyClient.LivenessResult liveness = premblyClient.checkLiveness(selfieUrl);
             if (liveness == null) {
                 record(riderId, type, subject, VerificationCheckOutcome.PROVIDER_ERROR, score,
-                        "NIMC confirmed " + onRecord + " but Prembly did not answer the liveness check", result.reference());
+                        "NIMC confirmed " + onRecord + " but Prembly did not answer the liveness check", result.reference(), result.rawResponse());
                 return;
             }
+            raw = ninAndLiveness(result.rawResponse(), liveness.rawResponse());
             double percent = liveness.confidencePercent() == null ? 0 : liveness.confidencePercent();
             if (!liveness.status() || percent < properties.getLivenessThreshold()) {
                 record(riderId, type, subject, VerificationCheckOutcome.DETAILS_MISMATCH, score,
                         tag(result.sandbox()) + "NIMC confirmed " + onRecord + " but the selfie failed the liveness check ("
-                                + Math.round(percent) + "%)", result.reference());
+                                + Math.round(percent) + "%)", result.reference(), raw);
                 return;
             }
             selfie = "selfie passed liveness (" + Math.round(percent) + "%) - not compared to an NIN photo (NIN Basic)";
         }
 
         record(riderId, type, subject, VerificationCheckOutcome.MATCH, score,
-                tag(result.sandbox()) + "NIMC confirmed " + onRecord + ", " + selfie, result.reference());
+                tag(result.sandbox()) + "NIMC confirmed " + onRecord + ", " + selfie, result.reference(), raw);
         identityVerificationRepository.findByUserId(riderId)
                 .filter(v -> v.getStatus() == VerificationStatus.IN_REVIEW && selfiePublicId.equals(v.getSelfiePublicId()))
                 .ifPresent(v -> identityVerificationDecider.approve(v, IdentityVerificationDecider.PREMBLY));
     }
 
-    /** NINs are never stored - this keys the check cache without keeping one. */
+    /** Keys the check cache without putting a NIN in subject_key. */
     private static String hashKey(String value) {
         try {
             byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -293,8 +296,14 @@ public class PremblyVerificationService {
         return sandbox ? "[SANDBOX] " : "";
     }
 
+    /** A NIN Basic decision rests on two answers - both are kept, under "nin" and "liveness". */
+    private static String ninAndLiveness(String nin, String liveness) {
+        return "{\"nin\":" + (nin == null ? "null" : nin) + ",\"liveness\":" + (liveness == null ? "null" : liveness) + "}";
+    }
+
     private void record(String driverId, VerificationCheckType type, String subjectKey,
-                        VerificationCheckOutcome outcome, Double score, String summary, String reference) {
+                        VerificationCheckOutcome outcome, Double score, String summary, String reference,
+                        String rawResponse) {
         VerificationCheck check = verificationCheckRepository
                 .findByDriverIdAndCheckTypeAndSubjectKey(driverId, type, subjectKey)
                 .orElseGet(() -> VerificationCheck.builder()
@@ -306,6 +315,7 @@ public class PremblyVerificationService {
         check.setNameMatchScore(score);
         check.setProviderSummary(truncate(summary));
         check.setProviderReference(reference);
+        check.setRawResponse(rawResponse);
         verificationCheckRepository.save(check);
         log.info("Prembly {} check for driver {} on {}: {} - {}", type, driverId, subjectKey, outcome, summary);
     }

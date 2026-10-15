@@ -106,6 +106,58 @@ class PremblyClientTest {
         assertThat(result.reference()).isEqualTo("a8d3c167");
     }
 
+    /**
+     * The shape of a live-key NIN Basic answer (Oct 2026): names under nin_data at the top level, not
+     * under data, and the NIMC photo in both. Values are made up; the structure is Prembly's.
+     */
+    @Test
+    void liveNinBasicIsReadAndKeptWithoutItsPhotos() {
+        String photo = "/9j/4AAQSkZJRgABAgAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a\\n".repeat(30);
+        String record = "{\"photo\":\"" + photo + "\",\"firstname\":\"GRACE\",\"nin_suspension_message\":\"NOT SUSPENDED\","
+                + "\"surname\":\"AMANDA\",\"telephoneno\":\"08000000000\",\"nin\":\"56182742701\",\"middlename\":\"CHIMAMANDA\","
+                + "\"nin_suspension_status\":false,\"birthdate\":\"23-05-1999\",\"gender\":\"f\",\"residence_address\":\"1, TEST STREET\"}";
+        status = 200;
+        body = "{\"status\":true,\"response_code\":\"00\",\"message\":\"National Identity Number (NIN) - Basic verification successful\","
+                + "\"detail\":\"National Identity Number (NIN) - Basic verification successful\",\"data\":" + record + ",\"meta\":{},"
+                + "\"billing_info\":{\"was_charged\":true,\"amount\":\"50.00\",\"currency\":\"NGN\",\"note\":\"Wallet charged 50.00 NGN\"},"
+                + "\"verification\":{\"status\":\"VERIFIED\",\"reference\":\"2ac85ec5\",\"verification_id\":\"9e4013cf\"},"
+                + "\"reference_id\":\"VER-NIN_BASIC-TEST\",\"transaction_id\":\"8cd5ba3f\",\"verification_status\":\"verified\","
+                + "\"nin_data\":" + record + ","
+                + "\"dsvi\":{\"score\":3,\"risk_label\":\"low\",\"sensitivity_tier\":\"low\",\"age_derived\":27,\"age_factor\":1},\"metadata\":{}}";
+
+        PremblyClient.NinResult result = client.verifyNinBasic("56182742701");
+
+        assertThat(result.status()).isTrue();
+        assertThat(result.firstName()).isEqualTo("GRACE");
+        assertThat(result.lastName()).isEqualTo("AMANDA");
+        assertThat(result.faceMatched()).isNull();
+        assertThat(result.reference()).isEqualTo("2ac85ec5");
+        assertThat(result.rawResponse())
+                .doesNotContain("/9j/4AAQ")
+                .contains("\"photo\":\"[removed]\"")
+                .contains("\"reference_id\":\"VER-NIN_BASIC-TEST\"")
+                .contains("\"billing_info\":{\"was_charged\":true,\"amount\":\"50.00\"")
+                .contains("\"dsvi\":{\"score\":3")
+                .contains("\"residence_address\":\"1, TEST STREET\"");
+        assertThat(result.rawResponse().split("\\[removed]", -1)).as("both copies of the photo").hasSize(3);
+    }
+
+    @Test
+    void aRejectedLicenceIsKeptWithItsErrors() {
+        status = 400;
+        body = MALFORMED_LICENCE_BODY;
+
+        PremblyClient.DriversLicenceResult result = client.verifyDriversLicence("SEEDID6", "Ifeoma", "Chukwu");
+
+        assertThat(result.rawResponse()).contains("\"response_code\":\"05\"").contains("must start with a letter");
+    }
+
+    @Test
+    void anEmptyPhotoIsLeftAsItCame() {
+        assertThat(PremblyClient.keepable(new ObjectMapper().createObjectNode().put("photo", "").put("nin", "1")))
+                .isEqualTo("{\"photo\":\"\",\"nin\":\"1\"}");
+    }
+
     /** Prembly's own sample for NIN with face (docs.prembly.com/docs/nin-with-face-copy): confidence 1 IS a match. */
     @Test
     void ninWithFaceSendsTheThresholdAndReadsTheMatch() {
