@@ -75,8 +75,8 @@ class SmileIdCheckServiceTest {
         when(smileIdClient.mintToken()).thenReturn("short-lived");
 
         SmileIdCheckRepository checkRepo = mock(SmileIdCheckRepository.class);
-        when(checkRepo.findByJobId(anyString())).thenAnswer(i -> checks.values().stream()
-                .filter(c -> i.getArgument(0).equals(c.getJobId())).findFirst());
+        when(checkRepo.findByCheckId(anyString())).thenAnswer(i -> checks.values().stream()
+                .filter(c -> i.getArgument(0).equals(c.getCheckId())).findFirst());
         when(checkRepo.findByUserIdAndCheckType(anyString(), any())).thenAnswer(i -> Optional.ofNullable(checks.get(i.getArgument(0) + "|" + i.getArgument(1))));
         when(checkRepo.save(any())).thenAnswer(i -> {
             SmileIdCheck c = i.getArgument(0);
@@ -122,9 +122,10 @@ class SmileIdCheckServiceTest {
         SmileIdSession nin = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901");
         SmileIdSession licence = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null);
 
-        assertThat(nin.jobId()).startsWith("coryd-nin-");
+        assertThat(nin.checkId()).startsWith("coryd-nin-");
+        assertThat(nin.partnerParams()).containsEntry("coryd_check_id", nin.checkId());
         assertThat(nin.idType()).isEqualTo("NIN_V2");
-        assertThat(licence.jobId()).startsWith("coryd-dl-");
+        assertThat(licence.checkId()).startsWith("coryd-dl-");
         assertThat(licence.idType()).isEqualTo("DRIVERS_LICENSE");
         assertThat(nin.token()).isEqualTo("short-lived");
         assertThat(nin.partnerId()).isEqualTo("1234");
@@ -159,12 +160,12 @@ class SmileIdCheckServiceTest {
 
     @Test
     void anUnknownJobARepeatDeliveryOrAnOldJobIsIgnored() throws Exception {
-        String first = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").jobId();
+        String first = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
 
         service.handle(result("not-ours", "clear", null, nimc("GRACE", "AMANDA")));
         assertThat(recorded).isEmpty();
 
-        String second = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").jobId();
+        String second = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
         service.handle(result(first, "clear", null, nimc("GRACE", "AMANDA")));
         assertThat(recorded).as("a result for the job they replaced").isEmpty();
 
@@ -192,7 +193,7 @@ class SmileIdCheckServiceTest {
 
         @BeforeEach
         void open() {
-            job = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").jobId();
+            job = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
         }
 
         @Test
@@ -202,7 +203,8 @@ class SmileIdCheckServiceTest {
             verify(decider).approve(verifications.get("rider-1"), IdentityVerificationDecider.SMILE_ID);
             assertThat(last().getCheckType()).isEqualTo(VerificationCheckType.NIN_FACE);
             assertThat(last().getOutcome()).isEqualTo(VerificationCheckOutcome.MATCH);
-            assertThat(last().getProviderReference()).isEqualTo(job);
+            assertThat(last().getProviderReference()).as("Smile ID's own job ID, for the portal").isEqualTo("smile-" + job);
+            assertThat(last().getSubjectKey()).isEqualTo(job);
             assertThat(check("rider-1", SmileIdCheckType.NIN).getAttempts()).isEqualTo(1);
         }
 
@@ -233,7 +235,7 @@ class SmileIdCheckServiceTest {
             assertThat(response.checkInProgress()).isFalse();
             assertThat(response.attemptsLeft()).isEqualTo(4);
 
-            String again = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").jobId();
+            String again = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
             assertThat(ninResponse().retryReason()).as("cleared when they try again").isNull();
             service.handle(result(again, "block", "identifier_not_found", null));
             assertThat(ninResponse().retryReason()).isEqualTo(SmileIdRetryReason.NIN_NOT_FOUND);
@@ -245,7 +247,7 @@ class SmileIdCheckServiceTest {
             service.handle(result(job, "error", "service_unavailable", null));
             assertThat(ninResponse().retryReason()).isEqualTo(SmileIdRetryReason.TRY_LATER);
 
-            String again = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").jobId();
+            String again = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
             service.handle(result(again, "error", "image_unavailable_or_invalid", null));
             assertThat(ninResponse().retryReason()).isEqualTo(SmileIdRetryReason.UNREADABLE);
             assertThat(ninResponse().attemptsLeft()).isEqualTo(5);
@@ -254,7 +256,7 @@ class SmileIdCheckServiceTest {
         @Test
         void noNimcPhotoGoesToOpsBecauseRetryingCanNeverWork() throws Exception {
             service.handle(json.readValue("{\"status\":\"error\",\"reason\":\"image_unavailable_or_invalid\","
-                    + "\"message\":\"Error: ID authority photo not available.\",\"partner_params\":{\"job_id\":\"" + job + "\"}}", SmileIdResult.class));
+                    + "\"message\":\"Error: ID authority photo not available.\",\"partner_params\":{\"job_id\":\"smile-" + job + "\",\"coryd_check_id\":\"" + job + "\"}}", SmileIdResult.class));
 
             assertThat(verifications.get("rider-1").getStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
         }
@@ -263,7 +265,7 @@ class SmileIdCheckServiceTest {
         void spoofsRiskAndAttentionGoToOpsNeverRejected() throws Exception {
             for (String[] r : new String[][]{{"block", "spoof_detected"}, {"block", "high_risk"}, {"attention", "medium_risk"}, {"block", "something_new"}}) {
                 verifications.get("rider-1").setStatus(VerificationStatus.PENDING);
-                String j = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").jobId();
+                String j = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
                 service.handle(result(j, r[0], r[1], null));
                 assertThat(verifications.get("rider-1").getStatus()).as(r[1]).isEqualTo(VerificationStatus.IN_REVIEW);
             }
@@ -284,7 +286,7 @@ class SmileIdCheckServiceTest {
 
         @Test
         void imageLinksAreNotKeptAndOtherAccountsAreFlagged() throws Exception {
-            service.handle(json.readValue("{\"status\":\"clear\",\"partner_params\":{\"job_id\":\"" + job + "\"},"
+            service.handle(json.readValue("{\"status\":\"clear\",\"partner_params\":{\"job_id\":\"smile-" + job + "\",\"coryd_check_id\":\"" + job + "\"},"
                     + "\"kyc_receipt\":\"https://s3/receipt.pdf\",\"image_links\":{\"selfie_image\":\"https://s3/selfie.jpg\"},"
                     + "\"id_fields\":{\"first_name\":\"GRACE\",\"last_name\":\"AMANDA\",\"photo_url\":\"https://s3/id.jpg\"},"
                     + "\"antifraud\":{\"smile_secure\":{\"suspect_users\":[{\"user_id\":\"user-9\",\"reasons\":[\"same-face\"]}]}}}", SmileIdResult.class));
@@ -314,7 +316,7 @@ class SmileIdCheckServiceTest {
 
         @BeforeEach
         void open() {
-            job = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).jobId();
+            job = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
         }
 
         @Test
@@ -334,7 +336,7 @@ class SmileIdCheckServiceTest {
                     {"TUNDE", "BAKARE", "ABC12345DE67", LocalDate.now().minusDays(1).toString(), "expired"}};
             for (String[] c : cases) {
                 drivers.get("driver-1").setGovernmentIdStatus(VerificationStatus.PENDING);
-                String j = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).jobId();
+                String j = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
                 service.handle(result(j, "clear", null, licence(c[0], c[1], c[2], c[3])));
                 assertThat(drivers.get("driver-1").getGovernmentIdStatus()).as(c[4]).isEqualTo(VerificationStatus.IN_REVIEW);
                 assertThat(drivers.get("driver-1").getGovernmentIdSubmittedAt()).isNotNull();
@@ -348,7 +350,7 @@ class SmileIdCheckServiceTest {
             service.handle(result(job, "block", "face_verification_failed", null));
             assertThat(licenceResponse().licenceRetryReason()).isEqualTo(SmileIdRetryReason.FACE_MISMATCH);
 
-            String again = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).jobId();
+            String again = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
             service.handle(result(again, "block", "unsupported_document", null));
             DriverProfileResponse response = licenceResponse();
             assertThat(response.licenceRetryReason()).isEqualTo(SmileIdRetryReason.NOT_A_LICENCE);
@@ -370,7 +372,7 @@ class SmileIdCheckServiceTest {
             for (String[] c : new String[][]{{"block", "document_check_failed"}, {"attention", "document_copy_detected"},
                     {"attention", "document_expired"}, {"block", "document_expired"}, {"block", "spoof_detected"}}) {
                 drivers.get("driver-1").setGovernmentIdStatus(VerificationStatus.PENDING);
-                String j = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).jobId();
+                String j = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
                 service.handle(result(j, c[0], c[1], null));
                 assertThat(drivers.get("driver-1").getGovernmentIdStatus()).as(c[1]).isEqualTo(VerificationStatus.IN_REVIEW);
             }
@@ -443,7 +445,7 @@ class SmileIdCheckServiceTest {
 
     private SmileIdResult result(String job, String status, String reason, String idFields) throws Exception {
         return json.readValue("{\"status\":\"" + status + "\",\"reason\":" + (reason == null ? "null" : "\"" + reason + "\"")
-                + ",\"message\":\"m\",\"partner_params\":{\"job_id\":\"" + job + "\"},\"id_fields\":"
+                + ",\"message\":\"m\",\"partner_params\":{\"job_id\":\"smile-" + job + "\",\"coryd_check_id\":\"" + job + "\"},\"id_fields\":"
                 + (idFields == null ? "null" : idFields) + "}", SmileIdResult.class);
     }
 }

@@ -51,13 +51,13 @@ services:
   internal:
     api-key: ${INTERNAL_API_KEY}
 
-# Everyone's NIN + live selfie check (Smile ID Biometric KYC). Without a partner ID and API key,
-# POST /identity-verification/session answers "unavailable". The key must match the environment:
-# a sandbox key only works with sandbox=true, a live key only with sandbox=false.
+# Smile ID: the NIN + live selfie check (everyone) and the driver's licence check. Without a partner ID
+# and API key, both checks answer "unavailable". Live environment by default; sandbox=true points at
+# Smile ID's sandbox host, where only a sandbox key works.
 smile-id:
   partner-id: ${SMILE_ID_PARTNER_ID:}
   api-key: ${SMILE_ID_API_KEY:}
-  sandbox: ${SMILE_ID_SANDBOX:true}
+  sandbox: ${SMILE_ID_SANDBOX:false}
   callback-url: ${SMILE_ID_CALLBACK_URL:}
   id-type: ${SMILE_ID_ID_TYPE:NIN_V2}
   name-match-threshold: ${SMILE_ID_NAME_MATCH_THRESHOLD:0.85}

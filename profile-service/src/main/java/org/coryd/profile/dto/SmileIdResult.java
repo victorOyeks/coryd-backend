@@ -29,7 +29,11 @@ public record SmileIdResult(
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-    public record PartnerParams(String jobId, String userId) {
+    /**
+     * job_id and user_id are Smile ID's own (v12 issues them - the app can't choose them);
+     * coryd_check_id is ours, passed by the app in partnerParams and echoed back here.
+     */
+    public record PartnerParams(String jobId, String userId, String corydCheckId) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -65,7 +69,13 @@ public record SmileIdResult(
     public record Summary(Boolean fraudDetected, List<String> fraudSources) {
     }
 
-    public String jobId() {
+    /** Our check this result belongs to. */
+    public String checkId() {
+        return partnerParams == null ? null : partnerParams.corydCheckId();
+    }
+
+    /** Smile ID's job ID - what ops searches for in the Smile ID portal. */
+    public String smileJobId() {
         return partnerParams == null ? null : partnerParams.jobId();
     }
 

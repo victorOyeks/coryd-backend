@@ -84,17 +84,18 @@ public class SmileIdCheckService {
         }
         String token = smileIdClient.mintToken();
 
-        String jobId = (type == SmileIdCheckType.NIN ? "coryd-nin-" : "coryd-dl-") + UUID.randomUUID();
-        check.setJobId(jobId);
+        String checkId = (type == SmileIdCheckType.NIN ? "coryd-nin-" : "coryd-dl-") + UUID.randomUUID();
+        check.setCheckId(checkId);
         check.setStartedAt(Instant.now());
         check.setRetryReason(null);
         smileIdCheckRepository.save(check);
         handler.opened(userId, nin);
-        log.info("{} check {} opened for {}", type, jobId, userId);
+        log.info("{} check {} opened for {}", type, checkId, userId);
 
         String callbackUrl = properties.getCallbackUrl();
-        return new SmileIdSession(jobId, userId, token, properties.getPartnerId(), properties.isSandbox(),
-                callbackUrl == null || callbackUrl.isBlank() ? null : callbackUrl, "NG", handler.idType());
+        return new SmileIdSession(checkId, token, properties.getPartnerId(), properties.isSandbox(),
+                callbackUrl == null || callbackUrl.isBlank() ? null : callbackUrl, "NG", handler.idType(),
+                Map.of(SmileIdSession.CHECK_ID_PARAM, checkId));
     }
 
     @Transactional(readOnly = true)
@@ -105,20 +106,21 @@ public class SmileIdCheckService {
     /** A result from the webhook (signature already checked). */
     @Transactional
     public void handle(SmileIdResult result) {
-        String jobId = blankToNull(result.jobId());
-        SmileIdCheck check = jobId == null ? null : smileIdCheckRepository.findByJobId(jobId).orElse(null);
+        String checkId = blankToNull(result.checkId());
+        String smileJobId = blankToNull(result.smileJobId());
+        SmileIdCheck check = checkId == null ? null : smileIdCheckRepository.findByCheckId(checkId).orElse(null);
         if (check == null) {
-            log.warn("Smile ID result for job {} matches no current check - ignored", jobId);
+            log.warn("Smile ID result (job {}, check {}) matches no current check - ignored", smileJobId, checkId);
             return;
         }
         SmileIdCheckHandler handler = handlers.get(check.getCheckType());
         String userId = check.getUserId();
-        if (verificationCheckRepository.findByDriverIdAndCheckTypeAndSubjectKey(userId, handler.recordedAs(), jobId).isPresent()) {
-            log.info("Smile ID result for job {} already handled - ignored", jobId);
+        if (verificationCheckRepository.findByDriverIdAndCheckTypeAndSubjectKey(userId, handler.recordedAs(), checkId).isPresent()) {
+            log.info("Smile ID result for check {} already handled - ignored", checkId);
             return;
         }
         if (!handler.awaitingResult(userId)) {
-            log.info("Smile ID result for job {} arrived after {}'s {} check went to ops or was decided - ignored", jobId, userId, handler.noun());
+            log.info("Smile ID result for check {} arrived after {}'s {} check went to ops or was decided - ignored", checkId, userId, handler.noun());
             return;
         }
 
@@ -128,11 +130,12 @@ public class SmileIdCheckService {
         verificationCheckRepository.save(VerificationCheck.builder()
                 .driverId(userId)
                 .checkType(handler.recordedAs())
-                .subjectKey(jobId)
+                .subjectKey(checkId)
                 .outcome(decision.outcome())
                 .nameMatchScore(decision.nameMatchScore())
-                .providerSummary(SmileIdResults.truncate(SmileIdResults.tag(properties.isSandbox()) + summary + " - Smile ID job " + jobId))
-                .providerReference(jobId)
+                .providerSummary(SmileIdResults.truncate(SmileIdResults.tag(properties.isSandbox()) + summary
+                        + " - Smile ID job " + (smileJobId == null ? "unknown" : smileJobId)))
+                .providerReference(smileJobId)
                 .rawResponse(SmileIdResults.audit(objectMapper, result))
                 .build());
 
@@ -142,7 +145,7 @@ public class SmileIdCheckService {
             check.setAttempts(check.getAttempts() + 1);
         }
         smileIdCheckRepository.save(check);
-        log.info("{} check {} for {}: {} - {}", check.getCheckType(), jobId, userId, decision.kind(), summary);
+        log.info("{} check {} (Smile ID job {}) for {}: {} - {}", check.getCheckType(), checkId, smileJobId, userId, decision.kind(), summary);
 
         switch (decision.kind()) {
             case APPROVE -> handler.approve(userId);

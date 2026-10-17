@@ -23,8 +23,8 @@ public class SmileIdProperties {
     /** Mints the app's tokens and signs every webhook, so it also verifies them. Never sent to the app. */
     private String apiKey;
 
-    /** testapi.smileidentity.com when true, api.smileidentity.com when false - the key must match. */
-    private boolean sandbox = true;
+    /** CoRyd runs on live (api.smileidentity.com). true points at testapi.smileidentity.com, where only a sandbox key works. */
+    private boolean sandbox = false;
 
     /** Blank uses the default set for this environment in the Smile ID portal. */
     private String callbackUrl;

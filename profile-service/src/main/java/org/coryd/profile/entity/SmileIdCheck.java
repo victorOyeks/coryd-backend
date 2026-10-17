@@ -42,9 +42,13 @@ public class SmileIdCheck extends BaseEntity {
     @Column(nullable = false, length = 20)
     private SmileIdCheckType checkType;
 
-    /** The job the app is submitting; a result for any other job is ignored. */
-    @Column(length = 50)
-    private String jobId;
+    /**
+     * Our ID for the check the app is running. The app passes it to Smile ID's SDK as
+     * partnerParams.coryd_check_id and Smile ID echoes it back with the result; a result carrying
+     * any other ID is ignored. (Smile ID's own job ID is only known once the result arrives.)
+     */
+    @Column(name = "job_id", length = 50)
+    private String checkId;
 
     /** When that job was opened - null once its result is in. */
     private Instant startedAt;

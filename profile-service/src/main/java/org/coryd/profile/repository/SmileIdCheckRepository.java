@@ -8,7 +8,7 @@ import java.util.Optional;
 
 public interface SmileIdCheckRepository extends JpaRepository<SmileIdCheck, String> {
 
-    Optional<SmileIdCheck> findByJobId(String jobId);
+    Optional<SmileIdCheck> findByCheckId(String checkId);
 
     Optional<SmileIdCheck> findByUserIdAndCheckType(String userId, SmileIdCheckType checkType);
 }

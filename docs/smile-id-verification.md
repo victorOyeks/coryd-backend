@@ -18,7 +18,7 @@ The licence check is **not an FRSC lookup**: Smile ID can't do one in Nigeria. V
 ```
 App ── POST /profile/identity-verification/session          (NIN)     ──▶ profile-service ── POST /v3/token ──▶ Smile ID
     or POST /profile/drivers/me/licence-check/session       (licence)
-App ◀── { jobId, userId, token, partnerId, sandbox, country, idType } ──
+App ◀── { checkId, token, partnerId, sandbox, callbackUrl, country, idType, partnerParams } ──
 App ── Smile ID SDK: live selfie + NIN, or licence photo + live selfie ─────────────────────▶ Smile ID
 profile-service ◀── POST /profile/webhooks/smile-id (signed result) ──────────────────────── Smile ID
 ```
@@ -32,7 +32,7 @@ profile-service ◀── POST /profile/webhooks/smile-id (signed result) ──
 2. **Capture.** The app's Smile ID SDK captures the selfie (and the licence) and submits them to Smile ID directly. The images never reach our servers.
 3. **Result.** Smile ID posts every result, for both checks, to `POST /profile/webhooks/smile-id`.
    - It's public, but nothing is read until the `Response-Signature` header checks out (HMAC-SHA256 with our API key).
-   - The job ID is looked up in `smile_id_checks`, which also says which check it is.
+   - Smile ID issues its own job and user IDs (v12 doesn't let the app choose them), so the app passes **our** check ID in the SDK's `partnerParams` (`coryd_check_id`) and Smile ID echoes it back. That ID is looked up in `smile_id_checks` (column `job_id`), which also says which check it is.
    - A result for anything other than the person's current job is ignored, and so is a repeat delivery or one arriving after ops took over or decided.
 
 | Smile ID result | NIN | Licence |
@@ -55,7 +55,7 @@ Name matching accepts either name order. For the NIN, either of the person's pro
 **Smile Secure.** If Smile ID has seen the same NIN or face on another CoRyd account, the check's note in the ops queue says so and names that user.
 
 **Audit trail.** Every result is kept on `profile.verification_checks`:
-- `check_type` is `NIN_FACE` or `DRIVERS_LICENCE`, and `subject_key` / `provider_reference` hold the Smile ID job ID. Ops see the summary on the identity queue or the driver review page.
+- `check_type` is `NIN_FACE` or `DRIVERS_LICENCE`, `subject_key` holds our check ID, and `provider_reference` holds Smile ID's job ID. Ops see the summary, which ends with Smile ID's job ID, on the identity queue or the driver review page.
 - `raw_response` holds the full answer, with the selfie, NIMC photo and receipt links removed.
 - `raw_response` includes the full NIN, so read it from the database only; it's never served by an API.
 - The selfie itself stays in the Smile ID portal: search the job ID.
@@ -68,31 +68,30 @@ Name matching accepts either name order. For the NIN, either of the person's pro
 2. **Products.** Ask Smile ID to:
    - activate **Biometric KYC** and **Document Verification** for Nigeria (driver's licence);
    - confirm **`NIN_V2`** is enabled (it needs an NIMC enterprise ID on the account). If it isn't, set `SMILE_ID_ID_TYPE=NIN_SLIP`.
-3. **Keys.** From the portal, take the **partner ID** and the **sandbox API key** first. Dev runs on sandbox.
-4. **Callback URL.** Set it for each environment under *Developer › Security Settings › Callback URLs*:
-   - dev: `https://api-dev.coryd.ng/profile/webhooks/smile-id`
-   - production: the same path on the production API host
+3. **Keys.** CoRyd runs on Smile ID's **live** environment only, dev server included. Once Smile ID approves the account and the wallet is funded, take the **partner ID** and create a **Production** API key (*Developers › Security Settings › Production › Create Credential*; Owner or Admin only). Live is prepaid: checks fail when the wallet is empty.
+4. **Callback URL.** Set it under *Developer › Security Settings › Callback URLs › Production*:
+   - dev server: `https://api-dev.coryd.ng/profile/webhooks/smile-id`
+   - production server: the same path on the production API host
 5. **Server env.** Add to the profile-service env and restart:
 
 ```bash
 SMILE_ID_PARTNER_ID=<numeric partner id>
-SMILE_ID_API_KEY=<sandbox or live API key>
-SMILE_ID_SANDBOX=true            # false with the live key
+SMILE_ID_API_KEY=<production API key>
+SMILE_ID_SANDBOX=false
 SMILE_ID_CALLBACK_URL=           # blank = the portal's URL for this environment
 SMILE_ID_ID_TYPE=NIN_V2
 SMILE_ID_NAME_MATCH_THRESHOLD=0.85
 ```
 
-A sandbox key only works with `SMILE_ID_SANDBOX=true` (`testapi.smileidentity.com`), and a live key only with `false` (`api.smileidentity.com`). A mismatch shows up as a 502 *"Identity checks are unavailable…"* on `/session`, with a 401 from Smile ID in the profile-service log.
+A live key only works with `SMILE_ID_SANDBOX=false` (`api.smileidentity.com`); leaving it `true` points at the sandbox host. A mismatch shows up as a 502 *"Identity checks are unavailable…"* on `/session`, with a 401 from Smile ID in the profile-service log.
 
 ---
 
-## Testing on sandbox
+## Testing (live)
 
-Use Smile ID's [sandbox test identities](https://docs.usesmileid.com/developer-resources/essentials/testing-in-sandbox). Each gives a fixed result, so every row of the table above can be checked.
+There's no sandbox: Smile ID refuses its test identities in live, so **every check is real and paid**. Test with the team's own NINs, licences and faces, and keep repeats to a minimum.
 
-- **Name match:** a sandbox approval only matches if the profile name equals the test identity's name. Anything else lands in the ops queue as `NAME_MISMATCH`, which is still a useful test.
-- **Sandbox label:** sandbox notes are prefixed `[SANDBOX]` in the ops queue.
+What you can see in live: approvals, face mismatches (a different person's selfie), name mismatches (a profile name that differs from the NIN or licence), and an expired licence if someone has one. The rarer outcomes (NIN not found, spoof, Smile ID outage, forged licence) are covered by the automated and end-to-end tests, which simulate Smile ID's signed results.
 
 Check the webhook from the server log:
 - *"NIN check coryd-nin-… opened for …"* / *"DRIVERS_LICENCE check coryd-dl-… opened for …"* when the app starts a check;
@@ -103,7 +102,7 @@ Check the webhook from the server log:
 
 ## Going live
 
-1. **Keys and env.** Swap in the live API key and set `SMILE_ID_SANDBOX=false`, then restart profile-service. Remove any old `PREMBLY_*` lines from the env.
+1. **Keys and env.** Production API key, `SMILE_ID_SANDBOX=false`, then restart profile-service. Remove any old `PREMBLY_*` lines from the env.
 2. **Callback URL.** Make sure the live environment's callback URL is set in the portal.
 3. **People already approved** (by Prembly or ops) stay approved. Anyone `IN_REVIEW` from the older selfie flow stays in the ops queue.
 4. **Older app builds.** The older uploads still work for builds without the SDK, and are reviewed by ops by eye: the selfie via `POST /profile/identity-verification`, the licence photo via `governmentIdUrl` on `PUT /profile/drivers/me`. Remove them once every install is on the Smile ID build.
