@@ -381,8 +381,7 @@ The "Join the CoRyd beta" page posts to a public endpoint. No login is needed.
   "whatsappNumber": "0803 123 4567",
   "willMostly": "RIDE",
   "usualRoute": "Ikorodu to Lekki, weekday mornings",
-  "device": "IPHONE",
-  "website": ""
+  "device": "IPHONE"
 }
 ```
 
@@ -393,7 +392,6 @@ The "Join the CoRyd beta" page posts to a public endpoint. No login is needed.
 | `willMostly` | I'll mostly: Ride / Drive | `RIDE` or `DRIVE` |
 | `usualRoute` | Your usual route | Free text, up to 200 characters |
 | `device` | My phone: iPhone / Android | `IPHONE` or `ANDROID` |
-| `website` | **Hidden** field | Leave empty. It's a spam trap: hide it with CSS, and bots that fill it in are quietly dropped. |
 
 - **Success:** `200` with `message`: *"You're on the list - we'll send your invite on WhatsApp."* Show that message.
 - **Submitting again with the same number** updates that person's entry and gets the same success message.

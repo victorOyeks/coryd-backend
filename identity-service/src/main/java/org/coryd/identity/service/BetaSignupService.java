@@ -1,7 +1,6 @@
 package org.coryd.identity.service;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.response.PagedResponse;
@@ -18,7 +17,6 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /** The beta waitlist: the public form, the ops list, and noting when someone on it becomes a user. */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BetaSignupService {
@@ -31,10 +29,6 @@ public class BetaSignupService {
     /** Same answer whether new or already on the list, so the form can't be used to find out who signed up. */
     @Transactional
     public void join(BetaSignupRequest request) {
-        if (request.website() != null && !request.website().isBlank()) {
-            log.info("Beta signup honeypot filled - dropped");
-            return;
-        }
         String number = PhoneNumbers.normalize(request.whatsappNumber());
         if (number == null || !NG_MOBILE.matcher(number).matches()) {
             throw new BadRequestException("Enter a valid Nigerian WhatsApp number, e.g. 0803 123 4567");
