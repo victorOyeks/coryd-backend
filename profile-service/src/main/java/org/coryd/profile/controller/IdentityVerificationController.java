@@ -5,11 +5,15 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.profile.dto.SmileIdSession;
 import org.coryd.profile.dto.IdentityVerificationDecisionRequest;
 import org.coryd.profile.dto.IdentityVerificationQueueItem;
 import org.coryd.profile.dto.IdentityVerificationResponse;
+import org.coryd.profile.dto.StartIdentityCheckRequest;
 import org.coryd.profile.dto.SubmitIdentityVerificationRequest;
+import org.coryd.profile.entity.SmileIdCheckType;
 import org.coryd.profile.service.IdentityVerificationService;
+import org.coryd.profile.service.SmileIdCheckService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,8 +26,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Everyone's NIN + selfie check - riders and drivers alike, once per person. Nobody books or posts
- * until it's approved. The queue and decisions are for ops admins.
+ * Everyone's NIN + live selfie check through Smile ID - riders and drivers alike, once per person.
+ * Nobody books or posts until it's approved. The queue and decisions are for ops admins.
  */
 @RestController
 @RequestMapping("/identity-verification")
@@ -31,8 +35,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class IdentityVerificationController {
 
     private final IdentityVerificationService identityVerificationService;
+    private final SmileIdCheckService smileIdCheckService;
 
-    /** Onboarding's identity step - NIN and a selfie (uploaded first via POST /media/upload). */
+    /** Onboarding's identity step - opens a Smile ID check; the app runs Smile ID's SDK with what comes back, then polls GET /me. */
+    @PostMapping("/session")
+    public ApiResponse<SmileIdSession> startCheck(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                        @Valid @RequestBody StartIdentityCheckRequest request) {
+        return ApiResponse.ok(smileIdCheckService.start(principal.getUserId(), principal.getActiveRole(), SmileIdCheckType.NIN, request.nin()));
+    }
+
+    /** The older step - a selfie uploaded via POST /media/upload, checked by ops. For app builds without Smile ID's SDK. */
+    @Deprecated
     @PostMapping
     public ApiResponse<IdentityVerificationResponse> submit(@AuthenticationPrincipal CoRydUserDetails principal,
                                                             @Valid @RequestBody SubmitIdentityVerificationRequest request) {

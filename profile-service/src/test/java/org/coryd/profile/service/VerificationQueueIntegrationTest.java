@@ -76,7 +76,6 @@ class VerificationQueueIntegrationTest {
 
     @MockBean IdentityServiceClient identityServiceClient;
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
-    @MockBean PremblyVerificationService premblyVerificationService;
     @MockBean CloudinaryService cloudinaryService;
 
     @BeforeEach

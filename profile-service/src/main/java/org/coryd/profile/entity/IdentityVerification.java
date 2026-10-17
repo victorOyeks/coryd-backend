@@ -17,10 +17,11 @@ import org.coryd.common.entity.BaseEntity;
 import java.time.Instant;
 
 /**
- * A rider's identity check - NIN plus a selfie - kept apart from RiderProfile because GET /riders/{id}
- * serves the profile to any signed-in user. This table keeps only the NIN's last four digits for
- * display; the full NIN exists only in Prembly's answer on verification_checks.raw_response. The
- * selfie is deleted once a decision is made.
+ * A person's identity check - NIN plus a live selfie, run by Smile ID - kept apart from the profiles
+ * because GET /riders/{id} serves a profile to any signed-in user. This table keeps only the NIN's
+ * last four digits for display; the full NIN exists only in Smile ID's answer on
+ * verification_checks.raw_response. The selfie stays with Smile ID (selfieUrl is only set by the
+ * older upload-a-selfie submission, and is deleted once a decision is made).
  */
 @Entity
 @Table(name = "identity_verifications", schema = "profile")
@@ -46,14 +47,14 @@ public class IdentityVerification extends BaseEntity {
 
     private String selfiePublicId;
 
-    /** When the rider agreed to their NIN and selfie being checked with NIMC through Prembly. */
+    /** When they agreed to their NIN and selfie being checked with NIMC through Smile ID. */
     private Instant consentAt;
 
     private Instant submittedAt;
 
     private Instant decidedAt;
 
-    /** PREMBLY for an automatic match, otherwise the ops user. */
+    /** SMILE_ID for an automatic match, otherwise the ops user. */
     @Column(length = 36)
     private String decidedBy;
 

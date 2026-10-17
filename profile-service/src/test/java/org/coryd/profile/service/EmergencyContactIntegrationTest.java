@@ -61,7 +61,6 @@ class EmergencyContactIntegrationTest {
 
     @MockBean IdentityServiceClient identityServiceClient;
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
-    @MockBean PremblyVerificationService premblyVerificationService;
 
     @BeforeEach
     void cleanSlate() throws Exception {

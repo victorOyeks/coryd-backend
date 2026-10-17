@@ -3,6 +3,8 @@ package org.coryd.profile.dto;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.entity.EmergencyContact;
+import org.coryd.profile.entity.SmileIdCheck;
+import org.coryd.profile.entity.SmileIdRetryReason;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -27,9 +29,15 @@ public record DriverProfileResponse(
         String governmentIdRejectionReason,
         Instant verifiedSince,
         String emergencyContactName,
-        String emergencyContactPhone
+        String emergencyContactPhone,
+        boolean licenceCheckInProgress,
+        SmileIdRetryReason licenceRetryReason,
+        int licenceAttemptsLeft
 ) {
-    public static DriverProfileResponse from(DriverProfile profile, String phone, EmergencyContact primaryContact) {
+    /** licenceCheck is their Smile ID licence check, null if they've never started one. */
+    public static DriverProfileResponse from(DriverProfile profile, String phone, EmergencyContact primaryContact, SmileIdCheck licenceCheck) {
+        boolean pending = profile.getGovernmentIdStatus() == VerificationStatus.PENDING;
+        boolean inProgress = pending && licenceCheck != null && licenceCheck.waitingForResult();
         return new DriverProfileResponse(
                 profile.getId(), profile.getCustomId(), profile.getCreatedAt(), profile.getUpdatedAt(),
                 profile.getUserId(), profile.getFirstName(), profile.getLastName(), profile.getPhotoUrl(), profile.getEmail(), phone,
@@ -37,7 +45,10 @@ public record DriverProfileResponse(
                 profile.getGovernmentIdStatus(), profile.getGovernmentIdRejectionReason(),
                 profile.getVerifiedSince(),
                 primaryContact == null ? null : primaryContact.getName(),
-                primaryContact == null ? null : primaryContact.getPhone()
+                primaryContact == null ? null : primaryContact.getPhone(),
+                inProgress,
+                pending && !inProgress && licenceCheck != null ? licenceCheck.getRetryReason() : null,
+                licenceCheck == null ? SmileIdCheck.MAX_ATTEMPTS : licenceCheck.attemptsLeft()
         );
     }
 }

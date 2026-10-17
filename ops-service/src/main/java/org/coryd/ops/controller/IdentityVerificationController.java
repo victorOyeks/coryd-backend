@@ -15,9 +15,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Identity (NIN + selfie) checks - riders and drivers - Prembly couldn't settle (or every one, while it's switched off): the selfie, the
- * NIN's last four digits and Prembly's note, then approve or reject with a reason. Passed through as
- * profile-service shapes it - this console adds nothing to the rows.
+ * Identity (NIN + live selfie) checks - riders and drivers - Smile ID couldn't settle on its own: the NIN's
+ * last four digits and the check's note (the selfie is in the Smile ID portal under the job it names), then
+ * approve or reject with a reason. Passed through as profile-service shapes it - this console adds nothing.
  */
 @RestController
 @RequestMapping("/identity-verification")

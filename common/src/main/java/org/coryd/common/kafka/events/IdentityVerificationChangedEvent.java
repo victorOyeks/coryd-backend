@@ -15,7 +15,7 @@ import java.time.Instant;
 public class IdentityVerificationChangedEvent {
     private String userId;
     private boolean verified;
-    /** PREMBLY for an automatic match, otherwise the ops user who decided. */
+    /** SMILE_ID for an automatic match (PREMBLY on older events), otherwise the ops user who decided. */
     private String decidedBy;
     private Instant decidedAt;
 }

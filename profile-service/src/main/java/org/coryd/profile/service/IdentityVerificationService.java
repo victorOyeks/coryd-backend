@@ -13,8 +13,11 @@ import org.coryd.profile.dto.IdentityVerificationQueueItem;
 import org.coryd.profile.dto.IdentityVerificationResponse;
 import org.coryd.profile.dto.SubmitIdentityVerificationRequest;
 import org.coryd.profile.entity.IdentityVerification;
+import org.coryd.profile.entity.SmileIdCheck;
+import org.coryd.profile.entity.SmileIdCheckType;
 import org.coryd.profile.entity.VerificationCheck;
 import org.coryd.profile.repository.RiderProfileRepository;
+import org.coryd.profile.repository.SmileIdCheckRepository;
 import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.IdentityVerificationRepository;
 import org.coryd.profile.repository.VerificationCheckRepository;
@@ -22,45 +25,44 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
- * Rider identity check during onboarding: NIN + selfie. Prembly matches what it can on its own; anything
- * it can't (or everything, while it's switched off) waits in the ops queue. A rider is never rejected by
- * a machine - only an ops decision rejects, with a reason the rider sees.
+ * Everyone's identity check during onboarding: NIN + live selfie through Smile ID. The app opens a check
+ * through SmileIdCheckService, Smile ID's SDK captures and submits the selfie, and NinCheck decides from the result.
+ * Anything a machine can't settle waits in the ops queue. Nobody is rejected by a machine - only an ops
+ * decision rejects, with a reason the person sees.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class IdentityVerificationService {
 
-    /** A sixth attempt goes through support - repeated tries with different NINs are worth a human look. */
+    /** The older selfie upload's limit - a sixth attempt goes through support. Smile ID checks count theirs on smile_id_checks. */
     static final int MAX_ATTEMPTS = 5;
 
     private final IdentityVerificationRepository identityVerificationRepository;
     private final RiderProfileRepository riderProfileRepository;
     private final DriverProfileRepository driverProfileRepository;
     private final VerificationCheckRepository verificationCheckRepository;
-    private final PremblyVerificationService premblyVerificationService;
     private final IdentityVerificationDecider decider;
+    private final SmileIdCheckRepository smileIdCheckRepository;
 
-    /** Riders and drivers alike - the name checked against the NIN is the one on the caller's own profile for the role they're in. */
+    /**
+     * The older flow: a selfie uploaded through POST /media/upload, reviewed by ops by eye. Kept only so
+     * app builds without Smile ID's SDK keep working - remove once every install is on the new build.
+     */
+    @Deprecated
     @Transactional
     public IdentityVerificationResponse submit(String userId, UserRole role, SubmitIdentityVerificationRequest request) {
-        Name profile = nameOf(userId, role)
-                .orElseThrow(() -> new BadRequestException("Save your profile before verifying your identity"));
-        if (isBlank(profile.firstName()) || isBlank(profile.lastName())) {
-            throw new BadRequestException("Add your first and last name, as on your NIN, before verifying");
-        }
+        requireProfileName(userId, role);
         IdentityVerification verification = identityVerificationRepository.findByUserId(userId)
                 .orElseGet(() -> IdentityVerification.builder().userId(userId).build());
         if (verification.getStatus() == VerificationStatus.APPROVED) {
@@ -85,25 +87,13 @@ public class IdentityVerificationService {
         verification.setDecidedBy(null);
         verification.setRejectionReason(null);
         verification.setAttempts(verification.getAttempts() + 1);
-        IdentityVerification saved = identityVerificationRepository.save(verification);
-
-        // After commit: the check updates this row, which must be visible to it.
-        String nin = request.nin();
-        String first = profile.firstName();
-        String last = profile.lastName();
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                premblyVerificationService.checkNin(userId, nin, request.selfieUrl(), request.selfiePublicId(), first, last);
-            }
-        });
-        return IdentityVerificationResponse.from(saved);
+        return IdentityVerificationResponse.from(identityVerificationRepository.save(verification), ninCheck(userId));
     }
 
     @Transactional(readOnly = true)
     public IdentityVerificationResponse mine(String userId) {
         return identityVerificationRepository.findByUserId(userId)
-                .map(IdentityVerificationResponse::from)
+                .map(v -> IdentityVerificationResponse.from(v, ninCheck(userId)))
                 .orElseGet(() -> IdentityVerificationResponse.notStarted(userId));
     }
 
@@ -145,7 +135,7 @@ public class IdentityVerificationService {
             }
             decider.reject(verification, reason.trim(), callerId);
         }
-        return IdentityVerificationResponse.from(verification);
+        return IdentityVerificationResponse.from(verification, ninCheck(riderId));
     }
 
     private VerificationCheck latestCheck(String userId) {
@@ -155,7 +145,30 @@ public class IdentityVerificationService {
                 .orElse(null);
     }
 
-    private record Name(String firstName, String lastName) {
+    record Name(String firstName, String lastName) {
+    }
+
+    /** Their rider and driver profile names, whichever exist - the result is matched against the closer one. */
+    List<Name> profileNames(String userId) {
+        List<Name> names = new ArrayList<>();
+        riderProfileRepository.findByUserId(userId).map(r -> new Name(r.getFirstName(), r.getLastName()))
+                .filter(n -> !isBlank(n.firstName()) && !isBlank(n.lastName())).ifPresent(names::add);
+        driverProfileRepository.findByUserId(userId).map(d -> new Name(d.getFirstName(), d.getLastName()))
+                .filter(n -> !isBlank(n.firstName()) && !isBlank(n.lastName())).ifPresent(names::add);
+        return names;
+    }
+
+    private SmileIdCheck ninCheck(String userId) {
+        return smileIdCheckRepository.findByUserIdAndCheckType(userId, SmileIdCheckType.NIN).orElse(null);
+    }
+
+    /** Riders and drivers alike - the name checked against the NIN is the one on their profile for the role they're in. */
+    void requireProfileName(String userId, UserRole role) {
+        Name profile = nameOf(userId, role)
+                .orElseThrow(() -> new BadRequestException("Save your profile before verifying your identity"));
+        if (isBlank(profile.firstName()) || isBlank(profile.lastName())) {
+            throw new BadRequestException("Add your first and last name, as on your NIN, before verifying");
+        }
     }
 
     /** The profile for the role they're in, or their other one - a person verifies once, whichever app they're in. */

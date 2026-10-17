@@ -54,15 +54,14 @@ public class VerificationCheck extends BaseEntity {
     @Column(length = 500)
     private String providerSummary;
 
-    /** Prembly's own reference where it gave one, for chasing a disputed result with them. */
+    /** The provider's reference (the Smile ID job ID), for chasing a disputed result with them. */
     @Column(length = 100)
     private String providerReference;
 
     /**
-     * Prembly's response as received, for audit and disputes - with every image (the NIMC photo, a
-     * licence photo) replaced by "[removed]". Everything else is kept verbatim, so this column holds
-     * full NINs, dates of birth, phone numbers and addresses and must never be served to a client.
-     * A NIN Basic check stores {"nin": ..., "liveness": ...}. Null when Prembly did not answer.
+     * The provider's answer as received, for audit and disputes, with image links removed. Everything
+     * else is kept verbatim, so this column holds full NINs, dates of birth, phone numbers and addresses
+     * and must never be served to a client. Older rows hold Prembly's answers; newer ones Smile ID's.
      */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "raw_response", columnDefinition = "jsonb")

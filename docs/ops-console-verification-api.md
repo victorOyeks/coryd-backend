@@ -6,14 +6,26 @@ with a `message` you can show as-is.
 
 A driver goes live once ops approves all four items:
 
-| Item (`item` value) | Shown as | What ops looks at | Automatic check (Prembly) |
-|---|---|---|---|
-| `GOVERNMENT_ID` | Driver's licence | Licence photo, licence number, date of birth | `DRIVERS_LICENCE`: FRSC record and name match |
-| `VEHICLE` | Vehicle registration | Make, model, year, colour, plate, exterior and interior photos, AC | `VEHICLE_PLATE`: plate register, make and colour |
-| `INSURANCE` | Insurance | Certificate image, expiry date | none |
-| `ROADWORTHINESS_CERT` | Roadworthiness | Certificate image, expiry date | none |
+| Item (`item` value) | Shown as | What ops looks at |
+|---|---|---|
+| `GOVERNMENT_ID` | Driver's licence | Licence photo, licence number, date of birth |
+| `VEHICLE` | Vehicle registration | Make, model, year, colour, plate, exterior and interior photos, AC |
+| `INSURANCE` | Insurance | Certificate image, expiry date |
+| `ROADWORTHINESS_CERT` | Roadworthiness | Certificate image, expiry date |
 
 National ID, Live Selfie and Car Ownership are gone from the flow. Insurance takes Car Ownership's place.
+
+**The licence is checked by Smile ID** (Document Verification): a genuine licence in the driver's name, with the number
+they entered, not expired, and their live face on it, is approved automatically and never reaches this queue. Anything
+doubtful lands here as `IN_REVIEW`:
+- a name, number or expiry mismatch;
+- a forgery, photocopy or spoof flag;
+- a risk flag.
+
+The `DRIVERS_LICENCE` provider check explains why. Its summary ends with the Smile ID job ID, and the licence and selfie
+images are in the Smile ID portal under that job. `governmentId.url` is only set when the driver used the older photo upload.
+The vehicle, insurance and roadworthiness have no automatic check. (The NIN + live selfie check every driver also does is
+a separate queue, also run by Smile ID.)
 
 ---
 
@@ -103,12 +115,12 @@ Pass the same `search` as the list so the badges match what's listed.
 ```
 
 How the review page maps to the response:
-- **Driver's licence card:** `governmentId` for the status and image, plus `driver.licenceNumber` and `driver.dateOfBirth`. Show the `DRIVERS_LICENCE` provider check beside it.
-- **Vehicle registration card:** `vehicleRegistration.vehicle`. Show the `VEHICLE_PLATE` provider check beside it.
+- **Driver's licence card:** `governmentId` for the status and image, plus `driver.licenceNumber` and `driver.dateOfBirth`. Show the latest `DRIVERS_LICENCE` provider check beside it: Smile ID's finding, or Prembly's for drivers checked before. With no `url`, link ops to the Smile ID portal using the job ID in the summary.
+- **Vehicle registration card:** `vehicleRegistration.vehicle`. If `providerChecks` has a `VEHICLE_PLATE` entry (older drivers only), show it beside the card.
 - **Insurance and Roadworthiness cards:** the matching entry in `documents`. An item missing from the list hasn't been uploaded yet.
 - **"Resubmitted" tag on a card:** `resubmitted: true`.
 
-Prembly check outcomes, to use as badge colours:
+`providerChecks` outcomes, to use as badge colours. `DRIVERS_LICENCE` entries come from Smile ID (or Prembly, for older drivers), `NIN_FACE` from the identity check, and `VEHICLE_PLATE` only from older Prembly checks:
 
 | `outcome` | Meaning | Suggested badge |
 |---|---|---|
@@ -116,9 +128,9 @@ Prembly check outcomes, to use as badge colours:
 | `NAME_MISMATCH` | Licence found, but the name differs from what the driver entered | amber |
 | `DETAILS_MISMATCH` | Plate found, but the make or colour differs | amber |
 | `NOT_FOUND` | No such licence or plate | red |
-| `PROVIDER_ERROR` | Prembly couldn't be reached. This is not the driver's fault. | grey: "Check unavailable" |
+| `PROVIDER_ERROR` | The provider couldn't be reached or couldn't finish. This is not the driver's fault. | grey: "Check unavailable" |
 
-Checks are advisory. Ops always makes the final call. `providerChecks` is empty if Prembly hasn't been asked yet.
+Checks are advisory. Ops always makes the final call. `providerChecks` is empty when no check has run.
 
 ---
 

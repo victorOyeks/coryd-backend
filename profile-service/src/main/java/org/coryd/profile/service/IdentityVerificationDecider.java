@@ -13,16 +13,16 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 
 /**
- * The one place a rider's check is decided - by a Prembly match or by ops. Either way the selfie is
- * deleted (an approved one is never shown again, a rejected one is replaced by the next attempt) and
- * trip-service hears the result, since it decides who may book.
+ * The one place a person's check is decided - by a Smile ID match or by ops. Either way any uploaded
+ * selfie is deleted (an approved one is never shown again, a rejected one is replaced by the next
+ * attempt) and trip-service hears the result, since it decides who may book or post.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class IdentityVerificationDecider {
 
-    public static final String PREMBLY = "PREMBLY";
+    public static final String SMILE_ID = "SMILE_ID";
 
     private final IdentityVerificationRepository identityVerificationRepository;
     private final CloudinaryService cloudinaryService;

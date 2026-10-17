@@ -51,24 +51,16 @@ services:
   internal:
     api-key: ${INTERNAL_API_KEY}
 
-# Driver identity checks (FRSC driver's licence, vehicle plate register). Off unless a key is
-# set: a check that cannot run leaves the item pending for ops, which is exactly how it behaved
-# before this existed. Test and live share one host; the key alone decides which you get.
-prembly:
-  enabled: ${PREMBLY_ENABLED:false}
-  base-url: ${PREMBLY_BASE_URL:https://api.prembly.com}
-  api-key: ${PREMBLY_API_KEY:}
-  name-match-threshold: ${PREMBLY_NAME_MATCH_THRESHOLD:0.85}
-  cross-check-vehicle-details: ${PREMBLY_CROSS_CHECK_VEHICLE:true}
-  # Rider identity check - NIN_WITH_FACE (NIN record + selfie matched to the NIN photo) or, if the
-  # account doesn't have it yet, NIN_BASIC (NIN record + selfie liveness).
-  nin-check: ${PREMBLY_NIN_CHECK:NIN_WITH_FACE}
-  nin-basic-path: ${PREMBLY_NIN_BASIC_PATH:/verification/vnin-basic}
-  nin-face-path: ${PREMBLY_NIN_FACE_PATH:/verification/nin_w_face}
-  liveness-path: ${PREMBLY_LIVENESS_PATH:/verification/biometrics/face/liveliness_check}
-  # NIN_WITH_FACE: sent as face_confidence_threshold (70-100). NIN_BASIC: liveness % needed.
-  face-match-threshold: ${PREMBLY_FACE_MATCH_THRESHOLD:80}
-  liveness-threshold: ${PREMBLY_LIVENESS_THRESHOLD:80}
+# Everyone's NIN + live selfie check (Smile ID Biometric KYC). Without a partner ID and API key,
+# POST /identity-verification/session answers "unavailable". The key must match the environment:
+# a sandbox key only works with sandbox=true, a live key only with sandbox=false.
+smile-id:
+  partner-id: ${SMILE_ID_PARTNER_ID:}
+  api-key: ${SMILE_ID_API_KEY:}
+  sandbox: ${SMILE_ID_SANDBOX:true}
+  callback-url: ${SMILE_ID_CALLBACK_URL:}
+  id-type: ${SMILE_ID_ID_TYPE:NIN_V2}
+  name-match-threshold: ${SMILE_ID_NAME_MATCH_THRESHOLD:0.85}
 
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:placeholder}

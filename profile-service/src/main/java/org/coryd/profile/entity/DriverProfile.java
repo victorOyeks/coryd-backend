@@ -68,4 +68,5 @@ public class DriverProfile extends BaseEntity {
      * after that, even if a later rejection + re-approval cycle happens. "Verified Since" on the
      * Verification Status screen. */
     private Instant verifiedSince;
+
 }

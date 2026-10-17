@@ -8,6 +8,7 @@ import org.coryd.common.security.PublicPaths;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -41,6 +42,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
                         .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
+                        // Smile ID's result delivery - signature-checked in the controller instead.
+                        .requestMatchers(HttpMethod.POST, "/webhooks/smile-id").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

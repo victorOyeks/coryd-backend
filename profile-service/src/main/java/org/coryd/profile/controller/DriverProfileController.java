@@ -8,16 +8,20 @@ import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.RiderSummary;
+import org.coryd.profile.dto.SmileIdSession;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.service.DriverProfileService;
+import org.coryd.profile.entity.SmileIdCheckType;
+import org.coryd.profile.service.SmileIdCheckService;
 import org.coryd.profile.service.FavoriteDriverService;
 import org.coryd.profile.service.VerificationAggregationService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -40,6 +44,7 @@ public class DriverProfileController {
     private final DriverProfileService driverProfileService;
     private final VerificationAggregationService verificationAggregationService;
     private final FavoriteDriverService favoriteDriverService;
+    private final SmileIdCheckService smileIdCheckService;
 
     @GetMapping("/me")
     public ApiResponse<DriverProfileResponse> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
@@ -50,6 +55,15 @@ public class DriverProfileController {
     public ApiResponse<DriverProfileResponse> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
                                                           @Valid @RequestBody UpdateDriverProfileRequest request) {
         return ApiResponse.ok(driverProfileService.updateMine(principal.getUserId(), request));
+    }
+
+    /**
+     * Opens a Smile ID licence check (Document Verification): the app runs Smile ID's SDK with what comes
+     * back, then polls GET /me for governmentIdStatus, licenceCheckInProgress and licenceRetryReason.
+     */
+    @PostMapping("/me/licence-check/session")
+    public ApiResponse<SmileIdSession> startLicenceCheck(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(smileIdCheckService.start(principal.getUserId(), principal.getActiveRole(), SmileIdCheckType.DRIVERS_LICENCE, null));
     }
 
     /** Driver-side equivalent of identity-service's rider GET /auth/onboarding-status - lets the driver app resume onboarding at the right screen. Self-only (like /me above), not driverId-scoped - avoids the id/userId mixup a driverId path param invites. */

@@ -11,7 +11,9 @@ import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.entity.DriverProfile;
+import org.coryd.profile.entity.SmileIdCheckType;
 import org.coryd.profile.repository.DriverProfileRepository;
+import org.coryd.profile.repository.SmileIdCheckRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,8 +29,8 @@ public class DriverProfileService {
     private final DriverProfileRepository driverProfileRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final IdentityServiceClient identityServiceClient;
-    private final PremblyVerificationService premblyVerificationService;
     private final EmergencyContactService emergencyContactService;
+    private final SmileIdCheckRepository smileIdCheckRepository;
 
     /** Internal/batch use (InternalDriverController, getBatch below) - no phone, no extra cross-service call. */
     public DriverProfile get(String userId) {
@@ -96,18 +98,14 @@ public class DriverProfileService {
         DriverProfile saved = driverProfileRepository.save(profile);
         emergencyContactService.applyFromProfileForm(userId, request.emergencyContactName(), request.emergencyContactPhone());
         identityServiceClient.syncName(userId, saved.getFirstName(), saved.getLastName());
-        // Off-thread and idempotent - re-saving an unchanged licence number spends no lookup.
-        premblyVerificationService.checkDriversLicence(
-                userId, saved.getIdNumber(), saved.getFirstName(), saved.getLastName());
         if (isNewProfile) {
             kafkaTemplate.send(KafkaTopics.DRIVER_PROFILE_CREATED, DriverProfileCreatedEvent.builder().driverId(userId).build());
         }
         return toResponse(saved);
     }
 
-    /** Uppercase letters and digits only. Formats differ across licence generations (and Prembly's own
-     * test numbers don't match its stated rule), so this only rejects what can't be a licence number
-     * at all - FRSC, via the Prembly check, is the authority on whether it's real. */
+    /** Uppercase letters and digits only. Formats differ across licence generations, so this only
+     * rejects what can't be a licence number at all - ops checks it against the licence photo. */
     static String normalizeLicenceNumber(String raw) {
         String number = raw == null ? "" : raw.replaceAll("[\\s-]", "").toUpperCase(Locale.ROOT);
         if (!number.matches("(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{8,20}")) {
@@ -119,6 +117,7 @@ public class DriverProfileService {
 
     private DriverProfileResponse toResponse(DriverProfile profile) {
         return DriverProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()),
-                emergencyContactService.getPrimary(profile.getUserId()).orElse(null));
+                emergencyContactService.getPrimary(profile.getUserId()).orElse(null),
+                smileIdCheckRepository.findByUserIdAndCheckType(profile.getUserId(), SmileIdCheckType.DRIVERS_LICENCE).orElse(null));
     }
 }

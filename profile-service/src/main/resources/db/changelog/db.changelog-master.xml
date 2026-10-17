@@ -31,5 +31,6 @@
     <include file="db/changelog/020-verification-submitted-at.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/021-identity-verifications.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/022-verification-check-raw-response.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/023-smile-id.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

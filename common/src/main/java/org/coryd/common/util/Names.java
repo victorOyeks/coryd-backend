@@ -1,7 +1,7 @@
 package org.coryd.common.util;
 
 /**
- * Names are stored as separate first/last fields so identity checks (Prembly, FRSC) can match
+ * Names are stored as separate first/last fields so identity checks (Smile ID against NIMC) can match
  * a surname on its own. These helpers cover the two directions that still need a single string:
  * joining for display, and splitting a legacy one-field name during migration or seeding.
  */

@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Nobody rides or drives without a verified NIN: with STRICT (the default) a rider can't book and a
- * driver can't post until their NIN + selfie check is approved - by Prembly or by ops. OFF only for
+ * driver can't post until their NIN + selfie check is approved - by Smile ID or by ops. OFF only for
  * environments where nobody can be verified yet.
  */
 @Getter

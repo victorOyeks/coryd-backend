@@ -113,6 +113,20 @@ public class VerificationAggregationService {
         return getStatus(driverId);
     }
 
+    /**
+     * A licence Smile ID verified on its own - recorded exactly like an ops approval of the item, so the
+     * driver hears about it and goes live if it was the last item outstanding.
+     */
+    @Transactional
+    public void autoApproveGovernmentId(String driverId, String decidedBy) {
+        ItemDecision decision = new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null);
+        String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
+        applyDecision(driverId, decision);
+        publishItemDecision(driverId, email, decision, decidedBy);
+        reevaluateAndPublish(driverId, decidedBy);
+        log.info("Driver {} licence approved by {}", driverId, decidedBy);
+    }
+
     /** Per-item, because the aggregate events only fire on full approval or overall rejection - a driver whose insurance was approved while a document is still outstanding would otherwise hear nothing. */
     private void publishItemDecision(String driverId, String email, ItemDecision decision, String reviewedBy) {
         boolean approved = decision.status() == VerificationStatus.APPROVED;
@@ -309,7 +323,7 @@ public class VerificationAggregationService {
         }
     }
 
-    /** Shared with the Prembly auto-approval, which reaches the same state without an ops decision. */
+    /** An approved licence image is never shown again. */
     void purgeGovernmentId(DriverProfile profile) {
         deleteFromCloudinary(profile.getGovernmentIdPublicId(),
                 CloudinaryService.resourceTypeFromUrl(profile.getGovernmentIdUrl()));

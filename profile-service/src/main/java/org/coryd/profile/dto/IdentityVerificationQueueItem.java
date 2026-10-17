@@ -4,7 +4,10 @@ import org.coryd.common.enums.VerificationCheckOutcome;
 
 import java.time.Instant;
 
-/** One rider awaiting an ops decision - the selfie to look at, and what Prembly said (null if it hasn't run). */
+/**
+ * One person awaiting an ops decision, and what the automatic check said (null if none ran). The selfie
+ * is in the Smile ID portal under the job named in checkSummary; selfieUrl is only set by the older selfie upload.
+ */
 public record IdentityVerificationQueueItem(
         String userId,
         String firstName,
@@ -13,7 +16,7 @@ public record IdentityVerificationQueueItem(
         String selfieUrl,
         Instant submittedAt,
         int attempts,
-        VerificationCheckOutcome premblyOutcome,
-        String premblySummary
+        VerificationCheckOutcome checkOutcome,
+        String checkSummary
 ) {
 }

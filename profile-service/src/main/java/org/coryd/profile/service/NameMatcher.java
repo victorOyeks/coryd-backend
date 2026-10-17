@@ -15,6 +15,11 @@ public final class NameMatcher {
     private NameMatcher() {
     }
 
+    /** Government records sometimes hold the names the other way round - the better of the two orders. */
+    public static double bestOrder(String enteredFirst, String enteredLast, String recordFirst, String recordLast) {
+        return Math.max(score(enteredFirst, enteredLast, recordFirst, recordLast), score(enteredFirst, enteredLast, recordLast, recordFirst));
+    }
+
     /** 1.0 is identical after normalisation, 0.0 is nothing in common. */
     public static double score(String enteredFirst, String enteredLast, String recordFirst, String recordLast) {
         double first = similarity(firstToken(enteredFirst), firstToken(recordFirst));

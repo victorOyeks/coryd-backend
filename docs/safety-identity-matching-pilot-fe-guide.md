@@ -14,7 +14,8 @@ All paths go through the gateway (`https://api-dev.coryd.ng` on dev) with the us
 | [Along-the-way rides](#along-the-way-rides-search-and-booking) | Rider, Driver | Show `alongTheWay`, `pickup`, `dropoff`; driver sees drop-offs. |
 | [Tighter matching](#tighter-matching-windows) | Rider | Nothing required; fewer, more useful results. |
 | [NIN required for everyone](#4-nin-required-for-everyone) | Rider, Driver | **Breaking.** New required onboarding step; booking/posting closed until approved. |
-| [Identity check flow](#identity-check-nin--selfie-everyone) | Rider, Driver | NIN + selfie screens; "Verified rider" badge for drivers. |
+| [Identity check flow](#identity-check-nin--selfie-everyone) | Rider, Driver | **Smile ID SDK** (needs Expo 56+): NIN screen, live selfie, status and retry screens; "Verified rider" badge for drivers. |
+| [Driver's licence check](#drivers-licence-check-drivers) | Driver | Licence photo + selfie through the Smile ID SDK instead of uploading a photo; status and retry screens. |
 | [Driver SOS and trip sharing](#driver-sos-and-trip-sharing) | Driver | Two new buttons on the active trip. |
 | ["Are you OK?" checks](#are-you-ok-safety-checks) | Both | New push + answer screen; background location for drivers. |
 | [Blocking](#blocking) | Both | Block / unblock buttons and a blocked list. |
@@ -144,46 +145,105 @@ End-to-end matches now need the trip to leave **within 60 minutes** of the rider
 
 ## Identity check: NIN + selfie (everyone)
 
-**Nobody rides or drives without a verified NIN.** Riders and drivers both give their **NIN** and a **selfie** during onboarding. The backend checks the NIN with NIMC (through Prembly's NIN-with-face check), matches the selfie to the photo on the NIN record, and matches the name on it to the person's. Anything it can't settle is reviewed by ops. Only ops ever rejects, with a reason the user sees.
+**Nobody rides or drives without a verified NIN.** Riders and drivers both give their **NIN** and take a **live selfie** during onboarding. The check is run by **Smile ID** (Biometric KYC). It looks up the NIN with NIMC, runs a liveness check on the selfie, compares the face to the NIMC photo, and the backend then matches the NIMC name to the profile name. Anything it can't settle is reviewed by ops. Only ops ever rejects, with a reason the user sees.
 
-It's **one check per person**: someone who is both a rider and a driver verifies once, in whichever app they onboard first. Drivers still do their licence, vehicle and document checks as before; the NIN check is on top of those.
+It's **one check per person**: someone who is both a rider and a driver verifies once, in whichever app they onboard first. Drivers also do their [licence check](#drivers-licence-check-drivers) (Smile ID) and their vehicle and document checks (ops); the NIN check is on top of those.
+
+### What the app needs
+
+- **Smile ID's v12 mobile SDK**, React Native package [`@smileid/usesmileid`](https://docs.usesmileid.com) and its provider packages, plus a selfie ML provider.
+  - **Requires Expo SDK 56+** (React Native 0.83+, iOS 16.4+, Android `minSdk` 24). The app is on Expo 54, so upgrade first.
+  - It's a native module: it needs a new build (not an over-the-air update) and doesn't run in Expo Go.
+- **Don't use the older SDK.** Ignore any guide mentioning `@smile_identity/react-native-expo`, `smile_config.json`, `SmileID.initialize()`, `SmileIDBiometricKYCView` or `ResultCode` values like `0810`. That's v10/v11, and Smile ID says v11 code won't compile against v12.
+- **No keys in the app.** The backend gives the app a short-lived token for each check (below). The partner ID and the sandbox/live switch come with it, so the app doesn't hard-code them.
 
 ### Flow (same in both apps)
 
+```
+App                                   CoRyd backend                      Smile ID
+ │ POST /profile/identity-verification/session                              │
+ │ { nin, consent: true } ───────────────▶ opens a job, gets a token ──────▶│
+ │ ◀──── { jobId, userId, token, partnerId, sandbox, country, idType } ──── │
+ │ Smile ID SDK: consent, live selfie, submit ─────────────────────────────▶│
+ │ onResult → poll GET /profile/identity-verification/me every 3 s          │
+ │                                        │◀──── result (signed webhook) ───│
+ │ ◀──── status / retryReason             │                                 │
+```
+
 1. **Name first.** The first and last name (as on the NIN) must be saved on the profile for the role they're in: `PUT /profile/riders/me` or `PUT /profile/drivers/me`.
-2. **Selfie.** Capture it with a **liveness** check (e.g. Prembly's SDK). The backend compares the photo to the NIN photo but can't tell a live face from a photo of a photo, so the app must make sure a real person is in front of the camera. Upload it:
-   `POST /profile/media/upload` (multipart, field `file`) → `{ "url": "…", "publicId": "…" }`
-3. **Consent.** Show the consent text: the NIN and selfie are checked with NIMC through our verification provider.
-4. **Submit:** `POST /profile/identity-verification`
+2. **NIN + consent screen** (as today): consent text says the NIN and selfie are checked with NIMC through our verification provider.
+3. **Open the check:** `POST /profile/identity-verification/session`
    ```json
-   { "nin": "12345678901", "selfieUrl": "<url>", "selfiePublicId": "<publicId>", "consent": true }
+   { "nin": "12345678901", "consent": true }
    ```
-5. **Status:** `GET /profile/identity-verification/me`
+   →
    ```json
-   { "userId": "…", "status": "IN_REVIEW", "ninLast4": "8901", "submittedAt": "…", "decidedAt": null, "rejectionReason": null }
+   {
+     "jobId": "coryd-0b7e…", "userId": "8f2c…", "token": "<short-lived>",
+     "partnerId": "1234", "sandbox": true, "callbackUrl": null,
+     "country": "NG", "idType": "NIN_V2"
+   }
    ```
+4. **Run Smile ID's SDK straight away** (the token is short-lived), with:
+   - **Biometric KYC job:** `userId` and `jobId` from the response. Never make your own.
+   - **Partner config:** `partnerConfig.partnerId = partnerId` and `partnerConfig.useSandbox = sandbox`. Set `callbackUrl` only if it isn't `null`.
+   - **Token:** in the SDK's `network` config.
+   - **ID details:** `{ country, idType, idNumber: <the NIN they entered> }`.
 
-| `status` | Meaning | Show |
-| --- | --- | --- |
-| `PENDING` | Not submitted yet | The NIN + selfie step. **Onboarding isn't finished.** |
-| `IN_REVIEW` | Being checked | "We're checking your details" (refresh on screen open / pull to refresh). The rest of the app can be browsed; booking and posting stay closed. |
-| `APPROVED` | Verified | Continue. Booking (riders) and posting routes (drivers) are open. |
-| `REJECTED` | Ops rejected it | `rejectionReason` and a **Try again** button (submit again with a new selfie) |
+   Smile ID's SDK shows its own consent screen and liveness capture, and submits to Smile ID itself. The selfie never comes to our backend.
+5. **On `onResult`**, poll `GET /profile/identity-verification/me` every 3 s:
+   - Stop when `checkInProgress` turns `false`.
+   - After about 2 minutes, show "We're checking your details" and refresh on screen open.
+6. **If the SDK's token expires** (`onTokenExpired`), call `/session` again. That opens a fresh check; the old one is simply ignored.
 
-| Error (`400`) | When |
+### Status: `GET /profile/identity-verification/me`
+
+```json
+{
+  "userId": "…", "status": "PENDING", "ninLast4": "8901", "submittedAt": "…", "decidedAt": null,
+  "rejectionReason": null, "checkInProgress": false, "retryReason": "FACE_MISMATCH", "attemptsLeft": 3
+}
+```
+
+| State | Show |
 | --- | --- |
-| *"NIN must be 11 digits"* | Bad NIN format |
-| *"Agree to the identity check to continue"* | `consent` not `true` |
-| *"Save your profile before verifying your identity"* | No profile yet for this role |
-| *"Add your first and last name, as on your NIN, before verifying"* | Name missing |
-| *"Your identity is already verified"* | Already approved |
-| *"Too many attempts - contact CoRyd support to verify your identity"* | 5 attempts used |
+| `APPROVED` | Verified. Continue; booking (riders) and posting routes (drivers) are open. |
+| `PENDING` + `checkInProgress: true` | Smile ID is still checking: a spinner or "Checking your details…". |
+| `PENDING` + `retryReason` set | The last check failed in a way they can fix: show the message below and a **Try again** button (back to step 3). |
+| `PENDING` with neither | Not done yet, or they left mid-check. Show the NIN step. **Onboarding isn't finished.** |
+| `IN_REVIEW` | With our team: "We're checking your details". The rest of the app can be browsed; booking and posting stay closed. |
+| `REJECTED` | Ops rejected it: show `rejectionReason` and a **Try again** button. |
+
+| `retryReason` | Suggested message | Uses a try? |
+| --- | --- | --- |
+| `FACE_MISMATCH` | "Your selfie didn't match the photo on your NIN. Try again in good light, facing the camera." | Yes |
+| `NIN_NOT_FOUND` | "We couldn't find that NIN. Check the number and try again." | Yes |
+| `UNREADABLE` | "We couldn't use that selfie. Try again in good light, without a hat or glasses." | No |
+| `TRY_LATER` | "We couldn't finish the check just now. Please try again in a few minutes." | No |
+
+`attemptsLeft` counts down from 5. At 0, *"Too many attempts - contact CoRyd support…"* comes back from `/session`; show a contact-support screen. A check abandoned mid-way doesn't use a try, and stops showing as in progress after 15 minutes.
+
+| Error | When |
+| --- | --- |
+| `400` *"NIN must be 11 digits"* | Bad NIN format |
+| `400` *"Agree to the identity check to continue"* | `consent` not `true` |
+| `400` *"Save your profile before verifying your identity"* | No profile yet for this role |
+| `400` *"Add your first and last name, as on your NIN, before verifying"* | Name missing |
+| `400` *"Your identity is already verified"* | Already approved |
+| `400` *"Your identity check is with our team - we'll let you know once it's done"* | `IN_REVIEW` |
+| `400` *"Too many attempts - contact CoRyd support to verify your identity"* | 5 tries used |
+| `400` *"Identity checks are unavailable right now - try again later"* | Smile ID isn't set up on this environment |
+| `502` *"Identity checks are unavailable right now - try again in a few minutes"* | Smile ID didn't issue a token |
 
 The full NIN is never stored; the app gets back only `ninLast4`.
 
+**The older submit** (`POST /profile/identity-verification` with `selfieUrl`) still works, so builds without Smile ID's SDK keep working, but those selfies are checked by ops by eye. It will be removed once everyone is on the new build; new code should use `/session`.
+
+**Testing on dev:** dev uses Smile ID's sandbox (`sandbox: true`). Use Smile ID's sandbox [test identities](https://docs.usesmileid.com/developer-resources/essentials/testing-in-sandbox) — each gives a fixed result, so every state above can be seen.
+
 ### Onboarding status
 
-`GET /identity/auth/onboarding-status` now reports the identity check for **riders and drivers**:
+`GET /identity/auth/onboarding-status` reports the identity check for **riders and drivers**:
 
 ```json
 {
@@ -193,7 +253,7 @@ The full NIN is never stored; the app gets back only `ninLast4`.
 }
 ```
 
-Treat onboarding as **incomplete while `identityVerificationStatus` is `PENDING`** (not submitted), and gate booking/posting on `identityVerified`. `GET /profile/riders/me` also carries `identityVerificationStatus`.
+Treat onboarding as **incomplete while `identityVerificationStatus` is `PENDING`**, and gate booking/posting on `identityVerified`. To tell "checking" or "try again" apart from "not started", read `GET /profile/identity-verification/me`. `GET /profile/riders/me` also carries `identityVerificationStatus`.
 
 ### The gates
 
@@ -207,6 +267,73 @@ Send them to the identity step. Ride details (`GET /trip/routes/{id}`) already s
 ### Driver side: "Verified rider" badge
 
 Each passenger has `riderVerified: true|false`. Show a **"Verified rider"** badge when `true`.
+
+---
+
+## Driver's licence check (drivers)
+
+The driver's licence (the `GOVERNMENT_ID` item in driver verification) is now checked by **Smile ID Document Verification**, using the same SDK as the identity check. The driver photographs their licence and takes a live selfie. Smile ID then:
+- confirms the licence is genuine, checking its security features and that it isn't a photocopy or a photo of a screen;
+- reads the name, licence number and expiry;
+- matches the selfie to the photo on the licence.
+
+The backend then checks that the name and number match the driver's profile and that the licence hasn't expired. If everything agrees, the licence is **approved automatically**, exactly as if ops had approved it: the driver gets the usual "item approved" notification and goes live if it was the last item. Anything doubtful goes to the ops verification queue. Only ops rejects.
+
+This isn't an FRSC lookup (Smile ID can't do one in Nigeria). Vehicle, insurance and roadworthiness are unchanged: ops reviews them.
+
+### Flow
+
+1. **Profile first** (as today): `PUT /profile/drivers/me` with the name and licence number exactly as on the licence (`firstName`, `lastName`, `idNumber`, `dateOfBirth`). Leave out `governmentIdUrl`; the licence photo now goes to Smile ID, not to us.
+2. **Open the check:** `POST /profile/drivers/me/licence-check/session` (no body) →
+   ```json
+   {
+     "jobId": "coryd-dl-5c1a…", "userId": "8f2c…", "token": "<short-lived>",
+     "partnerId": "1234", "sandbox": true, "callbackUrl": null,
+     "country": "NG", "idType": "DRIVERS_LICENSE"
+   }
+   ```
+3. **Run Smile ID's SDK straight away** as a **Document Verification** job:
+   - `userId` and `jobId` from the response;
+   - the same partner config and token as the identity check;
+   - document `country` and `idType` from the response;
+   - screens: document capture (front; back if the SDK asks) and a selfie with liveness.
+4. **On `onResult`**, poll `GET /profile/drivers/me` every 3 s until `licenceCheckInProgress` is `false`. If it's still going after about 2 minutes, show "We're checking your licence".
+
+### Status: `GET /profile/drivers/me`
+
+New fields alongside the existing `governmentIdStatus` / `governmentIdRejectionReason`:
+
+```json
+{ "governmentIdStatus": "PENDING", "licenceCheckInProgress": false, "licenceRetryReason": "UNREADABLE", "licenceAttemptsLeft": 5 }
+```
+
+| State | Show |
+| --- | --- |
+| `APPROVED` | Licence verified. |
+| `PENDING` + `licenceCheckInProgress: true` | "Checking your licence…" |
+| `PENDING` + `licenceRetryReason` set | The message below and a **Try again** button (back to step 2) |
+| `PENDING` with neither | Not done yet, or they left mid-check: show the licence step |
+| `IN_REVIEW` | "Our team is checking your licence" |
+| `REJECTED` | `governmentIdRejectionReason` and a **Try again** button (step 2 works after a rejection) |
+
+| `licenceRetryReason` | Suggested message | Uses a try? |
+| --- | --- | --- |
+| `FACE_MISMATCH` | "Your selfie didn't match the photo on your licence. Try again in good light, facing the camera." | Yes |
+| `NOT_A_LICENCE` | "That doesn't look like a Nigerian driver's licence. Photograph the front of your licence." | Yes |
+| `UNREADABLE` | "We couldn't read your licence. Lay it flat in good light, with no glare, and fill the frame." | No |
+| `TRY_LATER` | "We couldn't finish the check just now. Please try again in a few minutes." | No |
+
+| Error | When |
+| --- | --- |
+| `400` *"Save your driver profile before verifying your licence"* | No driver profile |
+| `400` *"Add your name and licence number, as on your licence, before verifying it"* | Name or licence number missing |
+| `400` *"Your licence is already verified"* | Already approved |
+| `400` *"Your licence is with our team - we'll let you know once it's checked"* | `IN_REVIEW` |
+| `400` *"Too many attempts - contact CoRyd support to verify your licence"* | 5 tries used |
+| `400` *"Licence checks are unavailable right now - try again later"* | Smile ID isn't set up on this environment |
+| `502` *"Identity checks are unavailable right now - try again in a few minutes"* | Smile ID didn't issue a token |
+
+**The older licence upload** (`governmentIdUrl` + `governmentIdPublicId` on `PUT /profile/drivers/me`) still works for builds without the SDK and sends the photo to ops. New code should use the session.
 
 ---
 
@@ -429,7 +556,9 @@ Push data always carries `type`, plus `referenceId` and/or `routePostId` when re
 | 400 | This trip has already ended | Driver SOS / share |
 | 400 | Add an emergency contact to your profile before sharing a trip | Driver share |
 | 401 | This safety check isn't for you | Safety check answer |
-| 400 | NIN must be 11 digits · Agree to the identity check to continue · Save your profile before verifying your identity · Add your first and last name, as on your NIN, before verifying · Your identity is already verified · Too many attempts - contact CoRyd support to verify your identity | Identity verification |
+| 400 | NIN must be 11 digits · Agree to the identity check to continue · Save your profile before verifying your identity · Add your first and last name, as on your NIN, before verifying · Your identity is already verified · Your identity check is with our team - we'll let you know once it's done · Too many attempts - contact CoRyd support to verify your identity · Identity checks are unavailable right now - try again later | Identity check (`/session`) |
+| 502 | Identity checks are unavailable right now - try again in a few minutes | Identity check (`/session`), licence check (`/licence-check/session`) |
+| 400 | Save your driver profile before verifying your licence · Add your name and licence number, as on your licence, before verifying it · Your licence is already verified · Your licence is with our team - we'll let you know once it's checked · Too many attempts - contact CoRyd support to verify your licence · Licence checks are unavailable right now - try again later | Licence check (`/drivers/me/licence-check/session`) |
 | 400 | departureTime must be HH:mm, e.g. 07:00 · The end date has already passed · Standing seats (n) can't exceed the seats offered (m) | Regular routes |
 
 ---
@@ -449,7 +578,8 @@ Push data always carries `type`, plus `referenceId` and/or `routePostId` when re
 **Rider app**
 - [ ] Book with the search card's `pickup` (and `dropoff`); handle *"Pick a pickup point on the driver's route"*
 - [ ] Search cards: "Passes near you" label, pickup/drop-off on the map, walking directions, "around HH:mm"
-- [ ] Identity step in onboarding (required): name check, liveness selfie, upload, consent, submit, status screen, retry on REJECTED
+- [ ] Upgrade to Expo SDK 56+ and add Smile ID's v12 SDK (`@smileid/usesmileid`) - new native build
+- [ ] Identity step in onboarding (required): name check, NIN + consent, `POST …/session`, Smile ID SDK with the returned job/token, poll `GET …/me`, status screens, `retryReason` messages + Try again, contact-support at 0 attempts left
 - [ ] Existing users: send anyone with `identityVerified: false` to the identity step on app open
 - [ ] Handle *"Verify your identity to book a ride"* → open the identity step
 - [ ] "New" instead of stars when there are no ratings
@@ -461,7 +591,8 @@ Push data always carries `type`, plus `referenceId` and/or `routePostId` when re
 - [ ] Optional "How did you hear about us?" on signup (`heardAboutUs`, text box for `OTHER`)
 
 **Driver app**
-- [ ] Identity step in onboarding (required; same screens and endpoints as the rider app); handle *"Verify your identity to post a route"*
+- [ ] Identity step in onboarding (required; same Smile ID SDK flow, screens and endpoints as the rider app); handle *"Verify your identity to post a route"*
+- [ ] Licence step: `POST /profile/drivers/me/licence-check/session`, Smile ID SDK Document Verification (licence + selfie), poll `GET /profile/drivers/me`, `licenceRetryReason` messages + Try again, contact-support at 0 tries left
 - [ ] SOS and Share buttons on the trip screen (no booking needed)
 - [ ] Background location for the whole trip
 - [ ] "Are you OK?" prompt from the `SAFETY_CHECK` push
@@ -483,8 +614,8 @@ Behind `/ops`, ops admins only.
 | `GET /ops/sos/safety-alerts?page=&size=` | "Are you OK?" checks: kind, status, and each person's answer (`FINE`, `HELP`, `WAITING`). |
 | `POST /ops/users/{userId}/suspend` `{ "reason": "…" }` | Suspend (reason required). |
 | `POST /ops/users/{userId}/reinstate` | Lift a suspension. |
-| `GET /ops/identity-verification/queue?page=&size=` | Riders and drivers whose identity check waits on ops, oldest first: name, NIN last 4, selfie, attempts, the provider's outcome and note. |
-| `POST /ops/identity-verification/{userId}/decision` `{ "approve": true }` or `{ "approve": false, "reason": "…" }` | Approve or reject (reason required to reject; the user sees it). The selfie is deleted either way. |
+| `GET /ops/identity-verification/queue?page=&size=` | Riders and drivers whose identity check waits on ops, oldest first: `firstName`, `lastName`, `ninLast4`, `attempts`, `checkOutcome` (`MATCH`, `NAME_MISMATCH`, `DETAILS_MISMATCH`, `NOT_FOUND`, `PROVIDER_ERROR`) and `checkSummary` (what Smile ID found, ending with the Smile ID job ID). **Renamed** from `premblyOutcome` / `premblySummary`. The selfie is in the Smile ID portal: search the job ID. `selfieUrl` is only set for the older selfie upload. A note *"Same NIN or face as another account"* names the other user. |
+| `POST /ops/identity-verification/{userId}/decision` `{ "approve": true }` or `{ "approve": false, "reason": "…" }` | Approve or reject (reason required to reject; the user sees it). An uploaded selfie (older flow) is deleted either way. |
 | `GET /ops/metrics/pilot?days=7` | Pilot health over the last `days` (1–90). See below. |
 | `GET /ops/beta-signups?status=&willMostly=&device=&search=&page=&size=` | The website's beta waitlist, newest first: `name`, `whatsappNumber`, `willMostly`, `usualRoute`, `device`, `status` (`WAITING`/`INVITED`), `invitedAt`, `joinedAt` (set when they sign up in the app with that number). |
 | `GET /ops/beta-signups/summary` | `total`, `riders`, `drivers`, `iphone`, `android`, `waiting`, `invited`, `joined`. |

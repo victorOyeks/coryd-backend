@@ -20,7 +20,6 @@ import java.util.List;
 public class VehicleService {
 
     private final VehicleRepository vehicleRepository;
-    private final PremblyVerificationService premblyVerificationService;
 
     @Transactional
     public Vehicle register(String driverId, String callerId, VehicleRegistrationRequest request) {
@@ -48,10 +47,7 @@ public class VehicleService {
                 .verificationStatus(VerificationStatus.IN_REVIEW)
                 .submittedAt(Instant.now())
                 .build();
-        Vehicle saved = vehicleRepository.save(vehicle);
-        premblyVerificationService.checkPlateNumber(
-                saved.getDriverId(), saved.getPlateNumber(), saved.getMake(), saved.getColor());
-        return saved;
+        return vehicleRepository.save(vehicle);
     }
 
     /** Resubmission after a rejection (or any pre-approval edit) - resets verificationStatus to PENDING since the underlying facts may have changed. */
@@ -81,10 +77,7 @@ public class VehicleService {
         vehicle.setVerificationStatus(VerificationStatus.IN_REVIEW);
         vehicle.setRejectionReason(null);
 
-        Vehicle saved = vehicleRepository.save(vehicle);
-        premblyVerificationService.checkPlateNumber(
-                saved.getDriverId(), saved.getPlateNumber(), saved.getMake(), saved.getColor());
-        return saved;
+        return vehicleRepository.save(vehicle);
     }
 
     public List<Vehicle> findByDriver(String driverId) {
