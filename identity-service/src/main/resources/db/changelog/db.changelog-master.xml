@@ -21,5 +21,6 @@
     <include file="db/changelog/010-split-user-name.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/011-user-suspension.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/012-user-heard-about-us.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/013-beta-signups.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

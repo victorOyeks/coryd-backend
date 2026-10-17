@@ -43,6 +43,40 @@ public class IdentityServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** The website's beta waitlist - passed through as identity-service shapes it. */
+    public JsonNode betaSignups(String status, String willMostly, String device, String search, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/beta-signups").queryParam("page", page).queryParam("size", size);
+                    if (status != null) {
+                        b.queryParam("status", status);
+                    }
+                    if (willMostly != null) {
+                        b.queryParam("willMostly", willMostly);
+                    }
+                    if (device != null) {
+                        b.queryParam("device", device);
+                    }
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode betaSignupSummary() {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get().uri("/internal/beta-signups/summary")
+                .retrieve().body(JsonNode.class));
+    }
+
+    public JsonNode markBetaSignupInvited(String id, String opsUserId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
+                .uri(b -> b.path("/internal/beta-signups/{id}/invited").queryParam("opsUserId", opsUserId).build(id))
+                .retrieve().body(JsonNode.class));
+    }
+
     public void suspend(String userId, String reason, String opsUserId) {
         DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
                 .uri("/internal/users/{userId}/suspend", userId)

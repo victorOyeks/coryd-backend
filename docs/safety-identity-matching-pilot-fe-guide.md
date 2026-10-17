@@ -23,6 +23,7 @@ All paths go through the gateway (`https://api-dev.coryd.ng` on dev) with the us
 | [Ride details reasons](#ride-details-why-a-ride-cant-be-booked) | Rider | Show the new `unavailableReason` values. |
 | ["How did you hear about us?"](#how-did-you-hear-about-us-at-signup) | Both | Optional question on signup. |
 | [Push notifications](#push-notifications) | Both | New `SAFETY_CHECK` type. |
+| [Beta waitlist form](#website-beta-waitlist-form) | Website | New public endpoint for the "Join the CoRyd beta" page. |
 
 Every response change is **additive** (new fields only), so current app versions keep working, apart from the four behaviour changes below.
 
@@ -368,6 +369,39 @@ Show the reason in place of the Book button.
 
 ---
 
+## Website: beta waitlist form
+
+The "Join the CoRyd beta" page posts to a public endpoint. No login is needed.
+
+`POST https://api-dev.coryd.ng/identity/beta-signups`
+
+```json
+{
+  "name": "Ada Obi",
+  "whatsappNumber": "0803 123 4567",
+  "willMostly": "RIDE",
+  "usualRoute": "Ikorodu to Lekki, weekday mornings",
+  "device": "IPHONE",
+  "website": ""
+}
+```
+
+| Field | Form control | Values |
+| --- | --- | --- |
+| `name` | Name | Up to 100 characters |
+| `whatsappNumber` | WhatsApp number | A Nigerian mobile, any common format (`0803…`, `+234 803…`) |
+| `willMostly` | I'll mostly: Ride / Drive | `RIDE` or `DRIVE` |
+| `usualRoute` | Your usual route | Free text, up to 200 characters |
+| `device` | My phone: iPhone / Android | `IPHONE` or `ANDROID` |
+| `website` | **Hidden** field | Leave empty. It's a spam trap: hide it with CSS, and bots that fill it in are quietly dropped. |
+
+- **Success:** `200` with `message`: *"You're on the list - we'll send your invite on WhatsApp."* Show that message.
+- **Submitting again with the same number** updates that person's entry and gets the same success message.
+- **Errors (`400`):** *"Enter a valid Nigerian WhatsApp number, e.g. 0803 123 4567"*, a missing field (`"name: must not be blank"`), or an unknown choice (`"willMostly must be one of: RIDE, DRIVE"`).
+- **CORS:** only the site's own addresses may call it (`BETA_FORM_ALLOWED_ORIGINS`, default `https://coryd.ng,https://www.coryd.ng`). If the page is hosted anywhere else, e.g. a preview URL, ask the backend team to add that address.
+
+---
+
 ## Push notifications
 
 Push data always carries `type`, plus `referenceId` and/or `routePostId` when relevant.
@@ -454,6 +488,9 @@ Behind `/ops`, ops admins only.
 | `GET /ops/identity-verification/queue?page=&size=` | Riders and drivers whose identity check waits on ops, oldest first: name, NIN last 4, selfie, attempts, the provider's outcome and note. |
 | `POST /ops/identity-verification/{userId}/decision` `{ "approve": true }` or `{ "approve": false, "reason": "…" }` | Approve or reject (reason required to reject; the user sees it). The selfie is deleted either way. |
 | `GET /ops/metrics/pilot?days=7` | Pilot health over the last `days` (1–90). See below. |
+| `GET /ops/beta-signups?status=&willMostly=&device=&search=&page=&size=` | The website's beta waitlist, newest first: `name`, `whatsappNumber`, `willMostly`, `usualRoute`, `device`, `status` (`WAITING`/`INVITED`), `invitedAt`, `joinedAt` (set when they sign up in the app with that number). |
+| `GET /ops/beta-signups/summary` | `total`, `riders`, `drivers`, `iphone`, `android`, `waiting`, `invited`, `joined`. |
+| `POST /ops/beta-signups/{id}/invited` | Mark someone invited after sending their WhatsApp invite (TestFlight / Play link), so nobody is invited twice. |
 | `GET /ops/metrics/heard-about-us?days=30` | Sign-ups in the last `days` by "How did you hear about us?": `{ from, to, signups, bySource: [{ source, signups }], otherAnswers: [{ source, signups }] }`. `NOT_ANSWERED` counts people who skipped it; `otherAnswers` are the most common "Other" texts. |
 
 **Pilot metrics** (rates are 0–1, `null` when there was nothing to divide by):

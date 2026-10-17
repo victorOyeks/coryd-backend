@@ -5,6 +5,12 @@ server:
     context-path: /trip
 
 spring:
+  # Scheduled jobs share this pool. One thread (Spring's default) would let a slow job - regular routes
+  # calling Maps, demand alerts - hold up the safety checks' every-minute escalation.
+  task:
+    scheduling:
+      pool:
+        size: 4
   config:
     import: optional:file:.env[.properties]
 

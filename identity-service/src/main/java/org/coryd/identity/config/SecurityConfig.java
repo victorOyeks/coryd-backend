@@ -49,7 +49,9 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/auth/signup", "/auth/verify-otp", "/auth/resend-otp",
                                 "/auth/login", "/auth/refresh-token",
-                                "/auth/forgot-password", "/auth/reset-password")
+                                "/auth/forgot-password", "/auth/reset-password",
+                                // the website's beta waitlist form - no account yet
+                                "/beta-signups")
                         .permitAll()
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
                         .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()

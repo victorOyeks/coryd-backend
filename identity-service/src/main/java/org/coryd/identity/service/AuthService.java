@@ -76,6 +76,7 @@ public class AuthService {
     private static final Duration REFRESH_REPLAY_GRACE = Duration.ofSeconds(60);
 
     private final UserRepository userRepository;
+    private final BetaSignupService betaSignupService;
     private final OtpCodeRepository otpCodeRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final UserDeviceRepository userDeviceRepository;
@@ -118,6 +119,7 @@ public class AuthService {
             user.setHeardAboutUsOther(request.heardAboutUs() == HeardAboutUs.OTHER && !other.isEmpty() ? other : null);
         }
         userRepository.save(user);
+        betaSignupService.markJoined(phone);
 
         issueOtp(phone, OtpChannel.SMS, OtpPurpose.SIGNUP);
     }

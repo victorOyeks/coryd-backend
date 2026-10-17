@@ -7,6 +7,14 @@ spring:
     name: api-gateway
   cloud:
     gateway:
+      # Browsers only - the apps don't need CORS. The website's beta form posts here from another origin.
+      globalcors:
+        cors-configurations:
+          '[/identity/beta-signups]':
+            allowed-origins: ${BETA_FORM_ALLOWED_ORIGINS:https://coryd.ng,https://www.coryd.ng}
+            allowed-methods: POST, OPTIONS
+            allowed-headers: "*"
+            max-age: 3600
       routes:
 
         # ── Identity ──────────────────────────────────────────────────────────
