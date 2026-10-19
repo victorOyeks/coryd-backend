@@ -80,6 +80,11 @@ class NinCheck implements SmileIdCheckHandler {
     }
 
     @Override
+    public IdentityVerificationService.Name profileName(String userId, UserRole role) {
+        return identityVerificationService.profileName(userId, role);
+    }
+
+    @Override
     public boolean awaitingResult(String userId) {
         return statusOf(userId) == VerificationStatus.PENDING;
     }
@@ -90,7 +95,10 @@ class NinCheck implements SmileIdCheckHandler {
         String recordLast = idFields == null ? null : blankToNull(idFields.lastName());
         String fullName = idFields == null ? null : blankToNull(idFields.fullName());
         String onRecord = (fullName != null ? fullName : safe(recordFirst) + " " + safe(recordLast)).trim();
-        List<IdentityVerificationService.Name> names = identityVerificationService.profileNames(userId);
+        // Sandbox checks are all sent as the test identity, so that's whose name comes back.
+        List<IdentityVerificationService.Name> names = properties.isSandbox()
+                ? List.of(SmileIdResults.testIdentityName(properties))
+                : identityVerificationService.profileNames(userId);
         if (names.isEmpty() || recordFirst == null || recordLast == null) {
             return SmileIdDecision.ops(VerificationCheckOutcome.PROVIDER_ERROR, null, true,
                     "Smile ID cleared this check but the NIMC name couldn't be compared (NIMC: " + onRecord + ")");

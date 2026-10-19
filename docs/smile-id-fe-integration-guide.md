@@ -60,10 +60,7 @@ Smile ID's current SDK is **v12**. Don't use anything from the older SDK: `@smil
   export const faceAnalyzer = useSmileIDMlkitFace;
   export const documentAnalyzer = useSmileIDMlkitDocument;
   ```
-- **Live from day one:** CoRyd runs on Smile ID's **live** environment, not their sandbox. The `/session` response's `sandbox` is `false`; pass it through rather than hard-coding it.
-  - **Every check during development is a real, paid check** on a real NIN, licence and face.
-  - **Test with your own details** and keep repeat runs to a minimum.
-  - Smile ID's sandbox test identities are refused in live.
+- **Sandbox on dev, live in production. The backend decides; the app never does.** Always pass the session's `sandbox`, `userDetails` and the rest through unchanged. See [Testing on dev](#8-testing-on-dev-sandbox).
 
 ### What the app passes to the SDK
 
@@ -78,7 +75,8 @@ Both `/session` endpoints return the same shape:
   "callbackUrl": null,
   "country": "NG",
   "idType": "NIN_V2",
-  "partnerParams": { "coryd_check_id": "coryd-nin-5c1a…" }
+  "partnerParams": { "coryd_check_id": "coryd-nin-5c1a…" },
+  "userDetails": { "givenNames": "Grace", "lastName": "Amanda", "email": null }
 }
 ```
 
@@ -90,7 +88,7 @@ Both `/session` endpoints return the same shape:
 | `partnerConfig.useSandbox` | `sandbox` |
 | `partnerConfig.callbackUrl` | `callbackUrl`, **only if not null**. Leave it unset otherwise; the portal's URL is used. |
 | `partnerConfig.partnerParams` | `partnerParams` **exactly as given.** This is how the result finds its way back to the person. Without it, the check never completes. |
-| `userDetails` | `{ givenNames: firstName, lastName }` from their profile. The SDK requires it. |
+| `userDetails` | `userDetails` **exactly as given**, minus any null `email`. The SDK requires it. In production it's the person's own name; on dev it's Smile ID's test identity (see section 8). |
 | `userId` / `jobId` | **Don't set them.** Smile ID issues its own. |
 
 Start the SDK **straight away**: the token is short-lived.
@@ -133,7 +131,7 @@ One check per person: someone who is both a rider and a driver verifies once, in
          s.preview();
          s.processing();
        });
-       b.userDetails = { givenNames: profile.firstName, lastName: profile.lastName };
+       b.userDetails = withoutNulls(session.userDetails);
        b.biometricKYCParams = { country: session.country, idType: session.idType, idNumber: nin };
        b.onResult = onSmileIdResult;
      }}
@@ -231,7 +229,7 @@ It isn't an FRSC lookup; Smile ID can't do one in Nigeria. Vehicle, insurance an
          s.preview();
          s.processing();
        });
-       b.userDetails = { givenNames: profile.firstName, lastName: profile.lastName };
+       b.userDetails = withoutNulls(session.userDetails);
        b.documentVerificationParams = { country: session.country, idType: session.idType };
        b.onResult = onSmileIdResult;
      }}
@@ -333,7 +331,7 @@ They'll be removed once every install is on the Smile ID build.
 
 **Both apps**
 - [ ] Expo SDK 56+ upgrade, then `@smileid/usesmileid` v12 with the face and document providers (new native build)
-- [ ] Shared Smile ID launcher: token, `onTokenExpired` → reopen session, `partnerId`, `useSandbox`, optional `callbackUrl`, **`partnerParams` as given**, `userDetails`
+- [ ] Shared Smile ID launcher: token, `onTokenExpired` → reopen session, `partnerId`, `useSandbox`, optional `callbackUrl`, **`partnerParams` and `userDetails` as given**
 - [ ] NIN step: name check, NIN + consent, `POST /profile/identity-verification/session`, Biometric KYC flow, poll `GET …/identity-verification/me`
 - [ ] Status screens, `retryReason` messages + Try again, contact-support screen at 0 tries left
 - [ ] Existing users with `identityVerified: false` sent to the NIN step on app open (unchanged)
@@ -346,3 +344,17 @@ They'll be removed once every install is on the Smile ID build.
 **Ops Console**
 - [ ] Identity queue: read `checkOutcome` / `checkSummary` (renamed)
 - [ ] Licence card: show the latest `DRIVERS_LICENCE` provider check; with no image, link to the Smile ID portal by the job ID in the summary
+
+## 8. Testing on dev (sandbox)
+
+Dev runs on Smile ID's **sandbox**: free, no real NIMC lookups. Production runs on **live** with real data. Nothing in the app changes between the two; the backend switches it.
+
+On dev, the backend sends **every** check to Smile ID as its test identity **Amina Fatou Clearwater** (`amina.clearwater@example.com`), the identity Smile ID always answers **clear** for. So on dev:
+- **any** test account, with **any** 11-digit NIN, any selfie and any licence photo, comes back **approved** (both checks);
+- the backend matches the result against that test identity, not the tester's profile, so a mismatched name never sends it to ops;
+- notes in the ops queue are prefixed `[SANDBOX]`.
+
+The SDK screens, camera, upload, polling and status screens all run for real; only Smile ID's verdict is fixed. Failure paths (face mismatch, NIN not found, and so on) are covered by the backend's automated tests. To see them in the app anyway, ask the backend team to switch the test identity temporarily, for example to `Twinley` for a face mismatch.
+
+In production the app sends the person's real name and Smile ID checks their real NIN and licence; sandbox test identities are refused there.
+

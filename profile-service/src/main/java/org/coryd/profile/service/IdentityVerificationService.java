@@ -162,6 +162,10 @@ public class IdentityVerificationService {
         return smileIdCheckRepository.findByUserIdAndCheckType(userId, SmileIdCheckType.NIN).orElse(null);
     }
 
+    Name profileName(String userId, UserRole role) {
+        return nameOf(userId, role).orElseThrow();
+    }
+
     /** Riders and drivers alike - the name checked against the NIN is the one on their profile for the role they're in. */
     void requireProfileName(String userId, UserRole role) {
         Name profile = nameOf(userId, role)

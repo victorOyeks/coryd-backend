@@ -88,6 +88,12 @@ class LicenceCheck implements SmileIdCheckHandler {
     }
 
     @Override
+    public IdentityVerificationService.Name profileName(String userId, UserRole role) {
+        DriverProfile profile = driverProfileRepository.findByUserId(userId).orElseThrow();
+        return new IdentityVerificationService.Name(profile.getFirstName(), profile.getLastName());
+    }
+
+    @Override
     public boolean awaitingResult(String userId) {
         return driverProfileRepository.findByUserId(userId)
                 .map(p -> p.getGovernmentIdStatus() == VerificationStatus.PENDING)
@@ -106,13 +112,17 @@ class LicenceCheck implements SmileIdCheckHandler {
             return SmileIdDecision.ops(VerificationCheckOutcome.PROVIDER_ERROR, null, true,
                     "Smile ID cleared this licence but the name on it couldn't be read (" + onLicence + ")");
         }
-        double score = NameMatcher.bestOrder(profile.getFirstName(), profile.getLastName(), recordFirst, recordLast);
+        // Sandbox checks are all sent as the test identity, whose sample licence carries its own name and number.
+        IdentityVerificationService.Name expected = properties.isSandbox()
+                ? SmileIdResults.testIdentityName(properties)
+                : new IdentityVerificationService.Name(profile.getFirstName(), profile.getLastName());
+        double score = NameMatcher.bestOrder(expected.firstName(), expected.lastName(), recordFirst, recordLast);
         if (score < properties.getNameMatchThreshold()) {
             return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true,
-                    "Licence is in the name of " + onLicence + ", profile says " + profile.getFirstName() + " " + profile.getLastName());
+                    "Licence is in the name of " + onLicence + ", profile says " + expected.firstName() + " " + expected.lastName());
         }
         String number = normalize(idFields.idNumber());
-        if (number != null && !number.equals(normalize(profile.getIdNumber()))) {
+        if (!properties.isSandbox() && number != null && !number.equals(normalize(profile.getIdNumber()))) {
             return SmileIdDecision.ops(VerificationCheckOutcome.DETAILS_MISMATCH, score, true,
                     "Licence number on the card is " + number + ", driver entered " + profile.getIdNumber());
         }

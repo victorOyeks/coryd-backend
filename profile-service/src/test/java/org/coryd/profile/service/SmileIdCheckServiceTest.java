@@ -416,6 +416,57 @@ class SmileIdCheckServiceTest {
         }
     }
 
+    // ---- what is sent to Smile ID: the person on live, the test identity on sandbox ---------------
+
+    @Test
+    void liveSendsThePersonsOwnName() {
+        SmileIdSession nin = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901");
+        SmileIdSession licence = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null);
+
+        assertThat(nin.sandbox()).isFalse();
+        assertThat(nin.userDetails()).isEqualTo(new SmileIdSession.UserDetails("Grace", "Amanda", null));
+        assertThat(licence.userDetails()).isEqualTo(new SmileIdSession.UserDetails("Tunde", "Bakare", null));
+    }
+
+    @Nested
+    class Sandbox {
+
+        @BeforeEach
+        void sandbox() {
+            properties.setSandbox(true);
+        }
+
+        @Test
+        void everyCheckIsSentAsTheTestIdentityThatAlwaysSucceeds() {
+            SmileIdSession nin = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901");
+            SmileIdSession licence = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null);
+
+            SmileIdSession.UserDetails test = new SmileIdSession.UserDetails("Amina Fatou", "Clearwater", "amina.clearwater@example.com");
+            assertThat(nin.sandbox()).isTrue();
+            assertThat(nin.userDetails()).isEqualTo(test);
+            assertThat(licence.userDetails()).isEqualTo(test);
+        }
+
+        @Test
+        void theTestIdentitysClearResultApprovesTheRealProfile() throws Exception {
+            String job = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901").checkId();
+
+            service.handle(result(job, "clear", null, nimc("AMINA", "CLEARWATER")));
+
+            verify(decider).approve(verifications.get("rider-1"), IdentityVerificationDecider.SMILE_ID);
+            assertThat(last().getProviderSummary()).startsWith("[SANDBOX]");
+        }
+
+        @Test
+        void theTestLicenceApprovesDespiteItsPlaceholderNumber() throws Exception {
+            String job = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
+
+            service.handle(result(job, "clear", null, licence("AMINA", "CLEARWATER", "00000000000", "2031-01-15")));
+
+            verify(aggregation).autoApproveGovernmentId("driver-1", LicenceCheck.DECIDED_BY);
+        }
+    }
+
     // ---- helpers --------------------------------------------------------------------------------
 
     private SmileIdCheck check(String userId, SmileIdCheckType type) {

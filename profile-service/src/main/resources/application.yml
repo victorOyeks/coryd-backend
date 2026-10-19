@@ -52,8 +52,8 @@ services:
     api-key: ${INTERNAL_API_KEY}
 
 # Smile ID: the NIN + live selfie check (everyone) and the driver's licence check. Without a partner ID
-# and API key, both checks answer "unavailable". Live environment by default; sandbox=true points at
-# Smile ID's sandbox host, where only a sandbox key works.
+# and API key, both checks answer "unavailable". Live by default (production); dev sets sandbox=true with a
+# sandbox key, and every check is then sent as the test identity below so it always succeeds.
 smile-id:
   partner-id: ${SMILE_ID_PARTNER_ID:}
   api-key: ${SMILE_ID_API_KEY:}
@@ -61,6 +61,11 @@ smile-id:
   callback-url: ${SMILE_ID_CALLBACK_URL:}
   id-type: ${SMILE_ID_ID_TYPE:NIN_V2}
   name-match-threshold: ${SMILE_ID_NAME_MATCH_THRESHOLD:0.85}
+  # Sandbox only: every check is sent as this Smile ID test identity (Clearwater always comes back clear).
+  test-identity:
+    given-names: ${SMILE_ID_TEST_GIVEN_NAMES:Amina Fatou}
+    last-name: ${SMILE_ID_TEST_LAST_NAME:Clearwater}
+    email: ${SMILE_ID_TEST_EMAIL:amina.clearwater@example.com}
 
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:placeholder}

@@ -29,6 +29,9 @@ interface SmileIdCheckHandler {
     /** A check was just opened - put the person's record into the state it waits in. nin is null for a licence. */
     void opened(String userId, String nin);
 
+    /** The name as on their profile for this check - what the SDK sends on live. */
+    IdentityVerificationService.Name profileName(String userId, UserRole role);
+
     /** False once ops has it or has decided - a late result never overrides that. */
     boolean awaitingResult(String userId);
 

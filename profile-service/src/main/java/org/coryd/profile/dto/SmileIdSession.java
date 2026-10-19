@@ -8,6 +8,7 @@ import java.util.Map;
  * the result finds its way back to this check (Smile ID issues its own job and user IDs - don't set them).
  * callbackUrl is null when the Smile ID portal's URL is used; leave it unset then. idType goes in
  * biometricKYCParams (with the NIN as idNumber) for a NIN check, in documentVerificationParams for a licence.
+ * userDetails goes on the builder as given: the person's own name on live, Smile ID's test identity on sandbox.
  */
 public record SmileIdSession(
         String checkId,
@@ -17,7 +18,12 @@ public record SmileIdSession(
         String callbackUrl,
         String country,
         String idType,
-        Map<String, String> partnerParams
+        Map<String, String> partnerParams,
+        UserDetails userDetails
 ) {
     public static final String CHECK_ID_PARAM = "coryd_check_id";
+
+    /** email is null on live (not needed); on sandbox it's what Smile ID matches its test identity by. */
+    public record UserDetails(String givenNames, String lastName, String email) {
+    }
 }

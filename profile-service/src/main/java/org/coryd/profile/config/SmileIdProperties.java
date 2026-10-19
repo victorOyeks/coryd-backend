@@ -39,6 +39,21 @@ public class SmileIdProperties {
      */
     private double nameMatchThreshold = 0.85;
 
+    /**
+     * Sandbox only: the Smile ID test identity every check is sent as, so every sandbox check succeeds.
+     * Smile ID's sandbox only answers for its test identities (matched on these three fields), and this
+     * one comes back "clear" for both Biometric KYC and Document Verification. Never used on live.
+     */
+    private TestIdentity testIdentity = new TestIdentity();
+
+    @Getter
+    @Setter
+    public static class TestIdentity {
+        private String givenNames = "Amina Fatou";
+        private String lastName = "Clearwater";
+        private String email = "amina.clearwater@example.com";
+    }
+
     public boolean isConfigured() {
         return partnerId != null && !partnerId.isBlank() && apiKey != null && !apiKey.isBlank();
     }

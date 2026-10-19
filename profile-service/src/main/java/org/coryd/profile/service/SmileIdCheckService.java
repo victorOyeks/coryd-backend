@@ -95,7 +95,20 @@ public class SmileIdCheckService {
         String callbackUrl = properties.getCallbackUrl();
         return new SmileIdSession(checkId, token, properties.getPartnerId(), properties.isSandbox(),
                 callbackUrl == null || callbackUrl.isBlank() ? null : callbackUrl, "NG", handler.idType(),
-                Map.of(SmileIdSession.CHECK_ID_PARAM, checkId));
+                Map.of(SmileIdSession.CHECK_ID_PARAM, checkId), userDetails(handler, userId, role));
+    }
+
+    /**
+     * Who the check is sent to Smile ID as. Live: the person, by their profile name. Sandbox: always the test
+     * identity that comes back clear, so testing never depends on real people and every check succeeds.
+     */
+    private SmileIdSession.UserDetails userDetails(SmileIdCheckHandler handler, String userId, UserRole role) {
+        if (properties.isSandbox()) {
+            SmileIdProperties.TestIdentity test = properties.getTestIdentity();
+            return new SmileIdSession.UserDetails(test.getGivenNames(), test.getLastName(), test.getEmail());
+        }
+        IdentityVerificationService.Name name = handler.profileName(userId, role);
+        return new SmileIdSession.UserDetails(name.firstName(), name.lastName(), null);
     }
 
     @Transactional(readOnly = true)

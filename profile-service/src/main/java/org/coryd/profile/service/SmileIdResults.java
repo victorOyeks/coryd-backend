@@ -33,6 +33,11 @@ final class SmileIdResults {
         }
     }
 
+    /** The sandbox test identity as a name - first given name and last name, the way NameMatcher compares. */
+    static IdentityVerificationService.Name testIdentityName(org.coryd.profile.config.SmileIdProperties properties) {
+        return new IdentityVerificationService.Name(properties.getTestIdentity().getGivenNames(), properties.getTestIdentity().getLastName());
+    }
+
     static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }

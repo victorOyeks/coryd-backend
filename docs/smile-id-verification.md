@@ -68,30 +68,34 @@ Name matching accepts either name order. For the NIN, either of the person's pro
 2. **Products.** Ask Smile ID to:
    - activate **Biometric KYC** and **Document Verification** for Nigeria (driver's licence);
    - confirm **`NIN_V2`** is enabled (it needs an NIMC enterprise ID on the account). If it isn't, set `SMILE_ID_ID_TYPE=NIN_SLIP`.
-3. **Keys.** CoRyd runs on Smile ID's **live** environment only, dev server included. Once Smile ID approves the account and the wallet is funded, take the **partner ID** and create a **Production** API key (*Developers › Security Settings › Production › Create Credential*; Owner or Admin only). Live is prepaid: checks fail when the wallet is empty.
-4. **Callback URL.** Set it under *Developer › Security Settings › Callback URLs › Production*:
-   - dev server: `https://api-dev.coryd.ng/profile/webhooks/smile-id`
-   - production server: the same path on the production API host
+3. **Keys.** The **partner ID** is in the portal. API keys are created under *Developers › Security Settings › Create Credential* (Owner or Admin only); the secret is shown once, so copy it straight into the server env.
+   - **Dev: a Sandbox key.** It's self-serve and free.
+   - **Production: a Production key**, once Smile ID approves the account and the wallet is funded. Live is prepaid: checks fail when the wallet is empty.
+4. **Callback URL.** Set it under *Developer › Security Settings › Callback URLs*, for each environment:
+   - **Sandbox:** `https://api-dev.coryd.ng/profile/webhooks/smile-id`
+   - **Production:** the same path on the production API host
 5. **Server env.** Add to the profile-service env and restart:
 
 ```bash
 SMILE_ID_PARTNER_ID=<numeric partner id>
-SMILE_ID_API_KEY=<production API key>
-SMILE_ID_SANDBOX=false
+SMILE_ID_API_KEY=<sandbox key on dev, production key in production>
+SMILE_ID_SANDBOX=true            # dev; false in production
 SMILE_ID_CALLBACK_URL=           # blank = the portal's URL for this environment
 SMILE_ID_ID_TYPE=NIN_V2
 SMILE_ID_NAME_MATCH_THRESHOLD=0.85
 ```
 
-A live key only works with `SMILE_ID_SANDBOX=false` (`api.smileidentity.com`); leaving it `true` points at the sandbox host. A mismatch shows up as a 502 *"Identity checks are unavailable…"* on `/session`, with a 401 from Smile ID in the profile-service log.
+A sandbox key only works with `SMILE_ID_SANDBOX=true` (`testapi.smileidentity.com`), and a production key only with `false` (`api.smileidentity.com`). A mismatch shows up as a 502 *"Identity checks are unavailable…"* on `/session`, with a 401 from Smile ID in the profile-service log.
 
 ---
 
-## Testing (live)
+## Testing on dev (sandbox)
 
-There's no sandbox: Smile ID refuses its test identities in live, so **every check is real and paid**. Test with the team's own NINs, licences and faces, and keep repeats to a minimum.
+With `SMILE_ID_SANDBOX=true`, the backend sends **every** check to Smile ID as its test identity, returned to the app in `/session` → `userDetails`. The default is **Amina Fatou Clearwater**, `amina.clearwater@example.com`, which Smile ID always answers **clear** for, for both products. The backend then matches the result against that identity instead of the tester's profile, and skips the licence-number comparison (the sample licence has a placeholder number). So on dev, every NIN and licence check approves, for any test account, with any NIN and any photos. Sandbox notes are prefixed `[SANDBOX]`.
 
-What you can see in live: approvals, face mismatches (a different person's selfie), name mismatches (a profile name that differs from the NIN or licence), and an expired licence if someone has one. The rarer outcomes (NIN not found, spoof, Smile ID outage, forged licence) are covered by the automated and end-to-end tests, which simulate Smile ID's signed results.
+To see a failure path in the app, point the test identity at another of Smile ID's [test identities](https://docs.usesmileid.com/developer-resources/essentials/testing-in-sandbox) and restart profile-service. For example, `SMILE_ID_TEST_GIVEN_NAMES=Obinna Chukwu`, `SMILE_ID_TEST_LAST_NAME=Twinley`, `SMILE_ID_TEST_EMAIL=obinna.twinley@example.com` gives a face mismatch. Every outcome is also covered by the automated and end-to-end tests.
+
+In production (`SMILE_ID_SANDBOX=false`), the person's real name goes to Smile ID and results are matched against their real profile, so the test identity is never used.
 
 Check the webhook from the server log:
 - *"NIN check coryd-nin-… opened for …"* / *"DRIVERS_LICENCE check coryd-dl-… opened for …"* when the app starts a check;
