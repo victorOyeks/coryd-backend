@@ -5,10 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.ExternalServiceException;
 import org.coryd.common.http.HttpTimeouts;
 import org.coryd.profile.config.SmileIdProperties;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
 import javax.crypto.Mac;
@@ -16,6 +14,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
+import java.util.UUID;
 
 /**
  * The two things the backend does with Smile ID: mint the short-lived token the app's SDK submits
@@ -29,23 +28,35 @@ public class SmileIdClient {
     private final RestClient restClient;
 
     public SmileIdClient(SmileIdProperties properties) {
+        this(properties, properties.baseUrl());
+    }
+
+    /** baseUrl is only ever overridden by tests, to capture what we send. */
+    SmileIdClient(SmileIdProperties properties, String baseUrl) {
         this.properties = properties;
         this.restClient = HttpTimeouts.builder(HttpTimeouts.DEFAULT_CONNECT_TIMEOUT, HttpTimeouts.DEFAULT_READ_TIMEOUT)
-                .baseUrl(properties.baseUrl())
+                .baseUrl(baseUrl)
                 .build();
     }
 
-    /** POST /v3/token - multipart only; a JSON body gets a 415. A 401 usually means a sandbox key against live or the reverse. */
+    /**
+     * POST /v3/token - multipart only; a JSON body gets a 415. A 401 usually means a sandbox key against live
+     * or the reverse. The multipart body is written by hand: Smile ID only accepts the content type as
+     * "multipart/form-data; boundary=..." (with the space), and Spring's own writer leaves the space out.
+     */
     public String mintToken() {
-        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-        form.add("partner_id", properties.getPartnerId());
+        String boundary = "coryd-" + UUID.randomUUID();
+        byte[] body = ("--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"partner_id\"\r\n\r\n"
+                + properties.getPartnerId() + "\r\n"
+                + "--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
         try {
             TokenResponse response = restClient.post()
                     .uri("/v3/token")
                     .header("smileid-partner-id", properties.getPartnerId())
                     .header("smileid-api-key", properties.getApiKey())
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(form)
+                    .header(HttpHeaders.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary)
+                    .body(body)
                     .retrieve()
                     .body(TokenResponse.class);
             if (response == null || response.token() == null || response.token().isBlank()) {

@@ -37,6 +37,56 @@ class SmileIdClientTest {
         assertThat(client.signatureValid(TIMESTAMP, sign("", TIMESTAMP + "sid_request"))).isFalse();
     }
 
+    @Test
+    void theTokenRequestIsMultipartTheWaySmileIdAcceptsIt() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        java.util.concurrent.atomic.AtomicReference<String> contentType = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> body = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> apiKey = new java.util.concurrent.atomic.AtomicReference<>();
+        server.createContext("/v3/token", exchange -> {
+            contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+            apiKey.set(exchange.getRequestHeaders().getFirst("smileid-api-key"));
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] reply = "{\"token\":\"short-lived\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, reply.length);
+            exchange.getResponseBody().write(reply);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SmileIdProperties properties = new SmileIdProperties();
+            properties.setPartnerId("8371");
+            properties.setApiKey("secret-key");
+            String token = new SmileIdClient(properties, "http://127.0.0.1:" + server.getAddress().getPort()).mintToken();
+
+            assertThat(token).isEqualTo("short-lived");
+            // Smile ID answers 415 to "multipart/form-data;boundary=..." - the space after the semicolon is required.
+            assertThat(contentType.get()).startsWith("multipart/form-data; boundary=");
+            String boundary = contentType.get().substring("multipart/form-data; boundary=".length());
+            assertThat(body.get()).contains("--" + boundary + "\r\n")
+                    .contains("Content-Disposition: form-data; name=\"partner_id\"\r\n\r\n8371\r\n")
+                    .endsWith("--" + boundary + "--\r\n");
+            assertThat(apiKey.get()).isEqualTo("secret-key");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** Against Smile ID's real sandbox, with a dummy key: 401 means the request format passed (415 means it didn't). Opt-in only. */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "SMILE_ID_REAL_FORMAT_CHECK", matches = "1")
+    void smileIdsSandboxAcceptsTheFormat() {
+        SmileIdProperties properties = new SmileIdProperties();
+        properties.setPartnerId("8371");
+        properties.setApiKey("not-a-real-key");
+        properties.setSandbox(true);
+
+        Throwable failure = org.assertj.core.api.Assertions.catchThrowable(() -> new SmileIdClient(properties).mintToken());
+
+        assertThat(failure.getCause().getMessage()).startsWith("401");
+    }
+
     private static String sign(String key, String message) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(key.isEmpty() ? new byte[1] : key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
