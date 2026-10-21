@@ -26,7 +26,7 @@ public record IdentityVerificationResponse(
     /** check is their Smile ID NIN check, null if they've never started one. */
     public static IdentityVerificationResponse from(IdentityVerification v, SmileIdCheck check) {
         boolean pending = v.getStatus() == VerificationStatus.PENDING;
-        boolean inProgress = pending && check != null && check.waitingForResult();
+        boolean inProgress = (pending || v.getStatus() == VerificationStatus.APPROVED) && check != null && check.waitingForResult();
         return new IdentityVerificationResponse(v.getUserId(), v.getStatus(), v.getNinLast4(), v.getSubmittedAt(),
                 v.getDecidedAt(), v.getRejectionReason(), inProgress,
                 pending && !inProgress && check != null ? check.getRetryReason() : null,

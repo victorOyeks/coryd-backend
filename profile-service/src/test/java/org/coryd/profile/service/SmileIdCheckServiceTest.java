@@ -458,6 +458,38 @@ class SmileIdCheckServiceTest {
         }
 
         @Test
+        void aVerifiedPersonCanRunTheNinCheckAgainAndAgain() throws Exception {
+            verifications.put("rider-1", IdentityVerification.builder().userId("rider-1").status(VerificationStatus.APPROVED).build());
+
+            for (int run = 0; run < 7; run++) {
+                SmileIdSession session = service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "1234567890" + (run % 10));
+                assertThat(verifications.get("rider-1").getStatus()).as("still verified while the re-check runs").isEqualTo(VerificationStatus.APPROVED);
+                assertThat(ninResponse().checkInProgress()).isTrue();
+                service.handle(result(session.checkId(), "clear", null, nimc("AMINA", "CLEARWATER")));
+                assertThat(ninResponse().checkInProgress()).isFalse();
+            }
+            verify(decider, org.mockito.Mockito.times(7)).approve(any(), anyString());
+        }
+
+        @Test
+        void aVerifiedOrInReviewLicenceCanBeCheckedAgain() throws Exception {
+            for (VerificationStatus status : new VerificationStatus[]{VerificationStatus.APPROVED, VerificationStatus.IN_REVIEW, VerificationStatus.APPROVED}) {
+                drivers.get("driver-1").setGovernmentIdStatus(status);
+                String job = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
+                service.handle(result(job, "clear", null, licence("AMINA", "CLEARWATER", "00000000000", "2031-01-15")));
+            }
+            verify(aggregation, org.mockito.Mockito.times(3)).autoApproveGovernmentId("driver-1", LicenceCheck.DECIDED_BY);
+        }
+
+        @Test
+        void triesAreNotRationed() {
+            service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901");
+            check("rider-1", SmileIdCheckType.NIN).setAttempts(50);
+
+            assertThat(service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901")).isNotNull();
+        }
+
+        @Test
         void theTestLicenceApprovesDespiteItsPlaceholderNumber() throws Exception {
             String job = service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
 

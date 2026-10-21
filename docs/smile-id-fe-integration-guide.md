@@ -353,6 +353,7 @@ On dev, the backend sends **every** check to Smile ID as its test identity **Ami
 - **any** test account, with **any** 11-digit NIN, any selfie and any licence photo, comes back **approved** (both checks);
 - the backend matches the result against that test identity, not the tester's profile, so a mismatched name never sends it to ops;
 - notes in the ops queue are prefixed `[SANDBOX]`.
+- checks can be **run again and again**: an account that's already verified (or with ops) can start a new check, with any NIN, and there's no 5-try limit. A verified account stays verified while the re-check runs (`checkInProgress` is `true`), then is approved again. Production keeps the one-check-per-person rule.
 
 The SDK screens, camera, upload, polling and status screens all run for real; only Smile ID's verdict is fixed. Failure paths (face mismatch, NIN not found, and so on) are covered by the backend's automated tests. To see them in the app anyway, ask the backend team to switch the test identity temporarily, for example to `Twinley` for a face mismatch.
 

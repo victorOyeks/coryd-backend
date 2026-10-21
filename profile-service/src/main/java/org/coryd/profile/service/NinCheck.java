@@ -57,6 +57,9 @@ class NinCheck implements SmileIdCheckHandler {
     @Override
     public void validateStart(String userId, UserRole role) {
         identityVerificationService.requireProfileName(userId, role);
+        if (properties.isSandbox()) {
+            return; // dev: re-run the check as often as you like, whatever the person's status
+        }
         VerificationStatus status = statusOf(userId);
         if (status == VerificationStatus.APPROVED) {
             throw new BadRequestException("Your identity is already verified");
@@ -71,7 +74,10 @@ class NinCheck implements SmileIdCheckHandler {
         IdentityVerification verification = identityVerificationRepository.findByUserId(userId)
                 .orElseGet(() -> IdentityVerification.builder().userId(userId).build());
         Instant now = Instant.now();
-        verification.setStatus(VerificationStatus.PENDING);
+        // A sandbox re-check of someone already verified leaves them verified until its result lands.
+        if (!(properties.isSandbox() && verification.getStatus() == VerificationStatus.APPROVED)) {
+            verification.setStatus(VerificationStatus.PENDING);
+        }
         verification.setNinLast4(nin.substring(nin.length() - 4));
         verification.setConsentAt(now);
         verification.setSubmittedAt(now);
@@ -86,7 +92,8 @@ class NinCheck implements SmileIdCheckHandler {
 
     @Override
     public boolean awaitingResult(String userId) {
-        return statusOf(userId) == VerificationStatus.PENDING;
+        VerificationStatus status = statusOf(userId);
+        return status == VerificationStatus.PENDING || (properties.isSandbox() && status == VerificationStatus.APPROVED);
     }
 
     @Override

@@ -66,6 +66,9 @@ class LicenceCheck implements SmileIdCheckHandler {
         if (isBlank(profile.getFirstName()) || isBlank(profile.getLastName()) || isBlank(profile.getIdNumber())) {
             throw new BadRequestException("Add your name and licence number, as on your licence, before verifying it");
         }
+        if (properties.isSandbox()) {
+            return; // dev: re-run the check as often as you like, whatever the licence's status
+        }
         if (profile.getGovernmentIdStatus() == VerificationStatus.APPROVED) {
             throw new BadRequestException("Your licence is already verified");
         }
@@ -78,6 +81,11 @@ class LicenceCheck implements SmileIdCheckHandler {
     @Override
     public void opened(String userId, String nin) {
         driverProfileRepository.findByUserId(userId).ifPresent(profile -> {
+            if (properties.isSandbox() && profile.getGovernmentIdStatus() == VerificationStatus.IN_REVIEW) {
+                // dev re-check of a licence sitting with ops - take it back so the result can land
+                profile.setGovernmentIdStatus(VerificationStatus.PENDING);
+                driverProfileRepository.save(profile);
+            }
             if (profile.getGovernmentIdStatus() == VerificationStatus.REJECTED) {
                 profile.setGovernmentIdStatus(VerificationStatus.PENDING);
                 profile.setGovernmentIdResubmitted(true);
@@ -96,7 +104,8 @@ class LicenceCheck implements SmileIdCheckHandler {
     @Override
     public boolean awaitingResult(String userId) {
         return driverProfileRepository.findByUserId(userId)
-                .map(p -> p.getGovernmentIdStatus() == VerificationStatus.PENDING)
+                .map(p -> p.getGovernmentIdStatus() == VerificationStatus.PENDING
+                        || (properties.isSandbox() && p.getGovernmentIdStatus() == VerificationStatus.APPROVED))
                 .orElse(false);
     }
 

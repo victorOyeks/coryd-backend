@@ -75,7 +75,8 @@ public class SmileIdCheckService {
         handler.validateStart(userId, role);
         SmileIdCheck check = smileIdCheckRepository.findByUserIdAndCheckType(userId, type)
                 .orElseGet(() -> SmileIdCheck.builder().userId(userId).checkType(type).build());
-        if (check.getAttempts() >= SmileIdCheck.MAX_ATTEMPTS) {
+        // Sandbox checks are free and only ever test the app, so they're never rationed.
+        if (!properties.isSandbox() && check.getAttempts() >= SmileIdCheck.MAX_ATTEMPTS) {
             throw new BadRequestException("Too many attempts - contact CoRyd support to verify your " + handler.noun());
         }
         if (!properties.isConfigured()) {
