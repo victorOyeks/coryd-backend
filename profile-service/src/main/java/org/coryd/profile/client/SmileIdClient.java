@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.ExternalServiceException;
 import org.coryd.common.http.HttpTimeouts;
 import org.coryd.profile.config.SmileIdProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -27,6 +28,7 @@ public class SmileIdClient {
     private final SmileIdProperties properties;
     private final RestClient restClient;
 
+    @Autowired
     public SmileIdClient(SmileIdProperties properties) {
         this(properties, properties.baseUrl());
     }
