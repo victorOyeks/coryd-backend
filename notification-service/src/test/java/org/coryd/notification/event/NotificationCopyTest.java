@@ -86,14 +86,28 @@ class NotificationCopyTest {
     }
 
     @Test
-    void anUnansweredSafetyCheckTextsOps() {
+    void anUnansweredSafetyCheckTextsOpsWhoDidntAnswerByRole() {
         sos.setOpsPhones(List.of("08011111111"));
         listener.onTripSafetyEscalated(org.coryd.common.kafka.events.TripSafetyEscalatedEvent.builder()
-                .alertId("alert-1").kind("OFF_ROUTE").routeSummary("Ikorodu → VI").driverName("Tunde").driverPhone("0804")
-                .vehiclePlate("LND1").riderPhones("0803").unanswered(2).latitude(6.5).longitude(3.4).build());
+                .alertId("alert-1").kind("SIGNAL_LOST").routeSummary("Obalende → Berger").driverName("Kunle Adeyemi").driverPhone("0804")
+                .vehiclePlate("KJA001XA").riderPhones("0803, 0805").unanswered(2)
+                .notAnswered("driver Kunle Adeyemi 0804, rider 0803").answeredOk("rider 0805").build());
 
-        verify(dispatch).sendSms(eq("08011111111"), eq("CoRyd safety: trip Ikorodu → VI far off its route and 2 on board didn't answer. "
-                + "Driver Tunde 0804, car LND1. Riders 0803. https://maps.google.com/?q=6.5,3.4"), eq("SAFETY_ESCALATED"));
+        verify(dispatch).sendSms(eq("08011111111"), eq("CoRyd safety: no reply to an Are-you-OK check. Trip Obalende to Berger: "
+                + "the driver's location stopped updating. No reply from: driver Kunle Adeyemi 0804, rider 0803. Said OK: rider 0805. "
+                + "Car KJA001XA."), eq("SAFETY_ESCALATED"));
+    }
+
+    @Test
+    void anOffRouteAlertCarriesTheLastLocationAndNoSmsUnfriendlyArrows() {
+        sos.setOpsPhones(List.of("08011111111"));
+        listener.onTripSafetyEscalated(org.coryd.common.kafka.events.TripSafetyEscalatedEvent.builder()
+                .alertId("alert-1").kind("OFF_ROUTE").routeSummary("Ikorodu → VI").vehiclePlate("LND1").unanswered(1)
+                .notAnswered("rider 0803").latitude(6.5).longitude(3.4).build());
+
+        verify(dispatch).sendSms(eq("08011111111"), eq("CoRyd safety: no reply to an Are-you-OK check. Trip Ikorodu to VI: "
+                + "the car went far off its route. No reply from: rider 0803. Car LND1. Last seen: https://maps.google.com/?q=6.5,3.4"),
+                eq("SAFETY_ESCALATED"));
     }
 
     @Test

@@ -31,4 +31,11 @@ public class TripSafetyProperties {
 
     /** Unanswered for this long and ops is alerted. */
     private int answerMinutes = 3;
+
+    /** The same kind of check on the same trip isn't raised again within this long - one alert, not a stream. */
+    private int repeatMinutes = 60;
+
+    /** A trip is only watched until its expected arrival (start + estimated duration) plus this long. Past that
+     * it's a trip nobody completed, not a trip in danger - the stuck-trip job flags those for ops instead. */
+    private int watchGraceMinutes = 60;
 }

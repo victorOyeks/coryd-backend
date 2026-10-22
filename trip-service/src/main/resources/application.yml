@@ -145,6 +145,8 @@ trip:
     off-route-minutes: ${TRIP_SAFETY_OFF_ROUTE_MINUTES:5}
     signal-lost-minutes: ${TRIP_SAFETY_SIGNAL_LOST_MINUTES:10}
     answer-minutes: ${TRIP_SAFETY_ANSWER_MINUTES:3}
+    repeat-minutes: ${TRIP_SAFETY_REPEAT_MINUTES:60}
+    watch-grace-minutes: ${TRIP_SAFETY_WATCH_GRACE_MINUTES:60}
   # Rider demand: drivers see a route once this many different riders want it, and get the 7 PM push
   # when it reaches min-riders-for-alert and matches their own trips. See DemandProperties.
   demand:

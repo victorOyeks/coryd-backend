@@ -81,10 +81,10 @@ public class TripSafetyService {
         }
         try {
             RoutePost route = routePostRepository.findById(routePostId).orElse(null);
-            if (route == null || route.getStatus() != RouteStatus.IN_PROGRESS) {
+            Instant now = Instant.now();
+            if (route == null || route.getStatus() != RouteStatus.IN_PROGRESS || !watching(route, now)) {
                 return;
             }
-            Instant now = Instant.now();
             redisTemplate.opsForValue().set(LAST_SEEN_KEY + routePostId, String.valueOf(now.toEpochMilli()), STATE_TTL);
             checkStop(route, lat, lng, now);
             checkOffRoute(route, lat, lng, now);
@@ -169,6 +169,9 @@ public class TripSafetyService {
         }
         Instant now = Instant.now();
         for (RoutePost route : routePostRepository.findByStatus(RouteStatus.IN_PROGRESS)) {
+            if (!watching(route, now)) {
+                continue;
+            }
             String seen = redisTemplate.opsForValue().get(LAST_SEEN_KEY + route.getId());
             Instant lastSeen = seen != null ? Instant.ofEpochMilli(Long.parseLong(seen)) : route.getStartedAt();
             if (lastSeen == null || Duration.between(lastSeen, now).toMinutes() < properties.getSignalLostMinutes()) {
@@ -183,9 +186,30 @@ public class TripSafetyService {
         }
     }
 
+    /**
+     * Only until the trip should have ended: start (or departure) + its estimated duration + the grace period.
+     * A trip still "in progress" long after that was never completed in the app - nobody is in danger, and the
+     * stuck-trip job already flags it for ops. Without this, one forgotten trip asks "Are you OK?" forever.
+     */
+    boolean watching(RoutePost route, Instant now) {
+        Instant start = route.getStartedAt() != null ? route.getStartedAt() : route.getDepartureTime();
+        if (start == null) {
+            return true;
+        }
+        int expectedMinutes = route.getEstimatedDurationMinutes() != null ? route.getEstimatedDurationMinutes() : 120;
+        return now.isBefore(start.plus(Duration.ofMinutes(expectedMinutes + (long) properties.getWatchGraceMinutes())));
+    }
+
     @Transactional
     public void raise(RoutePost route, TripSafetyAlert.Kind kind, Double lat, Double lng) {
         if (alertRepository.existsByRoutePostIdAndKindAndStatus(route.getId(), kind, TripSafetyAlert.Status.OPEN)) {
+            return;
+        }
+        // One of each kind per trip per repeat window - a driver whose phone keeps dropping out is one alert, not ten.
+        if (alertRepository.existsByRoutePostIdAndKindAndCreatedAtAfter(route.getId(), kind,
+                Instant.now().minus(Duration.ofMinutes(properties.getRepeatMinutes())))) {
+            log.info("Trip safety {} on route {} already raised in the last {} min - not asking again", kind, route.getId(),
+                    properties.getRepeatMinutes());
             return;
         }
         TripSafetyAlert alert = TripSafetyAlert.builder()
@@ -245,20 +269,41 @@ public class TripSafetyService {
         String riderPhones = ridersOnTrip(route.getId()).stream()
                 .map(b -> identityServiceClient.fetchPhone(b.getRiderId())).filter(Objects::nonNull)
                 .collect(Collectors.joining(", "));
+        String driverName = profileServiceClient.fetchDriverName(route.getDriverId());
+        String driverPhone = identityServiceClient.fetchPhone(route.getDriverId());
         kafkaTemplate.send(KafkaTopics.TRIP_SAFETY_ESCALATED, TripSafetyEscalatedEvent.builder()
                 .alertId(alert.getId())
                 .routePostId(route.getId())
                 .kind(alert.getKind().name())
                 .routeSummary(route.getOriginLabel() + " → " + route.getDestinationLabel())
-                .driverName(profileServiceClient.fetchDriverName(route.getDriverId()))
-                .driverPhone(identityServiceClient.fetchPhone(route.getDriverId()))
+                .driverName(driverName)
+                .driverPhone(driverPhone)
                 .vehiclePlate(route.getVehicleId() == null ? null : profileServiceClient.fetchVehiclePlate(route.getVehicleId()))
                 .riderPhones(riderPhones.isEmpty() ? null : riderPhones)
                 .latitude(alert.getLatitude())
                 .longitude(alert.getLongitude())
                 .unanswered((int) alert.getAnswers().values().stream().filter(TripSafetyAlert.Answer.WAITING::equals).count())
+                .notAnswered(people(alert, route, TripSafetyAlert.Answer.WAITING, driverName, driverPhone))
+                .answeredOk(people(alert, route, TripSafetyAlert.Answer.FINE, driverName, driverPhone))
                 .build());
         log.warn("Trip safety alert {} on route {} unanswered - ops alerted", alert.getId(), route.getId());
+    }
+
+    /** Everyone whose answer is {@code answer}, by role - "driver Kunle Adeyemi 0800..., rider 0803..." - or null for nobody. */
+    private String people(TripSafetyAlert alert, RoutePost route, TripSafetyAlert.Answer answer, String driverName, String driverPhone) {
+        List<String> people = new ArrayList<>();
+        alert.getAnswers().forEach((userId, given) -> {
+            if (given != answer) {
+                return;
+            }
+            if (userId.equals(route.getDriverId())) {
+                people.add(0, "driver " + (driverName == null ? "" : driverName + " ") + (driverPhone == null ? "" : driverPhone));
+            } else {
+                String phone = identityServiceClient.fetchPhone(userId);
+                people.add("rider " + (phone == null ? userId : phone));
+            }
+        });
+        return people.isEmpty() ? null : people.stream().map(String::trim).collect(Collectors.joining(", "));
     }
 
     @Transactional(readOnly = true)

@@ -415,17 +415,27 @@ public class NotificationEventListener {
                         + ", route " + event.getRoutePostId(), "SAFETY_ESCALATED"));
     }
 
+    /**
+     * Plain text, no arrows or symbols: SMS can't carry them (a "→" arrives as "?"). Says what looked wrong, then
+     * exactly who didn't answer and who did, by role, so ops knows whether to call the driver or a rider.
+     */
     static String safetyEscalationSms(TripSafetyEscalatedEvent event) {
         String what = switch (event.getKind() == null ? "" : event.getKind()) {
-            case "STOPPED" -> "stopped for a long time";
-            case "OFF_ROUTE" -> "far off its route";
-            case "SIGNAL_LOST" -> "has lost the driver's location";
-            default -> "looks unusual";
+            case "STOPPED" -> "the car stopped for a long time";
+            case "OFF_ROUTE" -> "the car went far off its route";
+            case "SIGNAL_LOST" -> "the driver's location stopped updating";
+            default -> "something looked unusual";
         };
-        return "CoRyd safety: trip " + orUnknown(event.getRouteSummary()) + " " + what + " and " + event.getUnanswered()
-                + " on board didn't answer. Driver " + orUnknown(event.getDriverName()) + " " + orUnknown(event.getDriverPhone())
-                + ", car " + orUnknown(event.getVehiclePlate()) + ". Riders " + orUnknown(event.getRiderPhones()) + "."
-                + (event.getLatitude() == null ? "" : " https://maps.google.com/?q=" + event.getLatitude() + "," + event.getLongitude());
+        String notAnswered = event.getNotAnswered() != null ? event.getNotAnswered() : event.getUnanswered() + " on board";
+        return "CoRyd safety: no reply to an Are-you-OK check. Trip " + plain(orUnknown(event.getRouteSummary())) + ": " + what + ". "
+                + "No reply from: " + notAnswered + ". "
+                + (event.getAnsweredOk() != null ? "Said OK: " + event.getAnsweredOk() + ". " : "")
+                + "Car " + orUnknown(event.getVehiclePlate()) + "."
+                + (event.getLatitude() == null ? "" : " Last seen: https://maps.google.com/?q=" + event.getLatitude() + "," + event.getLongitude());
+    }
+
+    private static String plain(String text) {
+        return text.replace(" → ", " to ").replace("→", " to ");
     }
 
     /** Every ops phone gets an SMS and every ops address an email - who pressed it, both phones, the car, the place. */

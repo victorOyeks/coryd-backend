@@ -23,4 +23,8 @@ public class TripSafetyEscalatedEvent {
     private Double longitude;
     /** How many on board never answered "Are you OK?". */
     private int unanswered;
+    /** Who didn't answer, by role: "driver Kunle Adeyemi 0800..., rider 0803...". */
+    private String notAnswered;
+    /** Who said they're OK, same format - null if nobody did. */
+    private String answeredOk;
 }

@@ -121,14 +121,72 @@ class TripSafetyServiceTest {
         TripSafetyAlert alert = openAlert();
         when(alerts.findByStatusAndCreatedAtBefore(eq(TripSafetyAlert.Status.OPEN), any())).thenReturn(List.of(alert));
         when(identity.fetchPhone("rider-1")).thenReturn("0803");
+        when(identity.fetchPhone("driver-1")).thenReturn("0804");
+        when(profile.fetchDriverName("driver-1")).thenReturn("Kunle Adeyemi");
 
         service.escalateUnanswered();
 
         assertThat(alert.getStatus()).isEqualTo(TripSafetyAlert.Status.ESCALATED);
         verify(kafka).send(eq(KafkaTopics.TRIP_SAFETY_ESCALATED), argThat(e -> {
             var event = (TripSafetyEscalatedEvent) e;
-            return event.getUnanswered() == 2 && "0803".equals(event.getRiderPhones()) && "Ikorodu → VI".equals(event.getRouteSummary());
+            return event.getUnanswered() == 2 && "0803".equals(event.getRiderPhones()) && "Ikorodu → VI".equals(event.getRouteSummary())
+                    && "driver Kunle Adeyemi 0804, rider 0803".equals(event.getNotAnswered()) && event.getAnsweredOk() == null;
         }));
+    }
+
+    @Test
+    void theAlertSaysWhoAnsweredAndWhoDidnt() {
+        TripSafetyAlert alert = openAlert();
+        alert.getAnswers().put("driver-1", TripSafetyAlert.Answer.FINE);
+        when(alerts.findByStatusAndCreatedAtBefore(eq(TripSafetyAlert.Status.OPEN), any())).thenReturn(List.of(alert));
+        when(identity.fetchPhone("rider-1")).thenReturn("0803");
+        when(identity.fetchPhone("driver-1")).thenReturn("0804");
+        when(profile.fetchDriverName("driver-1")).thenReturn("Kunle Adeyemi");
+
+        service.escalateUnanswered();
+
+        verify(kafka).send(eq(KafkaTopics.TRIP_SAFETY_ESCALATED), argThat(e -> {
+            var event = (TripSafetyEscalatedEvent) e;
+            return "rider 0803".equals(event.getNotAnswered()) && "driver Kunle Adeyemi 0804".equals(event.getAnsweredOk());
+        }));
+    }
+
+    @Test
+    void theSameKindOfCheckIsNotRaisedAgainWithinTheRepeatWindow() {
+        when(alerts.existsByRoutePostIdAndKindAndCreatedAtAfter(eq("route-1"), eq(TripSafetyAlert.Kind.SIGNAL_LOST), any())).thenReturn(true);
+
+        service.raise(route, TripSafetyAlert.Kind.SIGNAL_LOST, null, null);
+
+        verify(alerts, never()).save(any());
+        verify(kafka, never()).send(eq(KafkaTopics.TRIP_SAFETY_CHECK), any());
+    }
+
+    @Test
+    void aTripLongPastItsExpectedArrivalIsNoLongerWatched() {
+        RoutePost stuck = RoutePost.builder().id("route-old").driverId("driver-1").status(RouteStatus.IN_PROGRESS)
+                .departureTime(Instant.now().minus(15, ChronoUnit.HOURS)).estimatedDurationMinutes(60).build();
+        when(routes.findByStatus(RouteStatus.IN_PROGRESS)).thenReturn(List.of(stuck));
+        when(values.setIfAbsent(anyString(), anyString(), any())).thenReturn(true);
+
+        service.checkSignalLost();
+
+        verify(alerts, never()).save(any());
+        verify(kafka, never()).send(eq(KafkaTopics.TRIP_SAFETY_CHECK), any());
+    }
+
+    @Test
+    void aTripWithinItsExpectedTimeIsStillWatched() {
+        RoutePost live = RoutePost.builder().id("route-live").driverId("driver-1").status(RouteStatus.IN_PROGRESS)
+                .startedAt(Instant.now().minus(30, ChronoUnit.MINUTES)).estimatedDurationMinutes(60).build();
+        when(routes.findByStatus(RouteStatus.IN_PROGRESS)).thenReturn(List.of(live));
+        when(values.setIfAbsent(anyString(), anyString(), any())).thenReturn(true);
+        when(bookings.findByRoutePostId("route-live")).thenReturn(List.of());
+
+        service.checkSignalLost();
+
+        verify(kafka).send(eq(KafkaTopics.TRIP_SAFETY_CHECK), argThat(e -> "SIGNAL_LOST".equals(((TripSafetyCheckEvent) e).getKind())));
+        assertThat(service.watching(live, Instant.now().plus(89, ChronoUnit.MINUTES))).isTrue();
+        assertThat(service.watching(live, Instant.now().plus(91, ChronoUnit.MINUTES))).isFalse();
     }
 
     private TripSafetyAlert openAlert() {
