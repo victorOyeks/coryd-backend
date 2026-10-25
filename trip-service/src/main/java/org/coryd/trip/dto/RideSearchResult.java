@@ -33,6 +33,8 @@ public record RideSearchResult(
         boolean alongTheWay,
         /** Where to meet the car and when - null when the rider is matched at the route's start, as before. */
         RideStop pickup,
-        RideStop dropoff
+        RideStop dropoff,
+        /** The road the driver picked, in words ("Ojota, Maryland, Osborne") - null when they left it to Google. */
+        String viaSummary
 ) {
 }

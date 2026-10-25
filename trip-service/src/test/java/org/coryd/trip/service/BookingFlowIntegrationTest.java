@@ -1139,7 +1139,8 @@ class BookingFlowIntegrationTest {
                         org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble()))
                 .thenReturn(new org.coryd.trip.dto.RoutePreview(9.5, 40, "40 mins", "", ""));
         var everyDay = new org.coryd.trip.dto.RouteTemplateRequest(null, "Campos Memorial Mini Stadium", 6.45, 3.39,
-                "Obalende Bridge", 6.44, 3.40, List.of(java.time.DayOfWeek.values()), "07:00", 4, FARE, null, null, null);
+                "Obalende Bridge", 6.44, 3.40, List.of(java.time.DayOfWeek.values()), "07:00", 4, FARE, null, null, null,
+                encode(new double[][]{{6.45, 3.39}, {6.447, 3.393}, {6.44, 3.40}}), "Campbell St");
 
         var template = routeTemplateService.create(DRIVER, everyDay);
         int posted = routeTemplateService.postUpcomingTrips(DRIVER, template.id());
@@ -1147,7 +1148,10 @@ class BookingFlowIntegrationTest {
         // 07:00 on each day inside the 3-day posting window and at least 30 minutes away - 2 or 3 depending on the hour.
         assertThat(posted).isBetween(2, 3);
         assertThat(routePostRepository.findAll()).hasSize(posted)
-                .allSatisfy(r -> assertThat(r.getRouteTemplateId()).isEqualTo(template.id()));
+                .allSatisfy(r -> {
+                    assertThat(r.getRouteTemplateId()).isEqualTo(template.id());
+                    assertThat(r.getViaSummary()).as("every trip follows the road the driver picked").isEqualTo("Campbell St");
+                });
         assertThat(routeTemplateService.postUpcomingTrips(DRIVER, template.id())).as("never twice").isZero();
 
         routePostRepository.deleteAll();
@@ -1160,7 +1164,7 @@ class BookingFlowIntegrationTest {
     void aRegularRouteCantHoldMoreStandingSeatsThanItOffers() {
         var tooMany = new org.coryd.trip.dto.RouteTemplateRequest(null, "A", 6.45, 3.39, "B", 6.44, 3.40,
                 List.of(java.time.DayOfWeek.MONDAY), "07:00", 2, FARE, null, null,
-                List.of(new org.coryd.trip.dto.PostRouteRequest.ReservationRequest(RIDER, 3)));
+                List.of(new org.coryd.trip.dto.PostRouteRequest.ReservationRequest(RIDER, 3)), null, null);
 
         assertThatThrownBy(() -> routeTemplateService.create(DRIVER, tooMany)).isInstanceOf(BadRequestException.class);
     }
@@ -1193,6 +1197,79 @@ class BookingFlowIntegrationTest {
         Booking booking = bookingService.reserveSeats(route.getId(), RIDER, new BookSeatsRequest(null, 1, "Ketu", 6.57, 3.485,
                 "Obalende", 6.47, 3.435));
         assertThat(reload(booking).getDropoffLabel()).isEqualTo("Obalende");
+    }
+
+    @Test
+    void aDriversPickedRoadIsWhatRidersAreMatchedAgainst() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        // Google's usual road: straight from Ikorodu to VI. The driver's own road bends west through (6.52, 3.40).
+        String usual = encode(new double[][]{{6.62, 3.51}, {6.42, 3.41}});
+        String picked = encode(new double[][]{{6.62, 3.51}, {6.52, 3.40}, {6.42, 3.41}});
+        org.mockito.Mockito.when(mapsService.getRoutePreview(org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble(),
+                        org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble()))
+                .thenReturn(new org.coryd.trip.dto.RoutePreview(24.6, 60, "1 hour", "Ikorodu Rd", usual));
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+
+        RoutePost route = routeService.post(DRIVER, DRIVER, new org.coryd.trip.dto.PostRouteRequest(null, "Ikorodu", 6.62, 3.51,
+                "Victoria Island", 6.42, 3.41, departure, 4, FARE, null, null, picked, "Ojota, Osborne"));
+
+        assertThat(route.getViaSummary()).isEqualTo("Ojota, Osborne");
+        assertThat(route.getEstimatedDurationMinutes()).as("stretched to the longer road").isGreaterThan(60);
+
+        // On the picked road, a few km off the usual one - only the picked road can match this rider.
+        var request = new org.coryd.trip.dto.SearchRequest(6.57, 3.455, 6.47, 3.405, departure.plus(15, ChronoUnit.MINUTES), "Ketu", "Osborne");
+        var results = routeService.searchAsRider(request, RIDER);
+        assertThat(results).singleElement().satisfies(r -> {
+            assertThat(r.viaSummary()).isEqualTo("Ojota, Osborne");
+            assertThat(r.pickup().label()).isEqualTo("Ketu");
+            assertThat(r.dropoff().label()).isEqualTo("Osborne");
+        });
+
+        var card = results.getFirst();
+        Booking booking = bookingService.reserveSeats(route.getId(), RIDER, new BookSeatsRequest(null, 1, card.pickup().label(),
+                card.pickup().lat(), card.pickup().lng(), card.dropoff().label(), card.dropoff().lat(), card.dropoff().lng()));
+        var details = bookingService.getBookingDetails(booking.getId(), RIDER);
+        assertThat(details.originLabel()).isEqualTo("Ikorodu");
+        assertThat(details.pickupLabel()).isEqualTo("Ketu");
+        assertThat(details.dropoffLabel()).isEqualTo("Osborne");
+        assertThat(details.overviewPolyline()).isEqualTo(picked);
+    }
+
+    @Test
+    void aPickedRoadMustRunBetweenTheRoutesEndsAndBeNamed() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+        String elsewhere = encode(new double[][]{{6.62, 3.51}, {6.60, 3.30}});
+        String fine = encode(new double[][]{{6.62, 3.51}, {6.42, 3.41}});
+
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, new org.coryd.trip.dto.PostRouteRequest(null, "Ikorodu", 6.62, 3.51,
+                "Victoria Island", 6.42, 3.41, departure, 4, FARE, null, null, elsewhere, "Somewhere")))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("start and end");
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, new org.coryd.trip.dto.PostRouteRequest(null, "Ikorodu", 6.62, 3.51,
+                "Victoria Island", 6.42, 3.41, departure, 4, FARE, null, null, fine, " ")))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("viaSummary");
+    }
+
+    /** Google's encoded-polyline format, so tests can hand the service a road of their own. */
+    private static String encode(double[][] points) {
+        StringBuilder out = new StringBuilder();
+        long prevLat = 0;
+        long prevLng = 0;
+        for (double[] p : points) {
+            long lat = Math.round(p[0] * 1e5);
+            long lng = Math.round(p[1] * 1e5);
+            for (long value : new long[]{lat - prevLat, lng - prevLng}) {
+                long v = value < 0 ? ~(value << 1) : value << 1;
+                while (v >= 0x20) {
+                    out.append((char) ((0x20 | (v & 0x1f)) + 63));
+                    v >>= 5;
+                }
+                out.append((char) (v + 63));
+            }
+            prevLat = lat;
+            prevLng = lng;
+        }
+        return out.toString();
     }
 
     @Test

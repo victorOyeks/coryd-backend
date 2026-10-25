@@ -188,7 +188,8 @@ public class BookingService {
                 .map(s -> new UpcomingRideItem(s.booking().getId(), s.route().getId(), s.booking().getStatus(),
                         s.route().getOriginLabel(), s.route().getDestinationLabel(), s.route().getDepartureTime(),
                         s.booking().getSeatCount(), s.booking().getFareTotal(), s.booking().getPickupLabel(),
-                        s.booking().getDriverNameSnapshot(), s.booking().getVehiclePlateSnapshot()))
+                        s.booking().getDriverNameSnapshot(), s.booking().getVehiclePlateSnapshot(),
+                        s.booking().getDropoffLabel() != null ? s.booking().getDropoffLabel() : s.route().getDestinationLabel()))
                 .toList();
     }
 
@@ -602,6 +603,7 @@ public class BookingService {
         ProfileServiceClient.VehicleSummaryItem vehicle = route.getVehicleId() == null ? null
                 : profileServiceClient.fetchVehicleSummaries(List.of(route.getVehicleId())).get(route.getVehicleId());
         String driverPhone = identityServiceClient.fetchPhone(route.getDriverId());
+        boolean rideToEnd = booking.getDropoffLat() == null || booking.getDropoffLng() == null;
 
         return new BookingDetailsResponse(
                 booking.getId(), booking.getRoutePostId(), booking.getStatus(),
@@ -621,8 +623,13 @@ public class BookingService {
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
                 booking.getStatus() == BookingStatus.COMPLETED ? computeDurationMinutes(booking.getId()) : null,
-                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
-                forRider && AWAITING_PICKUP_STATUSES.contains(booking.getStatus()) ? booking.getPickupCode() : null
+                route.getRoutePolyline() != null ? route.getRoutePolyline()
+                        : overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
+                forRider && AWAITING_PICKUP_STATUSES.contains(booking.getStatus()) ? booking.getPickupCode() : null,
+                booking.getPickupLabel(), booking.getPickupLat(), booking.getPickupLng(),
+                rideToEnd ? route.getDestinationLabel() : booking.getDropoffLabel(),
+                rideToEnd ? route.getDestinationLat() : booking.getDropoffLat(),
+                rideToEnd ? route.getDestinationLng() : booking.getDropoffLng()
         );
     }
 

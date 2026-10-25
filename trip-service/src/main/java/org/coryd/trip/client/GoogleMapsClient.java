@@ -141,6 +141,52 @@ public class GoogleMapsClient {
         return new DirectionsMultiStopResult(Math.round(distanceKm * 100.0) / 100.0, durationMinutes, polyline, waypointOrder);
     }
 
+    /** The driver's road choices. Without via, every road Google offers (usual first); with via, the one road
+     * passing through those points in order - "via:" points shape the road without becoming stops, and
+     * Directions returns no alternatives when there are waypoints. */
+    public List<RoutePreview> getRouteOptions(double originLat, double originLng, double destLat, double destLng,
+                                              List<double[]> via) {
+        String origin = originLat + "," + originLng;
+        String destination = destLat + "," + destLng;
+        DirectionsResponse response = via.isEmpty()
+                ? mapsRestClient.get()
+                        .uri(GoogleMapsRoutes.DIRECTIONS_ALTERNATIVES, origin, destination, apiKey)
+                        .retrieve()
+                        .body(DirectionsResponse.class)
+                : mapsRestClient.get()
+                        .uri(GoogleMapsRoutes.DIRECTIONS_WITH_WAYPOINTS, origin, destination,
+                                via.stream().map(w -> "via:" + w[0] + "," + w[1]).collect(Collectors.joining("|")), apiKey)
+                        .retrieve()
+                        .body(DirectionsResponse.class);
+        if (response == null) throw new BadRequestException("No route found between the given points");
+        if (STATUS_ZERO_RESULTS.equals(response.status())) {
+            throw new BadRequestException("No driving road goes through those places - try other ones");
+        }
+        if (!STATUS_OK.equals(response.status())) {
+            log.warn("Directions (options) status: {} for {} -> {} with {} via points | reason: {}",
+                    response.status(), origin, destination, via.size(), response.errorMessage());
+            throw new BadRequestException("Directions service unavailable - please try again");
+        }
+        return response.routes().stream().map(route -> {
+            int meters = route.legs().stream().mapToInt(leg -> leg.distance().value()).sum();
+            int seconds = route.legs().stream().mapToInt(leg -> leg.duration().value()).sum();
+            int minutes = (int) Math.ceil(seconds / 60.0);
+            String polyline = route.overviewPolyline() == null ? null : route.overviewPolyline().points();
+            return new RoutePreview(Math.round(meters / 10.0) / 100.0, minutes, durationText(minutes), route.summary(), polyline);
+        }).toList();
+    }
+
+    /** Google's own wording ("1 hour 5 mins") for a total it didn't word itself. */
+    private static String durationText(int minutes) {
+        if (minutes < 60) {
+            return minutes + (minutes == 1 ? " min" : " mins");
+        }
+        int hours = minutes / 60;
+        int rest = minutes % 60;
+        String h = hours + (hours == 1 ? " hour" : " hours");
+        return rest == 0 ? h : h + " " + rest + (rest == 1 ? " min" : " mins");
+    }
+
     /** Single origin, many destinations, one call - the search-results list's pickup-ETA column. Results come back in the same order as destinations; an individual pair's own failed status degrades to a null entry rather than failing the whole batch. */
     public List<DistanceMatrixResult> getDistanceMatrix(double originLat, double originLng, List<double[]> destinations) {
         String origins = originLat + "," + originLng;

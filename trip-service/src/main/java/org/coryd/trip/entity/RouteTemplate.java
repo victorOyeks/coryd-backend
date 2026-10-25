@@ -67,6 +67,13 @@ public class RouteTemplate extends BaseEntity {
 
     private String routeNote;
 
+    /** The road the driver picked for every trip; null = Google's usual road at posting time. */
+    @Column(columnDefinition = "TEXT")
+    private String routePolyline;
+
+    @Column(length = 255)
+    private String viaSummary;
+
     /** Last day it runs; null = until the driver stops it. */
     private LocalDate activeUntil;
 

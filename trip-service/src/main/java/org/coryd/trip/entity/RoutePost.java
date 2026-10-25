@@ -69,6 +69,10 @@ public class RoutePost extends BaseEntity {
     @Column(length = 255)
     private String routeNote;
 
+    /** Short words for the road the driver picked, e.g. "Ojota, Maryland" - null when they left it to Google. */
+    @Column(length = 255)
+    private String viaSummary;
+
     /** When the driver actually tapped Start Trip / Complete Trip - departureTime is only the planned time, these are the real ones, used for the receipt's trip duration. */
     private Instant startedAt;
     private Instant completedAt;

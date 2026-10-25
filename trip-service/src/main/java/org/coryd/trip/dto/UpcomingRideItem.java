@@ -16,6 +16,8 @@ public record UpcomingRideItem(
         BigDecimal fareTotal,
         String pickupLabel,
         String driverName,
-        String vehiclePlate
+        String vehiclePlate,
+        /** Where this rider gets out - the route's end when they ride all the way. */
+        String dropoffLabel
 ) {
 }

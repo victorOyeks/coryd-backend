@@ -25,7 +25,10 @@ public record RouteTemplateResponse(
         String routeNote,
         LocalDate activeUntil,
         boolean paused,
-        List<PostRouteRequest.ReservationRequest> standingSeats
+        List<PostRouteRequest.ReservationRequest> standingSeats,
+        /** The road the driver picked; null = Google's usual road. */
+        String routePolyline,
+        String viaSummary
 ) {
     public static RouteTemplateResponse from(RouteTemplate t) {
         int mask = t.getDaysMask() == null ? 0 : t.getDaysMask();
@@ -35,6 +38,7 @@ public record RouteTemplateResponse(
                 Arrays.stream(DayOfWeek.values()).filter(d -> (mask & GeoMath.dayBit(d)) != 0).toList(),
                 minutes == null ? null : String.format("%02d:%02d", minutes / 60, minutes % 60),
                 t.getTypicalSeatCount(), t.getFarePerSeat(), t.getRouteNote(), t.getActiveUntil(), t.isPaused(),
-                t.getStandingSeats().stream().map(s -> new PostRouteRequest.ReservationRequest(s.getRiderId(), s.getSeatCount())).toList());
+                t.getStandingSeats().stream().map(s -> new PostRouteRequest.ReservationRequest(s.getRiderId(), s.getSeatCount())).toList(),
+                t.getRoutePolyline(), t.getViaSummary());
     }
 }

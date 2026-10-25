@@ -38,5 +38,6 @@
     <include file="db/changelog/027-notify-me-created-index.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/028-along-the-way.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/029-postgis-route-geography.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/030-driver-picked-road.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

@@ -92,8 +92,8 @@ Request unchanged. Each result card has three new fields:
   "...": "existing fields unchanged",
 
   "alongTheWay": true,
-  "pickup":  { "lat": 6.5703, "lng": 3.4851, "walkMeters": 180, "time": "2026-10-16T06:15:00Z" },
-  "dropoff": { "lat": 6.4702, "lng": 3.4349, "walkMeters": 220, "time": "2026-10-16T06:45:00Z" }
+  "pickup":  { "lat": 6.5703, "lng": 3.4851, "walkMeters": 180, "time": "2026-10-16T06:15:00Z", "label": "Ketu" },
+  "dropoff": { "lat": 6.4702, "lng": 3.4349, "walkMeters": 220, "time": "2026-10-16T06:45:00Z", "label": "Obalende" }
 }
 ```
 
@@ -102,11 +102,13 @@ Request unchanged. Each result card has three new fields:
 | `alongTheWay` | `true` when the rider joins part-way (they don't match the route's ends). Label it, e.g. **"Passes near you"**. |
 | `pickup` | Where to meet the car on its road, how far that is from where they searched, and roughly when the car gets there. `null` on end-to-end matches with no pickup point worked out. |
 | `dropoff` | Same, for getting out. |
+| `pickup.label`, `dropoff.label` | The place names the rider searched with (the search request's `originLabel` / `destinationLabel`, so send those). `null` if the search didn't send them. |
 
 - Results are sorted by when the car reaches the rider.
 - `pickupEtaMinutes` is the drive time to the `pickup` point when there is one.
 - `time` is an estimate from the route's driving time. Show it as "around 7:15".
 - Show the pickup and drop-off on the map, with walking directions from the rider's location to `pickup`.
+- **Show the rider's own trip on the list card**, not only after they tap in. When `pickup`/`dropoff` are present, show the driver's route and where this rider gets in and out, e.g. **"Ikorodu → Victoria Island · you: Ketu → Obalende, around 7:15"**.
 
 ### Booking: `POST /trip/bookings/routes/{routePostId}`
 
@@ -124,8 +126,20 @@ Three new **optional** fields:
 }
 ```
 
-- Send the card's `pickup` as `pickupLat`/`pickupLng`, with a label (nearest landmark or the place name).
-- Send the card's `dropoff` as `dropoffLabel`/`dropoffLat`/`dropoffLng`. Omit them for end-to-end rides.
+- Send the card's `pickup` as `pickupLabel`/`pickupLat`/`pickupLng`, using `pickup.label` as the label.
+- Send the card's `dropoff` as `dropoffLabel`/`dropoffLat`/`dropoffLng`, using `dropoff.label`. Omit them for end-to-end rides.
+- **Never send the route's `originLabel` / `destinationLabel` as the rider's labels.** The driver's passenger list shows exactly what you send, so a Ketu → Obalende rider sent as "Ikorodu" shows up to the driver as boarding at Ikorodu.
+
+### Booking screens: `GET /trip/bookings/{bookingId}`, active trip, upcoming trips
+
+`originLabel` / `destinationLabel` on these are the **driver's whole route**. New fields carry the rider's own trip:
+
+| Field | Meaning |
+| --- | --- |
+| `pickupLabel`, `pickupLat`, `pickupLng` | Where this rider gets in (Pay Now, Booking Confirmed, active trip). |
+| `dropoffLabel`, `dropoffLat`, `dropoffLng` | Where they get out; the route's end when they ride all the way. Upcoming trips carry `dropoffLabel` only. |
+
+Lead with the rider's trip ("Ketu → Obalende") and show the driver's route as context ("on Ikorodu → Victoria Island"). `overviewPolyline` is now the driver's actual road when we have it, so you can put the pickup and drop-off pins on it.
 
 ### Driver side
 

@@ -37,6 +37,8 @@ public record RideDetailsResponse(
         String routeNote,
         String overviewPolyline,
         boolean bookable,
-        String unavailableReason
+        String unavailableReason,
+        /** The road the driver picked, in words - null when they left it to Google. overviewPolyline is that road. */
+        String viaSummary
 ) {
 }

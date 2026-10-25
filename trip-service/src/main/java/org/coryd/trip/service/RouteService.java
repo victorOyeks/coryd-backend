@@ -48,6 +48,9 @@ import org.coryd.trip.repository.IdentityVerificationCacheRepository;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.repository.SuspendedUserRepository;
 import org.coryd.trip.repository.SuggestedFareRangeRepository;
+import org.coryd.trip.util.GeoMath;
+import org.coryd.trip.util.PolylineDecoder;
+import org.coryd.trip.util.PolylineMath;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
@@ -192,9 +195,16 @@ public class RouteService {
         }
 
         RoutePreview preview = previewFor(request);
+        String road = request.routePolyline() == null || request.routePolyline().isBlank() ? null : request.routePolyline();
+        requireRoadBetween(road, request.viaSummary(), request.originLat(), request.originLng(), request.destinationLat(), request.destinationLng());
+        Integer duration = preview == null || preview.durationMinutes() <= 0 ? null : preview.durationMinutes();
+        if (road != null && duration != null) {
+            duration = scaledDuration(preview, road);
+        }
         RoutePost route = RoutePost.builder()
-                .estimatedDurationMinutes(preview == null || preview.durationMinutes() <= 0 ? null : preview.durationMinutes())
-                .routePolyline(preview == null ? null : preview.overviewPolyline())
+                .estimatedDurationMinutes(duration)
+                .routePolyline(road != null ? road : preview == null ? null : preview.overviewPolyline())
+                .viaSummary(road == null ? null : request.viaSummary().trim())
                 .driverId(driverId)
                 .vehicleId(request.vehicleId())
                 .originLabel(request.originLabel())
@@ -246,6 +256,50 @@ public class RouteService {
         eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(route.getId()));
 
         return route;
+    }
+
+    /** How far the driver's picked road may start or end from the route's own ends - Google starts a road at the
+     * nearest street, which can be a few hundred metres from a pin dropped inside an estate. */
+    private static final double ROAD_END_TOLERANCE_KM = 1.5;
+
+    /** A road from /maps/route-options must actually run between this route's ends - otherwise riders would be
+     * matched to a line the car never drives. Null (Google's usual road) always passes. */
+    public void requireRoadBetween(String polyline, String viaSummary, double originLat, double originLng, double destLat, double destLng) {
+        if (polyline == null || polyline.isBlank()) {
+            return;
+        }
+        if (viaSummary == null || viaSummary.isBlank()) {
+            throw new BadRequestException("Send viaSummary with the road you picked - riders see it on the ride");
+        }
+        List<PolylineDecoder.LatLng> points;
+        try {
+            points = PolylineDecoder.decode(polyline);
+        } catch (RuntimeException e) {
+            throw new BadRequestException("The road you picked couldn't be read - pick it again");
+        }
+        if (points.size() < 2) {
+            throw new BadRequestException("The road you picked couldn't be read - pick it again");
+        }
+        PolylineDecoder.LatLng first = points.getFirst();
+        PolylineDecoder.LatLng last = points.getLast();
+        if (GeoMath.distanceKm(first.lat(), first.lng(), originLat, originLng) > ROAD_END_TOLERANCE_KM
+                || GeoMath.distanceKm(last.lat(), last.lng(), destLat, destLng) > ROAD_END_TOLERANCE_KM) {
+            throw new BadRequestException("The road you picked doesn't start and end at this route's pickup and destination - pick it again");
+        }
+    }
+
+    /** The picked road's driving time: Google's time for its usual road, stretched by how much longer the picked
+     * one is. Worked out here so the app never sets the time the overlap and safety checks rely on. */
+    private static Integer scaledDuration(RoutePreview usual, String road) {
+        if (usual.overviewPolyline() == null || usual.overviewPolyline().isBlank()) {
+            return usual.durationMinutes();
+        }
+        double usualMeters = PolylineMath.lengthMeters(PolylineDecoder.decode(usual.overviewPolyline()));
+        double roadMeters = PolylineMath.lengthMeters(PolylineDecoder.decode(road));
+        if (usualMeters <= 0 || roadMeters <= 0) {
+            return usual.durationMinutes();
+        }
+        return Math.max(1, (int) Math.round(usual.durationMinutes() * roadMeters / usualMeters));
     }
 
     /** Driving time for the overlap window - a Maps failure falls back to the default rather than
@@ -375,7 +429,7 @@ public class RouteService {
                 .sorted(Comparator.comparing((RoutePost r) -> along.containsKey(r.getId()) ? along.get(r.getId()).pickup().time() : r.getDepartureTime()))
                 .toList();
         Set<String> partWay = along.keySet().stream().filter(id -> !endToEnd.contains(id)).collect(Collectors.toSet());
-        return enrich(matched, request.originLat(), request.originLng(), along, partWay);
+        return enrich(matched, request.originLat(), request.originLng(), along, partWay, request.originLabel(), request.destinationLabel());
     }
 
     private List<RoutePost> withoutBlocked(List<RoutePost> routes, String riderId) {
@@ -436,8 +490,9 @@ public class RouteService {
                 base.driverVerified(), base.vehicleMake(), base.vehicleModel(), base.vehiclePlate(), base.vehicleHasAC(),
                 base.ratingAvg(), base.ratingCount(), base.pickupEtaMinutes(),
                 BookingService.SEAT_HOLD_MINUTES, base.routeNote(),
-                overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
-                unavailableReason == null, unavailableReason
+                route.getRoutePolyline() != null ? route.getRoutePolyline()
+                        : overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
+                unavailableReason == null, unavailableReason, route.getViaSummary()
         );
     }
 
@@ -520,7 +575,13 @@ public class RouteService {
             }
             RoutePreview direct = mapsService.getRoutePreview(originLat, originLng,
                     route.getDestinationLat(), route.getDestinationLng());
-            return new MultiStopRoutePreview(direct.distanceKm(), direct.durationMinutes(), direct.overviewPolyline(), List.of());
+            // The road the driver picked, while they're still starting from the route's own start.
+            boolean pickedRoad = route.getViaSummary() != null && route.getRoutePolyline() != null
+                    && originLat == route.getOriginLat() && originLng == route.getOriginLng();
+            return new MultiStopRoutePreview(
+                    pickedRoad ? Math.round(PolylineMath.lengthMeters(PolylineDecoder.decode(route.getRoutePolyline())) / 10.0) / 100.0 : direct.distanceKm(),
+                    pickedRoad && route.getEstimatedDurationMinutes() != null ? route.getEstimatedDurationMinutes() : direct.durationMinutes(),
+                    pickedRoad ? route.getRoutePolyline() : direct.overviewPolyline(), List.of());
         }
 
         List<double[]> waypointCoords = stops.stream().map(b -> new double[]{b.getPickupLat(), b.getPickupLng()}).toList();
@@ -536,13 +597,15 @@ public class RouteService {
 
     /** Batch-joins driver/vehicle/rating data onto raw route matches, plus one batched Google Distance Matrix call for pickup-ETA - four calls total for the whole page, never one per row. */
     private List<RideSearchResult> enrich(List<RoutePost> routes, double riderLat, double riderLng) {
-        return enrich(routes, riderLat, riderLng, Map.of(), Set.of());
+        return enrich(routes, riderLat, riderLng, Map.of(), Set.of(), null, null);
     }
 
     /** along: where the rider meets each route on its road (their card carries the pickup and dropoff, and the pickup
-     * ETA is to that point). partWay: the ones the rider joins part-way, which wouldn't have matched end to end. */
+     * ETA is to that point). partWay: the ones the rider joins part-way, which wouldn't have matched end to end.
+     * pickupLabel/dropoffLabel: the place names the rider searched with, carried on those stops. */
     private List<RideSearchResult> enrich(List<RoutePost> routes, double riderLat, double riderLng,
-                                          Map<String, RouteMatcher.Match> along, Set<String> partWay) {
+                                          Map<String, RouteMatcher.Match> along, Set<String> partWay,
+                                          String pickupLabel, String dropoffLabel) {
         List<String> driverIds = routes.stream().map(RoutePost::getDriverId).distinct().toList();
         List<String> vehicleIds = routes.stream().map(RoutePost::getVehicleId).filter(Objects::nonNull).distinct().toList();
 
@@ -578,19 +641,20 @@ public class RouteService {
                     pickupEtaMinutes.get(i),
                     route.getRouteNote(),
                     partWay.contains(route.getId()),
-                    stop(along.get(route.getId()), true),
-                    stop(along.get(route.getId()), false)
+                    stop(along.get(route.getId()), true, pickupLabel),
+                    stop(along.get(route.getId()), false, dropoffLabel),
+                    route.getViaSummary()
             );
         }).toList();
     }
 
     /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern as BookingService.routeViaSummary() - on failure every row in the batch gets null instead of the whole search failing. */
-    private static RideStop stop(RouteMatcher.Match match, boolean pickup) {
+    private static RideStop stop(RouteMatcher.Match match, boolean pickup, String label) {
         if (match == null) {
             return null;
         }
         RouteMatcher.Point p = pickup ? match.pickup() : match.dropoff();
-        return new RideStop(p.lat(), p.lng(), p.walkMeters(), p.time());
+        return new RideStop(p.lat(), p.lng(), p.walkMeters(), p.time(), label);
     }
 
     private List<Integer> pickupEtaMinutesBatch(List<RoutePost> routes, double riderLat, double riderLng, Map<String, RouteMatcher.Match> along) {

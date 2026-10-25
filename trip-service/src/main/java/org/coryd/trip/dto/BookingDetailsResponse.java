@@ -32,6 +32,14 @@ public record BookingDetailsResponse(
         boolean vehicleHasAC,
         Integer durationMinutes,
         String overviewPolyline,
-        String pickupCode
+        String pickupCode,
+        /** Where this rider gets in - originLabel/destinationLabel above are the driver's whole route. */
+        String pickupLabel,
+        Double pickupLat,
+        Double pickupLng,
+        /** Where this rider gets out - the route's end when they ride all the way. */
+        String dropoffLabel,
+        Double dropoffLat,
+        Double dropoffLng
 ) {
 }

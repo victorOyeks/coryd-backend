@@ -28,6 +28,9 @@ public record RouteTemplateRequest(
         @NotNull @Positive BigDecimal farePerSeat,
         @Size(max = 255) String routeNote,
         LocalDate activeUntil,
-        @Valid List<PostRouteRequest.ReservationRequest> standingSeats
+        @Valid List<PostRouteRequest.ReservationRequest> standingSeats,
+        /** As PostRouteRequest: the road picked from /maps/route-options; every trip of this regular route uses it. */
+        @Size(max = 20000) String routePolyline,
+        @Size(max = 255) String viaSummary
 ) {
 }

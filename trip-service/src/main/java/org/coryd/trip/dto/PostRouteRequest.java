@@ -27,8 +27,20 @@ public record PostRouteRequest(
         @NotNull @Positive Integer seatCapacity,
         @NotNull @Positive BigDecimal farePerSeat,
         @Size(max = 255) String routeNote,
-        List<@Valid ReservationRequest> reservations
+        List<@Valid ReservationRequest> reservations,
+        /** The road the driver picked from /maps/route-options (its overviewPolyline). Null = Google's usual road. */
+        @Size(max = 20000) String routePolyline,
+        /** Short words for that road, e.g. "Ojota, Maryland, Osborne" or the option's viaSummary - riders see it. */
+        @Size(max = 255) String viaSummary
 ) {
+
+    /** Callers that leave the road to Google. */
+    public PostRouteRequest(String vehicleId, String originLabel, Double originLat, Double originLng,
+                            String destinationLabel, Double destinationLat, Double destinationLng, Instant departureTime,
+                            Integer seatCapacity, BigDecimal farePerSeat, String routeNote, List<ReservationRequest> reservations) {
+        this(vehicleId, originLabel, originLat, originLng, destinationLabel, destinationLat, destinationLng, departureTime,
+                seatCapacity, farePerSeat, routeNote, reservations, null, null);
+    }
 
     /** One seat reservation for a favourite rider, made as part of posting this route - see
      * RouteService.post() for validation (every riderId must actually be a favourite of this

@@ -51,6 +51,8 @@ public class RouteTemplateService {
     @Transactional
     public RouteTemplateResponse create(String driverId, RouteTemplateRequest request) {
         RouteTemplate template = RouteTemplate.builder().driverId(driverId).build();
+        routeService.requireRoadBetween(request.routePolyline(), request.viaSummary(), request.originLat(), request.originLng(),
+                request.destinationLat(), request.destinationLng());
         apply(template, request);
         return RouteTemplateResponse.from(routeTemplateRepository.save(template));
     }
@@ -59,6 +61,8 @@ public class RouteTemplateService {
     @Transactional
     public RouteTemplateResponse update(String driverId, String templateId, RouteTemplateRequest request) {
         RouteTemplate template = own(driverId, templateId);
+        routeService.requireRoadBetween(request.routePolyline(), request.viaSummary(), request.originLat(), request.originLng(),
+                request.destinationLat(), request.destinationLng());
         apply(template, request);
         return RouteTemplateResponse.from(routeTemplateRepository.save(template));
     }
@@ -129,7 +133,8 @@ public class RouteTemplateService {
                 .map(s -> new PostRouteRequest.ReservationRequest(s.getRiderId(), s.getSeatCount())).toList();
         return new PostRouteRequest(t.getVehicleId(), t.getOriginLabel(), t.getOriginLat(), t.getOriginLng(),
                 t.getDestinationLabel(), t.getDestinationLat(), t.getDestinationLng(), departure,
-                t.getTypicalSeatCount(), t.getFarePerSeat(), t.getRouteNote(), seats.isEmpty() ? null : seats);
+                t.getTypicalSeatCount(), t.getFarePerSeat(), t.getRouteNote(), seats.isEmpty() ? null : seats,
+                t.getRoutePolyline(), t.getViaSummary());
     }
 
     private static void apply(RouteTemplate t, RouteTemplateRequest r) {
@@ -153,11 +158,17 @@ public class RouteTemplateService {
         t.setTypicalSeatCount(r.seatCapacity());
         t.setFarePerSeat(r.farePerSeat());
         t.setRouteNote(r.routeNote());
+        t.setRoutePolyline(blankToNull(r.routePolyline()));
+        t.setViaSummary(t.getRoutePolyline() == null ? null : r.viaSummary().trim());
         t.setActiveUntil(r.activeUntil());
         t.getStandingSeats().clear();
         if (r.standingSeats() != null) {
             r.standingSeats().forEach(s -> t.getStandingSeats().add(new RouteTemplate.StandingSeat(s.riderId(), s.seatCount())));
         }
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
     }
 
     private RouteTemplate own(String driverId, String templateId) {

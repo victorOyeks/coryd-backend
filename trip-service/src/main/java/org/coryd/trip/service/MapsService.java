@@ -167,6 +167,27 @@ public class MapsService {
         }
     }
 
+    /** The driver's road choices while posting a route. Not cached: asked once per screen, and with via points
+     * the combinations hardly ever repeat. */
+    public List<RoutePreview> getRouteOptions(double originLat, double originLng, double destLat, double destLng,
+                                              List<double[]> via) {
+        if (isMapsCircuitOpen()) {
+            log.warn("Maps circuit open - rejecting route-options request");
+            throw new BadRequestException("Maps service is temporarily unavailable. Please try again in a moment.");
+        }
+        try {
+            List<RoutePreview> options = googleMapsClient.getRouteOptions(originLat, originLng, destLat, destLng, via);
+            resetMapsCircuit();
+            return options;
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (Exception e) {
+            recordMapsFailure();
+            log.error("Route options call failed: {}", e.getMessage());
+            throw new BadRequestException("Unable to load roads. Please try again.");
+        }
+    }
+
     /** The search-results list's pickup-ETA column - one batched call across every result row instead of one Directions call per row. Not cached: a batch is keyed by wherever this particular rider is standing right now against N route origins, which essentially never repeats, so caching would just waste Redis writes. */
     public List<DistanceMatrixResult> getDistanceMatrixBatch(double originLat, double originLng, List<double[]> destinations) {
         if (isMapsCircuitOpen()) {
