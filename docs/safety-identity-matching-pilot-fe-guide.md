@@ -23,6 +23,7 @@ All paths go through the gateway (`https://api-dev.coryd.ng` on dev) with the us
 | [Notify-me duplicates](#notify-me) | Rider | Handle a new 400. |
 | [Ride details reasons](#ride-details-why-a-ride-cant-be-booked) | Rider | Show the new `unavailableReason` values. |
 | ["How did you hear about us?"](#how-did-you-hear-about-us-at-signup) | Both | Optional question on signup. |
+| [Delete account](#delete-account-both-apps) | Both | New Settings → Delete account, with a confirmation. |
 | [Push notifications](#push-notifications) | Both | New `SAFETY_CHECK` type. |
 | [Beta waitlist form](#website-beta-waitlist-form) | Website | New public endpoint for the "Join the CoRyd beta" page. |
 
@@ -134,8 +135,10 @@ Each passenger (`BookingSummary`: manifest `GET /trip/bookings/routes/{routePost
 | --- | --- |
 | `dropoffLabel`, `dropoffLat`, `dropoffLng` | Where the rider gets out; `null` = the route's end. |
 | `riderVerified` | See [Identity check](#identity-check-nin--selfie-everyone). |
+| `pickupAlongRouteMeters` | How far along the route's road the rider's pickup is, in metres from the start (`0` = boards at the start). |
+| `dropoffAlongRouteMeters` | Same for where they get out (the route's length if they ride to the end); never before their own pickup. |
 
-Show pickups and drop-offs in order along the route.
+Show pickups and drop-offs in the order the car reaches them: sort the passenger list by `pickupAlongRouteMeters`, and drop-offs by `dropoffAlongRouteMeters`. These are measured along the actual road, so they stay right on winding routes where straight-line distance from the start would get the order wrong. Both are `null` only for a route without a stored road line (rare, older trips); keep the existing order then.
 
 ### Tighter matching windows
 
@@ -378,6 +381,32 @@ The "Join the CoRyd beta" page posts to a public endpoint. No login is needed.
 
 ---
 
+## Delete account (both apps)
+
+Riders and drivers can delete their own account from the app (Settings → Delete account). App Store and Play Store both require this, and it's the right to erasure under the Nigeria Data Protection Act.
+
+**Ask first:** "Delete your account? Your profile, ID checks and saved details are erased for good. Your upcoming trips are cancelled and refunded. This can't be undone."
+
+`DELETE /identity/auth/me` (signed in)
+```json
+{ "confirm": true }
+```
+
+- **`200`** *"Your account has been deleted"*: sign the person out and clear everything stored on the phone.
+- **What goes:** their account, profiles, NIN and licence checks, documents, vehicles, emergency contacts, saved places, favourites, blocks, notify-me requests, cards, payout details and notifications.
+- **What stays, anonymised:** past trips, bookings, payments and ratings (for accounting and other people's trips), with no name or phone attached.
+- **Upcoming trips and bookings** are cancelled and riders refunded.
+- **The phone number is free again**: signing up with it starts a brand-new account, with onboarding from the beginning.
+
+| Error | When | Show |
+| --- | --- | --- |
+| `400` *"Confirm that you want to delete your account"* | `confirm` not `true` | Shouldn't happen if you ask first |
+| `400` *"This account can't be deleted yet: …"* | On a trip right now, owes CoRyd money, or riders' payments still settling. The message lists every reason. | The message as-is |
+| `400` *"Your account is suspended - contact CoRyd support to close it"* | Suspended account | The message, with a link to support |
+| `502` *"We couldn't check your trip/payment records just now - please try again in a few minutes"* | A service couldn't be reached | The message, with a Try again button |
+
+---
+
 ## Push notifications
 
 Push data always carries `type`, plus `referenceId` and/or `routePostId` when relevant.
@@ -458,6 +487,8 @@ Push data always carries `type`, plus `referenceId` and/or `routePostId` when re
 ## Appendix: Ops Console
 
 Behind `/ops`, ops admins only.
+
+**Delete an account:** `DELETE /ops/users/{userId}`. Same effect and the same blocking reasons as a user deleting their own account; ops can also delete a suspended account. Ask for confirmation first, since it can't be undone.
 
 | Call | Notes |
 | --- | --- |

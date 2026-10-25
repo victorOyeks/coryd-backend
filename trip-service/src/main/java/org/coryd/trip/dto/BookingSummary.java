@@ -25,6 +25,11 @@ public record BookingSummary(
         Double riderRatingAvg,
         Long riderRatingCount,
         /** Passed the NIN + selfie check - the "Verified rider" badge on the driver's side. */
-        boolean riderVerified
+        boolean riderVerified,
+        /** How far along the route's road the pickup is, in metres from the start (0 = boards at the start). Sort the
+         * passenger list by this. Null only for a route without a stored line - keep the existing order then. */
+        Double pickupAlongRouteMeters,
+        /** Same for where they get out (the route's length if they ride to the end) - drop-offs in this order. */
+        Double dropoffAlongRouteMeters
 ) {
 }

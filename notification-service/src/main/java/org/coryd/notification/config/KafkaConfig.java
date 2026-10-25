@@ -44,6 +44,9 @@ public class KafkaConfig {
      */
     public static final String GROUP_ID_SAFETY = "coryd-notification-service-safety";
 
+    /** Account deletion - erasing a person's tokens and notifications. */
+    public static final String GROUP_ID_ACCOUNT = "coryd-notification-service-account";
+
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 

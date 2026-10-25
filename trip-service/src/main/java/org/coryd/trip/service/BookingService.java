@@ -21,6 +21,7 @@ import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.common.response.PagedResponse;
+import org.coryd.trip.util.RouteProgress;
 import org.coryd.trip.client.IdentityServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
@@ -236,8 +237,9 @@ public class BookingService {
 
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(activeBookings);
         Map<String, ProfileServiceClient.RiderSummaryItem> riders = ridersFor(activeBookings);
+        RouteProgress progress = RouteProgress.of(route.getRoutePolyline());
         List<BookingSummary> bookingSummaries = activeBookings.stream()
-                .map(b -> toSummary(b, riderRatings, riders))
+                .map(b -> toSummary(b, riderRatings, riders, progress))
                 .toList();
         int seatsBooked = activeBookings.stream().mapToInt(Booking::getSeatCount).sum();
 
@@ -292,7 +294,8 @@ public class BookingService {
                 .toList();
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(manifest);
         Map<String, ProfileServiceClient.RiderSummaryItem> riders = ridersFor(manifest);
-        return manifest.stream().map(b -> toSummary(b, riderRatings, riders)).toList();
+        RouteProgress progress = RouteProgress.of(route.getRoutePolyline());
+        return manifest.stream().map(b -> toSummary(b, riderRatings, riders, progress)).toList();
     }
 
     /** The Receipt screen - ownership-gated same as the manifest. Passengers are the riders actually
@@ -349,8 +352,9 @@ public class BookingService {
     }
 
     private BookingSummary toSummary(Booking booking, Map<String, RatingRepository.RatingSummary> riderRatings,
-                                             Map<String, ProfileServiceClient.RiderSummaryItem> riders) {
+                                             Map<String, ProfileServiceClient.RiderSummaryItem> riders, RouteProgress progress) {
         RatingRepository.RatingSummary rating = riderRatings.get(booking.getRiderId());
+        Double pickupAlong = progress.pickup(booking.getPickupLat(), booking.getPickupLng());
         ProfileServiceClient.RiderSummaryItem rider = riders.get(booking.getRiderId());
         return new BookingSummary(booking.getId(), booking.getRiderId(),
                 rider == null ? null : rider.fullName(), rider == null ? null : rider.photoUrl(),
@@ -360,7 +364,9 @@ public class BookingService {
                 booking.getDropoffLabel(), booking.getDropoffLat(), booking.getDropoffLng(),
                 rating == null ? null : rating.getAvgStars(),
                 rating == null ? null : rating.getRatingCount(),
-                identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(booking.getRiderId()));
+                identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(booking.getRiderId()),
+                pickupAlong,
+                progress.dropoff(booking.getDropoffLat(), booking.getDropoffLng(), pickupAlong));
     }
 
     private Map<String, ProfileServiceClient.RiderSummaryItem> ridersFor(List<Booking> bookings) {
@@ -858,11 +864,18 @@ public class BookingService {
     /** Every upcoming seat of a suspended rider: unpaid ones released, paid ones cancelled with a full refund. */
     @Transactional
     public void cancelForSuspension(String riderId) {
+        cancelUpcomingFor(riderId, UserSuspensionEventListener.CANCELLED_BY, "Rider suspended");
+    }
+
+    /** Every upcoming seat of a rider who can't travel any more (suspended, or the account closed): unpaid ones
+     * released, paid ones cancelled with a full refund. why opens the booking-history note. */
+    @Transactional
+    public void cancelUpcomingFor(String riderId, String cancelledBy, String why) {
         List<BookingStatus> upcoming = Stream.concat(Stream.of(BookingStatus.RESERVED, BookingStatus.HELD),
                 RIDER_CANCELLABLE_STATUSES.stream()).toList();
         for (Booking booking : bookingRepository.findByRiderIdAndStatusIn(riderId, upcoming)) {
             if (booking.getStatus() == BookingStatus.HELD || booking.getStatus() == BookingStatus.RESERVED) {
-                releaseUnpaid(booking, booking.getStatus(), "Rider suspended - seat released");
+                releaseUnpaid(booking, booking.getStatus(), why + " - seat released");
                 continue;
             }
             if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
@@ -871,13 +884,13 @@ public class BookingService {
             RoutePost route = routeOf(booking);
             routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
             routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
-            recordHistory(booking.getId(), BookingStatus.CANCELLED_RIDER, "Rider suspended - refunded in full");
+            recordHistory(booking.getId(), BookingStatus.CANCELLED_RIDER, why + " - refunded in full");
             kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                     .bookingId(booking.getId())
                     .routePostId(booking.getRoutePostId())
                     .riderId(riderId)
                     .driverId(route.getDriverId())
-                    .cancelledBy(UserSuspensionEventListener.CANCELLED_BY)
+                    .cancelledBy(cancelledBy)
                     .feeApplied(false)
                     .paid(true)
                     .cancelledAt(LocalDateTime.now())
@@ -1102,7 +1115,8 @@ public class BookingService {
         List<Booking> finalBookings = bookingRepository.findByRoutePostId(routePostId);
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(finalBookings);
         Map<String, ProfileServiceClient.RiderSummaryItem> riders = ridersFor(finalBookings);
-        return finalBookings.stream().map(b -> toSummary(b, riderRatings, riders)).toList();
+        RouteProgress progress = RouteProgress.of(route.getRoutePolyline());
+        return finalBookings.stream().map(b -> toSummary(b, riderRatings, riders, progress)).toList();
     }
 
     /** TRIP_COMPLETED is what pays the driver, so it goes out only from the call that actually moved

@@ -43,6 +43,7 @@ public final class KafkaTopics {
     /** Ops suspended or reinstated an account - trip-service stops (or lets again) the user post and book. */
     public static final String USER_SUSPENDED = "coryd-user-suspended";
     public static final String USER_REINSTATED = "coryd-user-reinstated";
+    public static final String USER_DELETED = "coryd-user-deleted";
 
     /** A person's NIN + selfie check was approved or rejected - trip-service gates booking and posting on it. */
     public static final String IDENTITY_VERIFICATION_CHANGED = "coryd-identity-verification-changed";

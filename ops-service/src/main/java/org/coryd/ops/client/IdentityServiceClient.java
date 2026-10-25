@@ -86,6 +86,14 @@ public class IdentityServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** Deletes the account everywhere - refused (400, with the reasons) while the person is on a trip or has money still moving. */
+    public void deleteAccount(String userId, String opsUserId) {
+        DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.delete()
+                .uri(b -> b.path("/internal/users/{userId}").queryParam("opsUserId", opsUserId).build(userId))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
     public void reinstate(String userId, String opsUserId) {
         DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
                 .uri(b -> b.path("/internal/users/{userId}/reinstate").queryParam("opsUserId", opsUserId).build(userId))

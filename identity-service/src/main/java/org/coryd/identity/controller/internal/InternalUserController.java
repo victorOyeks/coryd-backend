@@ -1,5 +1,7 @@
 package org.coryd.identity.controller.internal;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.coryd.identity.service.AccountDeletionService;
 import io.swagger.v3.oas.annotations.Hidden;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,7 @@ public class InternalUserController {
 
     private final UserService userService;
     private final SuspensionService suspensionService;
+    private final AccountDeletionService accountDeletionService;
 
     @GetMapping("/{userId}/contact")
     public ApiResponse<UserContactResponse> contact(@PathVariable String userId) {
@@ -45,6 +48,13 @@ public class InternalUserController {
     public ApiResponse<Void> suspend(@PathVariable String userId, @Valid @RequestBody SuspendRequest request) {
         suspensionService.suspend(userId, request.reason(), request.opsUserId());
         return ApiResponse.ok("Suspended", null);
+    }
+
+    /** Ops Console "Delete account" - through ops-service, which checks the caller is OPS_ADMIN. */
+    @DeleteMapping("/{userId}")
+    public ApiResponse<Void> delete(@PathVariable String userId, @RequestParam String opsUserId) {
+        accountDeletionService.deleteByOps(userId, opsUserId);
+        return ApiResponse.ok("Account deleted", null);
     }
 
     @PostMapping("/{userId}/reinstate")

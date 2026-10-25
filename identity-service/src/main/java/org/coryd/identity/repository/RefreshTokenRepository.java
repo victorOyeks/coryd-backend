@@ -10,6 +10,10 @@ import java.util.Optional;
 
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, String> {
 
+    @Modifying
+    @Query("delete from RefreshToken t where t.userId = :userId")
+    void deleteByUserId(@Param("userId") String userId);
+
     /**
      * Deliberately not filtered on revoked. A spent token is evidence - it tells refresh() whether
      * this is a client retrying after a dropped response or an attacker replaying a stolen token,

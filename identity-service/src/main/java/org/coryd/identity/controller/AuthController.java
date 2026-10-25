@@ -1,5 +1,7 @@
 package org.coryd.identity.controller;
 
+import org.coryd.identity.service.AccountDeletionService;
+import org.coryd.identity.dto.DeleteAccountRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,7 @@ public class AuthController {
     private static final String DEVICE_ID_HEADER = "X-Device-Id";
 
     private final AuthService authService;
+    private final AccountDeletionService accountDeletionService;
 
     @PostMapping("/signup")
     public ApiResponse<Void> signup(@Valid @RequestBody SignupRequest request) {
@@ -87,6 +90,18 @@ public class AuthController {
     public ApiResponse<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         authService.resetPassword(request);
         return ApiResponse.ok("Password reset", null);
+    }
+
+    /**
+     * Delete my account, for good. Personal data is erased everywhere; past trips and payments are kept
+     * anonymised. Refused while on a trip or with money still moving - the message says why. Afterwards the
+     * phone number can sign up again as a brand-new account.
+     */
+    @DeleteMapping("/me")
+    public ApiResponse<Void> deleteMyAccount(@AuthenticationPrincipal CoRydUserDetails principal,
+                                             @Valid @RequestBody DeleteAccountRequest request) {
+        accountDeletionService.deleteOwn(principal.getUserId());
+        return ApiResponse.ok("Your account has been deleted", null);
     }
 
     @PostMapping("/accept-terms")

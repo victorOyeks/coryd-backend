@@ -146,6 +146,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic userDeletedTopic() {
+        return TopicBuilder.name(KafkaTopics.USER_DELETED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic tripSafetyCheckTopic() {
         return TopicBuilder.name(KafkaTopics.TRIP_SAFETY_CHECK).partitions(3).replicas(1).build();
     }
