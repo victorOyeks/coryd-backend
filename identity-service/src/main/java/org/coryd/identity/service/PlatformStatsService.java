@@ -1,9 +1,12 @@
 package org.coryd.identity.service;
 
 import lombok.RequiredArgsConstructor;
+import org.coryd.identity.dto.DataSubjectCountResponse;
 import org.coryd.identity.dto.HeardAboutUsStatsResponse;
 import org.coryd.identity.dto.IdentityStatsResponse;
+import org.coryd.identity.repository.BetaSignupRepository;
 import org.coryd.identity.repository.PlatformStatsRepository;
+import org.coryd.identity.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +18,16 @@ import java.util.List;
 public class PlatformStatsService {
 
     private final PlatformStatsRepository platformStatsRepository;
+    private final UserRepository userRepository;
+    private final BetaSignupRepository betaSignupRepository;
+
+    /** Everyone we hold personal data about - every account, plus waitlist sign-ups who haven't joined. */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public DataSubjectCountResponse dataSubjects() {
+        long users = userRepository.count();
+        long waitlistOnly = betaSignupRepository.countByJoinedAtIsNull();
+        return new DataSubjectCountResponse(users, waitlistOnly, users + waitlistOnly);
+    }
 
     @Transactional(readOnly = true)
     public IdentityStatsResponse statsFor(Instant from, Instant to) {

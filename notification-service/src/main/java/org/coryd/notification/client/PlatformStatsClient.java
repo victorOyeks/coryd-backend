@@ -73,6 +73,27 @@ public class PlatformStatsClient {
         }
     }
 
+    /** Everyone CoRyd holds personal data about (accounts + waitlist-only sign-ups), or null if identity-service didn't answer. */
+    public DataSubjects dataSubjects() {
+        try {
+            DataSubjectsView view = identity.get()
+                    .uri("/internal/stats/data-subjects")
+                    .retrieve()
+                    .body(DataSubjectsView.class);
+            return view == null ? null : view.data();
+        } catch (Exception e) {
+            log.error("Could not fetch the data-subject count: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    public record DataSubjects(long registeredUsers, long waitlistOnly, long total) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record DataSubjectsView(DataSubjects data) {
+    }
+
     private <V extends StatsView<T>, T> T fetch(String name, RestClient client, Instant from, Instant to,
                                                 Class<V> viewType, T fallback) {
         try {

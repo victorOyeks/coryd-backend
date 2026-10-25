@@ -3,6 +3,7 @@ package org.coryd.identity.controller.internal;
 import io.swagger.v3.oas.annotations.Hidden;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.identity.dto.DataSubjectCountResponse;
 import org.coryd.identity.dto.HeardAboutUsStatsResponse;
 import org.coryd.identity.dto.IdentityStatsResponse;
 import org.coryd.identity.service.PlatformStatsService;
@@ -28,6 +29,12 @@ public class InternalStatsController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
         return ApiResponse.ok(platformStatsService.statsFor(from, to));
+    }
+
+    /** For notification-service's NDPC threshold check - everyone we hold personal data about. */
+    @GetMapping("/data-subjects")
+    public ApiResponse<DataSubjectCountResponse> dataSubjects() {
+        return ApiResponse.ok(platformStatsService.dataSubjects());
     }
 
     /** For the Ops Console - sign-ups by "How did you hear about us?". */

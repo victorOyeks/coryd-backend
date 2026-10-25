@@ -12,6 +12,10 @@ import java.util.Optional;
 
 public interface BetaSignupRepository extends JpaRepository<BetaSignup, String> {
 
+    /** Waitlist sign-ups who haven't created an account - the rest are already counted as users. */
+    long countByJoinedAtIsNull();
+
+
     Optional<BetaSignup> findByWhatsappNumber(String whatsappNumber);
 
     /** Ops list - any filter left null matches everything; search looks at name, number and route. */

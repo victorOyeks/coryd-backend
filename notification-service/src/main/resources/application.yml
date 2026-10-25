@@ -106,6 +106,13 @@ report:
   recipients: ${REPORT_RECIPIENTS:hello@coryd.ng}
   logo-url: ${REPORT_LOGO_URL:}
 
+# NDPC registration tiers: ops (REPORT_RECIPIENTS) is emailed once when the number of people we hold data
+# about nears a tier (warn-percent of it) and once when it reaches it. Tiers/fees are in NdpcThresholdProperties.
+ndpc:
+  enabled: ${NDPC_ALERTS_ENABLED:true}
+  warn-percent: ${NDPC_WARN_PERCENT:80}
+  cron: ${NDPC_CHECK_CRON:0 30 6 * * *}
+
 firebase:
   credentials-path: ${FIREBASE_CREDENTIALS_PATH:firebase-service-account.json}
 
