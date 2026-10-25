@@ -90,14 +90,29 @@ public class DataSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         int drivers = 0;
         for (int i = 0; i < SeedFixtures.DRIVERS.size(); i++) {
-            drivers += seedDriver(SeedFixtures.DRIVERS.get(i), i + 1) ? 1 : 0;
+            SeedFixtures.SeedPerson driver = SeedFixtures.DRIVERS.get(i);
+            int index = i + 1;
+            drivers += seedSafely(driver, () -> seedDriver(driver, index)) ? 1 : 0;
         }
         int riders = 0;
         for (SeedFixtures.SeedPerson rider : SeedFixtures.RIDERS) {
-            riders += seedRider(rider) ? 1 : 0;
+            riders += seedSafely(rider, () -> seedRider(rider)) ? 1 : 0;
         }
         log.info("Seeded {} new fully-approved drivers and {} new rider profiles ({} drivers / {} riders already in place)",
                 drivers, riders, SeedFixtures.DRIVERS.size() - drivers, SeedFixtures.RIDERS.size() - riders);
+    }
+
+    /**
+     * One test account that can't be prepared - deleted through the app, say, until identity-service
+     * recreates it on its next restart - is skipped, never a reason for profile-service not to start.
+     */
+    private boolean seedSafely(SeedFixtures.SeedPerson person, java.util.function.BooleanSupplier seed) {
+        try {
+            return seed.getAsBoolean();
+        } catch (Exception e) {
+            log.warn("Skipped seeding {} ({}): {}", person.phone(), person.firstName(), e.getMessage());
+            return false;
+        }
     }
 
     private boolean seedDriver(SeedFixtures.SeedPerson driver, int index) {
