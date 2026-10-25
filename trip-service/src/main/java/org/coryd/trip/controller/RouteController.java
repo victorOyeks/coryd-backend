@@ -6,6 +6,8 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.trip.dto.DriverPostingEligibilityResponse;
+import org.coryd.trip.dto.FareSuggestionRequest;
+import org.coryd.trip.dto.FareSuggestionResponse;
 import org.coryd.trip.dto.MultiStopRoutePreview;
 import org.coryd.trip.dto.NearbyActivityResponse;
 import org.coryd.trip.dto.PostRouteRequest;
@@ -17,6 +19,7 @@ import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
 import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
+import org.coryd.trip.service.FareSuggestionService;
 import org.coryd.trip.service.RouteService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -40,6 +43,7 @@ public class RouteController {
 
     private final RouteService routeService;
     private final BookingService bookingService;
+    private final FareSuggestionService fareSuggestionService;
 
     /** Whether this driver may post routes, and how long they have left to upload documents. Always self-scoped. */
     @GetMapping("/drivers/me/posting-eligibility")
@@ -52,6 +56,12 @@ public class RouteController {
     public ApiResponse<RoutePost> post(@AuthenticationPrincipal CoRydUserDetails principal,
                                         @PathVariable String driverId, @Valid @RequestBody PostRouteRequest request) {
         return ApiResponse.ok(routeService.post(driverId, principal.getUserId(), request));
+    }
+
+    /** The price to suggest while a driver posts a route - they can keep it or set their own. */
+    @PostMapping("/fare-suggestion")
+    public ApiResponse<FareSuggestionResponse> fareSuggestion(@Valid @RequestBody FareSuggestionRequest request) {
+        return ApiResponse.ok(fareSuggestionService.suggest(request));
     }
 
     /** sessionId is optional and client-generated (a UUID kept for the life of the search screen) -

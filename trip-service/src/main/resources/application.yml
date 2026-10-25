@@ -132,6 +132,11 @@ springdoc:
 # Routes cannot depart further ahead than the payout settlement cycle
 trip:
   max-days-ahead: ${TRIP_MAX_DAYS_AHEAD:3}
+  # Fare suggested to drivers while posting: whole-route km x per-km, rounded, never below the minimum.
+  fare:
+    per-km: ${FARE_PER_KM:100}
+    minimum: ${FARE_MINIMUM:500}
+    round-to: ${FARE_ROUND_TO:100}
   # Regular routes: how often each driver's upcoming trips are posted (Lagos time).
   route-templates:
     cron: ${ROUTE_TEMPLATES_CRON:0 5 * * * *}
