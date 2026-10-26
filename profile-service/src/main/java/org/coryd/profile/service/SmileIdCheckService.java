@@ -162,10 +162,11 @@ public class SmileIdCheckService {
         log.info("{} check {} (Smile ID job {}) for {}: {} - {}", check.getCheckType(), checkId, smileJobId, userId, decision.kind(), summary);
 
         switch (decision.kind()) {
-            case APPROVE -> handler.approve(userId);
+            case APPROVE -> handler.approve(userId, result.idFields());
             case OPS -> handler.sendToOps(userId);
             case RETRY -> { }
         }
+        handler.afterResult(userId, decision);
     }
 
     private SmileIdDecision decide(SmileIdCheckHandler handler, String userId, SmileIdResult result) {

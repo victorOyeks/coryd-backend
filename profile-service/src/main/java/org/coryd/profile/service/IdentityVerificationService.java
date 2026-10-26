@@ -3,15 +3,19 @@ package org.coryd.profile.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
+import org.coryd.common.enums.VerificationCheckOutcome;
 import org.coryd.common.enums.VerificationCheckType;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.response.PagedResponse;
+import org.coryd.profile.config.SmileIdProperties;
 import org.coryd.profile.dto.IdentityVerificationQueueItem;
 import org.coryd.profile.dto.IdentityVerificationResponse;
+import org.coryd.profile.dto.SmileIdResult;
 import org.coryd.profile.dto.SubmitIdentityVerificationRequest;
+import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.entity.IdentityVerification;
 import org.coryd.profile.entity.SmileIdCheck;
 import org.coryd.profile.entity.SmileIdCheckType;
@@ -54,6 +58,8 @@ public class IdentityVerificationService {
     private final VerificationCheckRepository verificationCheckRepository;
     private final IdentityVerificationDecider decider;
     private final SmileIdCheckRepository smileIdCheckRepository;
+    private final VerifiedIdentityService verifiedIdentityService;
+    private final SmileIdProperties smileIdProperties;
 
     /**
      * The older flow: a selfie uploaded through POST /media/upload, reviewed by ops by eye. Kept only so
@@ -127,25 +133,77 @@ public class IdentityVerificationService {
         requireOps(callerRole);
         IdentityVerification verification = identityVerificationRepository.findByUserId(riderId)
                 .orElseThrow(() -> new ResourceNotFoundException("This rider hasn't submitted their identity yet"));
+        DriverProfile lookingUp = driverProfileRepository.findByUserId(riderId)
+                .filter(d -> d.getNinStatus() == VerificationStatus.IN_REVIEW).orElse(null);
         if (approve) {
-            decider.approve(verification, callerId);
+            verifiedIdentityService.applyFromLatestCheck(riderId);
+            if (lookingUp != null) {
+                // Ops accepted a driver's NIN lookup - verified once their licence is too (already, or when it lands).
+                lookingUp.setNinStatus(VerificationStatus.APPROVED);
+                driverProfileRepository.save(lookingUp);
+                if (lookingUp.getGovernmentIdStatus() == VerificationStatus.APPROVED) {
+                    decider.approve(verification, callerId);
+                } else {
+                    verification.setStatus(VerificationStatus.PENDING);
+                    identityVerificationRepository.save(verification);
+                }
+            } else {
+                decider.approve(verification, callerId);
+            }
         } else {
             if (isBlank(reason)) {
                 throw new BadRequestException("Give the rider a reason so they can fix it");
             }
             decider.reject(verification, reason.trim(), callerId);
+            if (lookingUp != null) {
+                lookingUp.setNinStatus(VerificationStatus.REJECTED);
+                driverProfileRepository.save(lookingUp);
+            }
         }
         return IdentityVerificationResponse.from(verification, ninCheck(riderId));
     }
 
     private VerificationCheck latestCheck(String userId) {
         return verificationCheckRepository.findByDriverId(userId).stream()
-                .filter(c -> c.getCheckType() == VerificationCheckType.NIN_FACE)
+                .filter(c -> c.getCheckType() == VerificationCheckType.NIN_FACE || c.getCheckType() == VerificationCheckType.NIN_LOOKUP)
                 .max(Comparator.comparing(VerificationCheck::getUpdatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
                 .orElse(null);
     }
 
     record Name(String firstName, String lastName) {
+    }
+
+    /**
+     * A NIN Smile ID found: the NIMC name against their rider and driver profile names (NIMC sometimes holds them the
+     * other way round - the best fit counts). Close enough approves; otherwise ops. confirmed ends the approval note.
+     */
+    SmileIdDecision matchNimcName(String userId, SmileIdResult.IdFields idFields, String confirmed) {
+        String recordFirst = idFields == null ? null : SmileIdResults.blankToNull(idFields.firstName());
+        String recordLast = idFields == null ? null : SmileIdResults.blankToNull(idFields.lastName());
+        String fullName = idFields == null ? null : SmileIdResults.blankToNull(idFields.fullName());
+        String onRecord = (fullName != null ? fullName : SmileIdResults.safe(recordFirst) + " " + SmileIdResults.safe(recordLast)).trim();
+        // Sandbox checks are all sent as the test identity, so that's whose name comes back.
+        List<Name> names = smileIdProperties.isSandbox()
+                ? List.of(SmileIdResults.testIdentityName(smileIdProperties))
+                : profileNames(userId);
+        if (names.isEmpty() || recordFirst == null || recordLast == null) {
+            return SmileIdDecision.ops(VerificationCheckOutcome.PROVIDER_ERROR, null, true,
+                    "Smile ID cleared this check but the NIMC name couldn't be compared (NIMC: " + onRecord + ")");
+        }
+        Name best = names.get(0);
+        double score = -1;
+        for (Name name : names) {
+            double s = NameMatcher.bestOrder(name.firstName(), name.lastName(), recordFirst, recordLast);
+            if (s > score) {
+                score = s;
+                best = name;
+            }
+        }
+        if (score < smileIdProperties.getNameMatchThreshold()) {
+            return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true,
+                    "NIN is held by " + onRecord + ", profile says " + best.firstName() + " " + best.lastName());
+        }
+        return SmileIdDecision.approve(score, "NIMC confirmed " + onRecord + confirmed);
     }
 
     /** Their rider and driver profile names, whichever exist - the result is matched against the closer one. */

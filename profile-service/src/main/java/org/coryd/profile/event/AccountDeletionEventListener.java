@@ -41,6 +41,7 @@ public class AccountDeletionEventListener {
             "DELETE FROM profile.driver_documents WHERE driver_id = ?",
             "DELETE FROM profile.vehicles WHERE driver_id = ?",
             "DELETE FROM profile.smile_id_checks WHERE user_id = ?",
+            "DELETE FROM profile.nin_lookup_misses WHERE user_id = ?",
             "DELETE FROM profile.identity_verifications WHERE user_id = ?",
             "DELETE FROM profile.rider_profiles WHERE user_id = ?",
             "DELETE FROM profile.driver_profiles WHERE user_id = ?");

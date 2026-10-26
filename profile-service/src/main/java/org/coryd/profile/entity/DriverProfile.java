@@ -49,6 +49,16 @@ public class DriverProfile extends BaseEntity {
 
     private String idNumber;
 
+    /**
+     * The driver's NIN lookup (number only - see SmileIdProperties.driversUseNinLookup): PENDING until NIMC
+     * confirms a NIN in their name (APPROVED); IN_REVIEW when ops has to look; REJECTED when ops turned it down.
+     * The driver's identity is verified once this and their licence are both approved.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private VerificationStatus ninStatus = VerificationStatus.PENDING;
+
     @Enumerated(EnumType.STRING)
     @Builder.Default
     @Column(nullable = false, length = 20)

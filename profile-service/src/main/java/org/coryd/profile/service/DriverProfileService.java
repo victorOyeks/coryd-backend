@@ -31,6 +31,8 @@ public class DriverProfileService {
     private final IdentityServiceClient identityServiceClient;
     private final EmergencyContactService emergencyContactService;
     private final SmileIdCheckRepository smileIdCheckRepository;
+    private final VerifiedIdentityService verifiedIdentityService;
+    private final NinLookupService ninLookupService;
 
     /** Internal/batch use (InternalDriverController, getBatch below) - no phone, no extra cross-service call. */
     public DriverProfile get(String userId) {
@@ -69,8 +71,11 @@ public class DriverProfileService {
             profile = DriverProfile.builder().userId(userId).build();
         }
 
-        profile.setFirstName(request.firstName());
-        profile.setLastName(request.lastName());
+        // A verified name stays as it was when the NIN check passed.
+        if (isNewProfile || !verifiedIdentityService.nameVerified(userId)) {
+            profile.setFirstName(request.firstName());
+            profile.setLastName(request.lastName());
+        }
         // Only optional fields actually sent are changed - an older app that leaves one out must not wipe it.
         if (request.photoUrl() != null) {
             profile.setPhotoUrl(request.photoUrl());
@@ -118,6 +123,7 @@ public class DriverProfileService {
     private DriverProfileResponse toResponse(DriverProfile profile) {
         return DriverProfileResponse.from(profile, identityServiceClient.fetchPhone(profile.getUserId()),
                 emergencyContactService.getPrimary(profile.getUserId()).orElse(null),
-                smileIdCheckRepository.findByUserIdAndCheckType(profile.getUserId(), SmileIdCheckType.DRIVERS_LICENCE).orElse(null));
+                smileIdCheckRepository.findByUserIdAndCheckType(profile.getUserId(), SmileIdCheckType.DRIVERS_LICENCE).orElse(null),
+                verifiedIdentityService.nameVerified(profile.getUserId()), ninLookupService.view(profile));
     }
 }

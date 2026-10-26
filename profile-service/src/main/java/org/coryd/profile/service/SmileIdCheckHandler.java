@@ -41,7 +41,12 @@ interface SmileIdCheckHandler {
     /** A reason only this check knows how to handle, or null for the shared handling. */
     SmileIdDecision onReason(String status, String reason, String message);
 
-    void approve(String userId);
+    /** idFields: the record Smile ID checked against (NIMC's for a NIN), null if it sent none. */
+    void approve(String userId, SmileIdResult.IdFields idFields);
 
     void sendToOps(String userId);
+
+    /** Anything this check does once a result is recorded, whatever it was. */
+    default void afterResult(String userId, SmileIdDecision decision) {
+    }
 }

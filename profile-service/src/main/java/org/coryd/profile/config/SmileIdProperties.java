@@ -46,6 +46,28 @@ public class SmileIdProperties {
      */
     private TestIdentity testIdentity = new TestIdentity();
 
+    /**
+     * Drivers prove who they are with a NIN lookup (number only, no selfie) plus their licence check, instead of
+     * the NIN + selfie check riders do - one face match per person, not two. false keeps the older flow (drivers
+     * do the NIN + selfie check) for app builds that don't have the lookup yet.
+     */
+    private boolean driversUseNinLookup = true;
+
+    /** Each lookup is billed, found or not - three is plenty for a real NIN with a typo. */
+    private int ninLookupMaxAttempts = 3;
+
+    /** A pause between lookups, so a double tap or an impatient retry isn't billed twice. */
+    private int ninLookupCooldownSeconds = 30;
+
+    /**
+     * Keys the one-way fingerprint of a NIN, so the same NIN on two accounts (or a number already found not to
+     * exist) is caught without keeping the NIN itself. Must never change once set, or old fingerprints stop matching.
+     */
+    private String ninFingerprintKey;
+
+    /** The privacy notice the person agreed to, sent with each lookup as Smile ID requires. */
+    private String privacyNoticeUrl = "https://coryd.ng/privacy";
+
     @Getter
     @Setter
     public static class TestIdentity {
@@ -54,11 +76,22 @@ public class SmileIdProperties {
         private String email = "amina.clearwater@example.com";
     }
 
+    /** Drivers whose NIN check is the lookup, not the NIN + selfie check. */
+    public boolean driversLookUpNin() {
+        return driversUseNinLookup;
+    }
+
     public boolean isConfigured() {
         return partnerId != null && !partnerId.isBlank() && apiKey != null && !apiKey.isBlank();
     }
 
+    /** Only for pointing a local run at a stand-in for Smile ID - blank in every real environment. */
+    private String baseUrlOverride;
+
     public String baseUrl() {
+        if (baseUrlOverride != null && !baseUrlOverride.isBlank()) {
+            return baseUrlOverride;
+        }
         return sandbox ? "https://testapi.smileidentity.com" : "https://api.smileidentity.com";
     }
 }

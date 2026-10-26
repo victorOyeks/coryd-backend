@@ -32,10 +32,21 @@ public record DriverProfileResponse(
         String emergencyContactPhone,
         boolean licenceCheckInProgress,
         SmileIdRetryReason licenceRetryReason,
-        int licenceAttemptsLeft
+        int licenceAttemptsLeft,
+        /** Their NIN check passed, so the name is verified - show it read-only (a different name sent is ignored). */
+        boolean nameVerified,
+        /** true: the NIN step is the lookup (POST /drivers/me/nin-lookup, no selfie); false: the older NIN + selfie check. */
+        boolean ninLookup,
+        /** PENDING (ask for the NIN), CHECKING (result on its way), MATCH, IN_REVIEW (with ops) or REJECTED. */
+        String ninStatus,
+        String ninLast4,
+        /** Why the last lookup failed (NIN_NOT_FOUND, TRY_LATER) - only while ninStatus is PENDING. */
+        SmileIdRetryReason ninRetryReason,
+        int ninTriesLeft
 ) {
     /** licenceCheck is their Smile ID licence check, null if they've never started one. */
-    public static DriverProfileResponse from(DriverProfile profile, String phone, EmergencyContact primaryContact, SmileIdCheck licenceCheck) {
+    public static DriverProfileResponse from(DriverProfile profile, String phone, EmergencyContact primaryContact, SmileIdCheck licenceCheck,
+                                             boolean nameVerified, DriverNinView nin) {
         boolean pending = profile.getGovernmentIdStatus() == VerificationStatus.PENDING;
         boolean inProgress = (pending || profile.getGovernmentIdStatus() == VerificationStatus.APPROVED)
                 && licenceCheck != null && licenceCheck.waitingForResult();
@@ -49,7 +60,9 @@ public record DriverProfileResponse(
                 primaryContact == null ? null : primaryContact.getPhone(),
                 inProgress,
                 pending && !inProgress && licenceCheck != null ? licenceCheck.getRetryReason() : null,
-                licenceCheck == null ? SmileIdCheck.MAX_ATTEMPTS : licenceCheck.attemptsLeft()
+                licenceCheck == null ? SmileIdCheck.MAX_ATTEMPTS : licenceCheck.attemptsLeft(),
+                nameVerified,
+                nin.ninLookup(), nin.ninStatus(), nin.ninLast4(), nin.ninRetryReason(), nin.ninTriesLeft()
         );
     }
 }

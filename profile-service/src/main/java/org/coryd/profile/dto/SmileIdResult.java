@@ -79,11 +79,12 @@ public record SmileIdResult(
         return partnerParams == null ? null : partnerParams.jobId();
     }
 
-    /** The copy kept for audit - links to the selfie, NIN photo and receipt removed (signed URLs into Smile ID's storage). */
+    /** The copy kept for audit - links to the selfie, NIN photo and receipt removed (signed URLs into Smile ID's storage),
+     * and the gender and phone on the record left out: we don't keep them, and Smile ID has the full record by job ID. */
     public SmileIdResult forAudit() {
         IdFields fields = idFields == null ? null : new IdFields(idFields.firstName(), idFields.lastName(), idFields.otherNames(),
                 idFields.fullName(), idFields.idNumber(), idFields.idType(), idFields.dateOfBirth(), idFields.expirationDate(),
-                idFields.gender(), idFields.phoneNumber(), idFields.photoUrl() == null ? null : "[removed]");
+                null, null, idFields.photoUrl() == null ? null : "[removed]");
         return new SmileIdResult(status, message, reason, product, createdAt, completedAt, partnerParams, fields, null, null, antifraud);
     }
 }

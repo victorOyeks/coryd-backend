@@ -14,12 +14,16 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 
 /**
- * The two things the backend does with Smile ID: mint the short-lived token the app's SDK submits
- * with, and check that a webhook really came from Smile ID. Everything else goes app to Smile ID.
+ * What the backend does with Smile ID: mint the short-lived token the app's SDK submits with, submit a
+ * driver's NIN lookup (the one check sent from here, not the app), and check that a webhook really came
+ * from Smile ID.
  */
 @Slf4j
 @Component
@@ -69,6 +73,60 @@ public class SmileIdClient {
             log.error("Smile ID token request failed (sandbox={}): {}", properties.isSandbox(), e.getMessage());
             throw new ExternalServiceException("Identity checks are unavailable right now - try again in a few minutes", e);
         }
+    }
+
+    /**
+     * POST /v3/enhanced_kyc - a NIN looked up with NIMC by number, no selfie. Accepted straight away (202);
+     * the result comes to the same webhook as every other check, carrying checkId in partner_params.
+     * Multipart only, nested fields written as user_details[given_names] and so on.
+     */
+    public void submitNinLookup(NinLookup lookup) {
+        String token = mintToken();
+        List<String[]> fields = new ArrayList<>();
+        fields.add(new String[]{"country", "NG"});
+        fields.add(new String[]{"id_type", lookup.idType()});
+        fields.add(new String[]{"id_number", lookup.nin()});
+        fields.add(new String[]{"user_details[given_names]", lookup.givenNames()});
+        fields.add(new String[]{"user_details[last_name]", lookup.lastName()});
+        if (lookup.email() != null) {
+            fields.add(new String[]{"user_details[email]", lookup.email()});
+        }
+        if (lookup.phone() != null) {
+            fields.add(new String[]{"user_details[phone_number]", lookup.phone()});
+        }
+        fields.add(new String[]{"consent[granted]", "true"});
+        fields.add(new String[]{"consent[granted_at]", lookup.consentAt().toString()});
+        fields.add(new String[]{"consent[notice_language]", "EN"});
+        fields.add(new String[]{"consent[notice_privacy_policy_url]", properties.getPrivacyNoticeUrl()});
+        fields.add(new String[]{"partner_params[coryd_check_id]", lookup.checkId()});
+        if (properties.getCallbackUrl() != null && !properties.getCallbackUrl().isBlank()) {
+            fields.add(new String[]{"callback_url", properties.getCallbackUrl()});
+        }
+        String boundary = "coryd-" + UUID.randomUUID();
+        StringBuilder body = new StringBuilder();
+        for (String[] field : fields) {
+            body.append("--").append(boundary).append("\r\n")
+                    .append("Content-Disposition: form-data; name=\"").append(field[0]).append("\"\r\n\r\n")
+                    .append(field[1]).append("\r\n");
+        }
+        body.append("--").append(boundary).append("--\r\n");
+        try {
+            restClient.post()
+                    .uri("/v3/enhanced_kyc")
+                    .header("SmileID-Token", token)
+                    .header(HttpHeaders.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary)
+                    .body(body.toString().getBytes(StandardCharsets.UTF_8))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (Exception e) {
+            log.error("Smile ID NIN lookup {} not accepted (sandbox={}): {}", lookup.checkId(), properties.isSandbox(), e.getMessage());
+            throw new ExternalServiceException("Identity checks are unavailable right now - try again in a few minutes", e);
+        }
+    }
+
+    /** phone in E.164 (+234...); Smile ID needs an email or a phone. */
+    public record NinLookup(String checkId, String idType, String nin, String givenNames, String lastName,
+                            String email, String phone, Instant consentAt) {
     }
 
     /**

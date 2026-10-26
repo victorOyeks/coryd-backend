@@ -12,6 +12,7 @@ import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.entity.SmileIdCheckType;
 import org.coryd.profile.entity.SmileIdRetryReason;
 import org.coryd.profile.repository.DriverProfileRepository;
+import org.coryd.profile.repository.IdentityVerificationRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -36,6 +37,7 @@ class LicenceCheck implements SmileIdCheckHandler {
     private static final ZoneId LAGOS = ZoneId.of("Africa/Lagos");
 
     private final DriverProfileRepository driverProfileRepository;
+    private final IdentityVerificationRepository identityVerificationRepository;
     private final VerificationAggregationService verificationAggregationService;
     private final SmileIdProperties properties;
 
@@ -65,6 +67,13 @@ class LicenceCheck implements SmileIdCheckHandler {
                 .orElseThrow(() -> new BadRequestException("Save your driver profile before verifying your licence"));
         if (isBlank(profile.getFirstName()) || isBlank(profile.getLastName()) || isBlank(profile.getIdNumber())) {
             throw new BadRequestException("Add your name and licence number, as on your licence, before verifying it");
+        }
+        // The NIN lookup is the cheaper check, so it goes first - a NIN that isn't real never costs a licence check.
+        boolean identityVerified = identityVerificationRepository.findByUserId(userId)
+                .map(v -> v.getStatus() == VerificationStatus.APPROVED).orElse(false);
+        if (properties.driversLookUpNin() && !identityVerified && profile.getNinStatus() != VerificationStatus.APPROVED
+                && profile.getNinStatus() != VerificationStatus.IN_REVIEW) {
+            throw new BadRequestException("Confirm your NIN first - it's the step before your licence");
         }
         if (properties.isSandbox()) {
             return; // dev: re-run the check as often as you like, whatever the licence's status
@@ -157,7 +166,7 @@ class LicenceCheck implements SmileIdCheckHandler {
     }
 
     @Override
-    public void approve(String userId) {
+    public void approve(String userId, SmileIdResult.IdFields idFields) {
         verificationAggregationService.autoApproveGovernmentId(userId, DECIDED_BY);
     }
 

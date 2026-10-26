@@ -29,6 +29,7 @@ public class RiderProfileService {
     private final IdentityServiceClient identityServiceClient;
     private final EmergencyContactService emergencyContactService;
     private final IdentityVerificationRepository identityVerificationRepository;
+    private final VerifiedIdentityService verifiedIdentityService;
 
     /** Internal/batch use (RiderProfileController.get, getBatch below) - no phone, no extra cross-service call. */
     public RiderProfile get(String userId) {
@@ -67,10 +68,12 @@ public class RiderProfileService {
             profile = RiderProfile.builder().userId(userId).build();
         }
 
-        // Only fields sent are changed - an older app that leaves one out must not wipe it.
-        profile.setFirstName(request.firstName());
-        if (request.lastName() != null) {
-            profile.setLastName(request.lastName());
+        // Only fields sent are changed - an older app that leaves one out must not wipe it. A verified name stays.
+        if (isNewProfile || !verifiedIdentityService.nameVerified(userId)) {
+            profile.setFirstName(request.firstName());
+            if (request.lastName() != null) {
+                profile.setLastName(request.lastName());
+            }
         }
         if (request.email() != null) {
             profile.setEmail(request.email());
@@ -93,6 +96,7 @@ public class RiderProfileService {
                 emergencyContactService.getPrimary(profile.getUserId()).orElse(null),
                 identityVerificationRepository.findByUserId(profile.getUserId())
                         .map(IdentityVerification::getStatus)
-                        .orElse(VerificationStatus.PENDING));
+                        .orElse(VerificationStatus.PENDING),
+                verifiedIdentityService.nameVerified(profile.getUserId()));
     }
 }

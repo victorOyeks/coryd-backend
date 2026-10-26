@@ -32,5 +32,7 @@
     <include file="db/changelog/021-identity-verifications.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/022-verification-check-raw-response.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/023-smile-id.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/024-verified-identity.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/025-driver-nin-lookup.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

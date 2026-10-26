@@ -9,5 +9,8 @@ public enum VerificationCheckType {
     VEHICLE_PLATE,
 
     /** A rider's NIN against NIMC, with their selfie matched to the NIN photo and their name to the record. */
-    NIN_FACE
+    NIN_FACE,
+
+    /** A driver's NIN looked up with NIMC by number only (no selfie - their licence check has the face match), name matched to the record. */
+    NIN_LOOKUP
 }

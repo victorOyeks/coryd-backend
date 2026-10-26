@@ -74,12 +74,17 @@ class VerificationQueueIntegrationTest {
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired DataSource dataSource;
 
+    @MockBean VerifiedIdentityService verifiedIdentityService;
+    @MockBean NinLookupService ninLookupService;
+    @MockBean DriverIdentity driverIdentity;
     @MockBean IdentityServiceClient identityServiceClient;
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockBean CloudinaryService cloudinaryService;
 
     @BeforeEach
     void cleanSlate() throws Exception {
+        org.mockito.Mockito.when(ninLookupService.view(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new org.coryd.profile.dto.DriverNinView(true, "MATCH", null, null, 3));
         try (Connection c = dataSource.getConnection()) {
             assertThat(c.getMetaData().getURL())
                     .as("tests must only ever run against the Testcontainers database")

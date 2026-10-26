@@ -15,6 +15,7 @@ import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.entity.BaseEntity;
 
 import java.time.Instant;
+import java.time.LocalDate;
 
 /**
  * A person's identity check - NIN plus a live selfie, run by Smile ID - kept apart from the profiles
@@ -43,6 +44,10 @@ public class IdentityVerification extends BaseEntity {
     @Column(length = 4)
     private String ninLast4;
 
+    /** One-way fingerprint of the full NIN (keyed HMAC) - finds the same NIN on another account without keeping it. */
+    @Column(length = 64)
+    private String ninFingerprint;
+
     private String selfieUrl;
 
     private String selfiePublicId;
@@ -64,4 +69,17 @@ public class IdentityVerification extends BaseEntity {
 
     @Builder.Default
     private int attempts = 0;
+
+    /** The name and date of birth on the NIMC record, kept when the NIN check is approved - for ops to refer to; the
+     * profile keeps the name the person typed. Null until then, and always null in the Smile ID sandbox. */
+    @Column(length = 100)
+    private String verifiedFirstName;
+
+    @Column(length = 100)
+    private String verifiedMiddleName;
+
+    @Column(length = 100)
+    private String verifiedLastName;
+
+    private LocalDate verifiedDateOfBirth;
 }

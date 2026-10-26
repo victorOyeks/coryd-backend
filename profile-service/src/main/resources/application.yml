@@ -66,6 +66,15 @@ smile-id:
     given-names: ${SMILE_ID_TEST_GIVEN_NAMES:Amina Fatou}
     last-name: ${SMILE_ID_TEST_LAST_NAME:Clearwater}
     email: ${SMILE_ID_TEST_EMAIL:amina.clearwater@example.com}
+  # Drivers: NIN lookup by number (Enhanced KYC, no selfie) + their licence check, instead of the NIN + selfie check.
+  drivers-use-nin-lookup: ${SMILE_ID_DRIVERS_USE_NIN_LOOKUP:true}
+  nin-lookup-max-attempts: ${SMILE_ID_NIN_LOOKUP_MAX_ATTEMPTS:3}
+  nin-lookup-cooldown-seconds: ${SMILE_ID_NIN_LOOKUP_COOLDOWN_SECONDS:30}
+  # Set once per environment and never change it - fingerprints of NINs (for duplicate checks) depend on it.
+  nin-fingerprint-key: ${NIN_FINGERPRINT_KEY:coryd-dev-only-nin-fingerprint-key}
+  privacy-notice-url: ${SMILE_ID_PRIVACY_NOTICE_URL:https://coryd.ng/privacy}
+  # Local test runs only - leave unset everywhere else.
+  base-url-override: ${SMILE_ID_BASE_URL_OVERRIDE:}
 
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:placeholder}

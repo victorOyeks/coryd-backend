@@ -63,6 +63,7 @@ public class VerificationAggregationService {
     private final CloudinaryService cloudinaryService;
     private final VerificationCheckRepository verificationCheckRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final DriverIdentity driverIdentity;
 
     public VerificationStatusResponse getStatus(String driverId) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
@@ -284,6 +285,9 @@ public class VerificationAggregationService {
                     purgeGovernmentId(profile);
                 }
                 driverProfileRepository.save(profile);
+                if (decision.status() == VerificationStatus.APPROVED) {
+                    driverIdentity.completeIfReady(driverId);
+                }
             }
             case VEHICLE -> {
                 Vehicle vehicle = primaryVehicle(driverId);

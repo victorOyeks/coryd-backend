@@ -66,6 +66,10 @@ class SmileIdCheckServiceTest {
     private final IdentityVerificationDecider decider = mock(IdentityVerificationDecider.class);
     private final VerificationAggregationService aggregation = mock(VerificationAggregationService.class);
     private SmileIdCheckService service;
+    private NinLookupService ninLookup;
+    private DriverIdentity driverIdentity;
+    private final java.util.Set<String> misses = new java.util.HashSet<>();
+    private final org.coryd.profile.client.IdentityServiceClient identityClient = mock(org.coryd.profile.client.IdentityServiceClient.class);
 
     @BeforeEach
     void setUp() {
@@ -103,16 +107,32 @@ class SmileIdCheckServiceTest {
         when(driverRepo.save(any())).thenAnswer(i -> i.getArgument(0));
         RiderProfileRepository riderRepo = mock(RiderProfileRepository.class);
         when(riderRepo.findByUserId(anyString())).thenAnswer(i -> Optional.ofNullable(riders.get((String) i.getArgument(0))));
+        when(riderRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
+        when(recordRepo.findByDriverId(anyString())).thenAnswer(i -> recorded.stream().filter(r -> r.getDriverId().equals(i.getArgument(0))).toList());
+        when(verificationRepo.findByNinFingerprintAndUserIdNot(anyString(), anyString())).thenAnswer(i -> verifications.values().stream()
+                .filter(v -> i.getArgument(0).equals(v.getNinFingerprint()) && !v.getUserId().equals(i.getArgument(1))).toList());
+        org.springframework.jdbc.core.JdbcTemplate jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), any(Class.class), anyString(), anyString()))
+                .thenAnswer(i -> misses.contains(i.getArgument(2) + "|" + i.getArgument(3)) ? 1 : 0);
+        when(jdbc.update(anyString(), anyString(), anyString())).thenAnswer(i -> misses.add(i.getArgument(1) + "|" + i.getArgument(2)) ? 1 : 0);
+        properties.setNinFingerprintKey("test-key");
+        when(identityClient.fetchPhone(anyString())).thenReturn("08012345678");
+
+        VerifiedIdentityService verifiedIdentity = new VerifiedIdentityService(verificationRepo, recordRepo, properties, json);
         IdentityVerificationService identityService = new IdentityVerificationService(verificationRepo, riderRepo, driverRepo,
-                recordRepo, decider, checkRepo);
-        NinCheck nin = new NinCheck(verificationRepo, identityService, decider, properties);
-        LicenceCheck licence = new LicenceCheck(driverRepo, aggregation, properties);
-        service = new SmileIdCheckService(List.of(nin, licence), checkRepo, recordRepo, smileIdClient, properties, json);
+                recordRepo, decider, checkRepo, verifiedIdentity, properties);
+        driverIdentity = new DriverIdentity(driverRepo, verificationRepo, recordRepo, decider, properties, json, jdbc);
+        NinCheck nin = new NinCheck(verificationRepo, identityService, decider, properties, verifiedIdentity, driverIdentity);
+        LicenceCheck licence = new LicenceCheck(driverRepo, verificationRepo, aggregation, properties);
+        NinLookupCheck lookupCheck = new NinLookupCheck(driverRepo, verificationRepo, identityService, verifiedIdentity, driverIdentity, properties);
+        service = new SmileIdCheckService(List.of(nin, licence, lookupCheck), checkRepo, recordRepo, smileIdClient, properties, json);
+        ninLookup = new NinLookupService(lookupCheck, checkRepo, recordRepo, driverRepo, verificationRepo, driverIdentity,
+                smileIdClient, identityClient, properties);
 
         riders.put("rider-1", RiderProfile.builder().userId("rider-1").firstName("Grace").lastName("Amanda").build());
         drivers.put("driver-1", DriverProfile.builder().userId("driver-1").firstName("Tunde").lastName("Bakare")
-                .idNumber("ABC12345DE67").governmentIdStatus(VerificationStatus.PENDING).build());
+                .idNumber("ABC12345DE67").governmentIdStatus(VerificationStatus.PENDING).ninStatus(VerificationStatus.APPROVED).build());
     }
 
     // ---- shared: opening a check and matching results -----------------------------------------
@@ -206,6 +226,29 @@ class SmileIdCheckServiceTest {
             assertThat(last().getProviderReference()).as("Smile ID's own job ID, for the portal").isEqualTo("smile-" + job);
             assertThat(last().getSubjectKey()).isEqualTo(job);
             assertThat(check("rider-1", SmileIdCheckType.NIN).getAttempts()).isEqualTo(1);
+        }
+
+        @Test
+        void approvalKeepsTheirTypedNameAndNotesTheNimcRecordForOps() throws Exception {
+            service.handle(result(job, "clear", null, "{\"first_name\":\"GRACE\",\"last_name\":\"AMANDA-OBI\",\"other_names\":\"ADAEZE\","
+                    + "\"full_name\":\"GRACE ADAEZE AMANDA-OBI\",\"date_of_birth\":\"1995-06-17\",\"address\":\"4 Allen Ave\"}"));
+            verify(decider).approve(verifications.get("rider-1"), IdentityVerificationDecider.SMILE_ID);
+
+            IdentityVerification v = verifications.get("rider-1");
+            assertThat(v.getVerifiedFirstName()).isEqualTo("Grace");
+            assertThat(v.getVerifiedMiddleName()).isEqualTo("Adaeze");
+            assertThat(v.getVerifiedLastName()).isEqualTo("Amanda-Obi");
+            assertThat(v.getVerifiedDateOfBirth()).isEqualTo(LocalDate.of(1995, 6, 17));
+            assertThat(riders.get("rider-1").getFirstName()).as("the name they typed stays").isEqualTo("Grace");
+            assertThat(riders.get("rider-1").getLastName()).isEqualTo("Amanda");
+        }
+
+        @Test
+        void aNameSentToOpsHasNothingNotedYet() throws Exception {
+            service.handle(result(job, "clear", null, nimc("CHIOMA", "EZE")));
+
+            assertThat(riders.get("rider-1").getFirstName()).isEqualTo("Grace");
+            assertThat(verifications.get("rider-1").getVerifiedFirstName()).isNull();
         }
 
         @Test
@@ -416,6 +459,169 @@ class SmileIdCheckServiceTest {
         }
     }
 
+    // ---- drivers: NIN lookup (number only) + licence --------------------------------------------
+
+    @Nested
+    class NinLookup {
+
+        @BeforeEach
+        void newDriver() {
+            drivers.put("driver-2", DriverProfile.builder().userId("driver-2").firstName("Mayowa").lastName("Ayeni")
+                    .idNumber("KJA61125AB07").governmentIdStatus(VerificationStatus.PENDING).build());
+        }
+
+        private String lookUp(String nin) {
+            ninLookup.start("driver-2", nin);
+            return check("driver-2", SmileIdCheckType.NIN_LOOKUP).getCheckId();
+        }
+
+        private void cooledDown() {
+            check("driver-2", SmileIdCheckType.NIN_LOOKUP).setUpdatedAt(Instant.now().minusSeconds(60));
+        }
+
+        @Test
+        void drivingNeedsNoSelfieForTheNinAndTheLicenceWaitsForIt() {
+            assertThatThrownBy(() -> service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.NIN, "12345678901"))
+                    .isInstanceOf(BadRequestException.class).hasMessageContaining("NIN by number");
+            assertThatThrownBy(() -> service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null))
+                    .isInstanceOf(BadRequestException.class).hasMessageContaining("Confirm your NIN first");
+            assertThat(service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901")).as("riders unchanged").isNotNull();
+        }
+
+        @Test
+        void aMatchingNinIsConfirmedAndOnlyItsLastFourKept() throws Exception {
+            var started = ninLookup.start("driver-2", "22233344455");
+
+            assertThat(started.ninStatus()).isEqualTo("CHECKING");
+            org.mockito.ArgumentCaptor<org.coryd.profile.client.SmileIdClient.NinLookup> sent =
+                    org.mockito.ArgumentCaptor.forClass(org.coryd.profile.client.SmileIdClient.NinLookup.class);
+            verify(smileIdClient).submitNinLookup(sent.capture());
+            assertThat(sent.getValue().phone()).isEqualTo("+2348012345678");
+            assertThat(sent.getValue().givenNames()).isEqualTo("Mayowa");
+
+            service.handle(result(check("driver-2", SmileIdCheckType.NIN_LOOKUP).getCheckId(), "clear", null,
+                    "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"other_names\":\"OLUWATIMILEHIN\",\"date_of_birth\":\"2000-05-28\"}"));
+
+            assertThat(drivers.get("driver-2").getNinStatus()).isEqualTo(VerificationStatus.APPROVED);
+            assertThat(verifications.get("driver-2").getNinLast4()).isEqualTo("4455");
+            assertThat(verifications.get("driver-2").getNinFingerprint()).hasSize(64).doesNotContain("22233344455");
+            assertThat(last().getCheckType()).isEqualTo(VerificationCheckType.NIN_LOOKUP);
+            verify(decider, never()).approve(any(), anyString());
+        }
+
+        @Test
+        void theDriverIsVerifiedOnceTheLicenceAgreesWithTheNin() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+            String licenceJob = service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
+            service.handle(result(licenceJob, "clear", null, "{\"first_name\":\"AYENI\",\"last_name\":\"MAYOWA\",\"id_number\":\"KJA61125AB07\","
+                    + "\"expiration_date\":\"2031-05-28\",\"date_of_birth\":\"2000-05-28\"}"));
+            drivers.get("driver-2").setGovernmentIdStatus(VerificationStatus.APPROVED); // what the (mocked) aggregation does
+
+            driverIdentity.completeIfReady("driver-2");
+
+            verify(decider).approve(verifications.get("driver-2"), DriverIdentity.DECIDED_BY);
+        }
+
+        @Test
+        void aLicenceForSomeoneElseThanTheNinGoesToOps() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+            String licenceJob = service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
+            service.handle(result(licenceJob, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"id_number\":\"KJA61125AB07\","
+                    + "\"expiration_date\":\"2031-05-28\",\"date_of_birth\":\"1985-01-01\"}"));
+            drivers.get("driver-2").setGovernmentIdStatus(VerificationStatus.APPROVED);
+
+            driverIdentity.completeIfReady("driver-2");
+
+            verify(decider, never()).approve(any(), anyString());
+            assertThat(verifications.get("driver-2").getStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
+            assertThat(last().getProviderSummary()).contains("date of birth");
+        }
+
+        @Test
+        void aNameThatDoesntMatchGoesToOps() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, nimc("CHIOMA", "EZE")));
+
+            assertThat(drivers.get("driver-2").getNinStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
+            assertThat(verifications.get("driver-2").getStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
+        }
+
+        @Test
+        void aNinNimcDoesntKnowIsNeverPaidForTwice() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "block", "identifier_not_found", null));
+            cooledDown();
+
+            assertThatThrownBy(() -> ninLookup.start("driver-2", "22233344455"))
+                    .isInstanceOf(BadRequestException.class).hasMessageContaining("no record of that NIN");
+            verify(smileIdClient, org.mockito.Mockito.times(1)).submitNinLookup(any());
+            assertThat(check("driver-2", SmileIdCheckType.NIN_LOOKUP).getAttempts()).isEqualTo(1);
+            assertThat(ninLookup.view(drivers.get("driver-2")).ninRetryReason()).isEqualTo(SmileIdRetryReason.NIN_NOT_FOUND);
+        }
+
+        @Test
+        void threeTriesAndAPauseBetweenThem() throws Exception {
+            for (String nin : new String[]{"10000000001", "10000000002", "10000000003"}) {
+                String job = lookUp(nin);
+                assertThat(ninLookup.start("driver-2", "19999999999").ninStatus()).as("still checking - not sent again").isEqualTo("CHECKING");
+                service.handle(result(job, "block", "identifier_not_found", null));
+                check("driver-2", SmileIdCheckType.NIN_LOOKUP).setUpdatedAt(Instant.now()); // the database sets this on save
+                if (!nin.endsWith("3")) {
+                    assertThatThrownBy(() -> ninLookup.start("driver-2", "19999999999")).hasMessageContaining("few seconds");
+                }
+                cooledDown();
+            }
+
+            assertThatThrownBy(() -> ninLookup.start("driver-2", "19999999999")).hasMessageContaining("used all your NIN tries");
+            verify(smileIdClient, org.mockito.Mockito.times(3)).submitNinLookup(any());
+        }
+
+        @Test
+        void aNinAlreadyOnAnotherAccountGoesToOpsWithoutALookup() {
+            service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "22233344455");
+
+            var started = ninLookup.start("driver-2", "22233344455");
+
+            assertThat(started.ninStatus()).isEqualTo("IN_REVIEW");
+            verify(smileIdClient, never()).submitNinLookup(any());
+            assertThat(last().getProviderSummary()).contains("rider-1");
+        }
+
+        @Test
+        void aDriverAlreadyVerifiedWithTheSelfieCheckSkipsTheLookup() {
+            verifications.put("driver-2", IdentityVerification.builder().userId("driver-2").status(VerificationStatus.APPROVED).ninLast4("1234").build());
+
+            assertThatThrownBy(() -> ninLookup.start("driver-2", "22233344455")).hasMessageContaining("already confirmed");
+            assertThat(ninLookup.view(drivers.get("driver-2")).ninStatus()).isEqualTo("MATCH");
+            assertThat(service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null)).isNotNull();
+        }
+
+        @Test
+        void withoutAFingerprintKeyRidersCarryOnAndDriverLookupsWait() {
+            properties.setNinFingerprintKey("");
+
+            assertThat(service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "12345678901")).isNotNull();
+            assertThatThrownBy(() -> ninLookup.start("driver-2", "22233344455")).hasMessageContaining("unavailable");
+            verify(smileIdClient, never()).submitNinLookup(any());
+        }
+
+        @Test
+        void sandboxAlwaysSendsTheTestIdentityAndCanRepeat() throws Exception {
+            properties.setSandbox(true);
+            for (int run = 0; run < 4; run++) {
+                String job = lookUp("22233344455");
+                service.handle(result(job, "clear", null, nimc("AMINA", "CLEARWATER")));
+                assertThat(drivers.get("driver-2").getNinStatus()).isEqualTo(VerificationStatus.APPROVED);
+            }
+            org.mockito.ArgumentCaptor<org.coryd.profile.client.SmileIdClient.NinLookup> sent =
+                    org.mockito.ArgumentCaptor.forClass(org.coryd.profile.client.SmileIdClient.NinLookup.class);
+            verify(smileIdClient, org.mockito.Mockito.times(4)).submitNinLookup(sent.capture());
+            assertThat(sent.getValue().lastName()).isEqualTo("Clearwater");
+        }
+    }
+
     // ---- what is sent to Smile ID: the person on live, the test identity on sandbox ---------------
 
     @Test
@@ -455,6 +661,8 @@ class SmileIdCheckServiceTest {
 
             verify(decider).approve(verifications.get("rider-1"), IdentityVerificationDecider.SMILE_ID);
             assertThat(last().getProviderSummary()).startsWith("[SANDBOX]");
+            assertThat(riders.get("rider-1").getFirstName()).as("never renamed to the test identity").isEqualTo("Grace");
+            assertThat(verifications.get("rider-1").getVerifiedFirstName()).isNull();
         }
 
         @Test
@@ -514,7 +722,8 @@ class SmileIdCheckServiceTest {
     }
 
     private DriverProfileResponse licenceResponse() {
-        return DriverProfileResponse.from(drivers.get("driver-1"), null, null, check("driver-1", SmileIdCheckType.DRIVERS_LICENCE));
+        return DriverProfileResponse.from(drivers.get("driver-1"), null, null, check("driver-1", SmileIdCheckType.DRIVERS_LICENCE), false,
+                new org.coryd.profile.dto.DriverNinView(true, "MATCH", null, null, 3));
     }
 
     private static String nimc(String first, String last) {

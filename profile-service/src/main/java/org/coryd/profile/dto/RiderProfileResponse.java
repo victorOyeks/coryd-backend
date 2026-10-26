@@ -22,16 +22,19 @@ public record RiderProfileResponse(
         String emergencyContactName,
         String emergencyContactPhone,
         /** The identity check - PENDING until the rider submits NIN + selfie; only APPROVED may book. */
-        VerificationStatus identityVerificationStatus
+        VerificationStatus identityVerificationStatus,
+        /** Their NIN check passed, so the name is verified - show it read-only (a different name sent is ignored). */
+        boolean nameVerified
 ) {
     public static RiderProfileResponse from(RiderProfile profile, String phone, EmergencyContact primaryContact,
-                                            VerificationStatus identityVerificationStatus) {
+                                            VerificationStatus identityVerificationStatus, boolean nameVerified) {
         return new RiderProfileResponse(
                 profile.getId(), profile.getCustomId(), profile.getCreatedAt(), profile.getUpdatedAt(),
                 profile.getUserId(), profile.getFirstName(), profile.getLastName(), profile.getEmail(), phone, profile.getPhotoUrl(),
                 primaryContact == null ? null : primaryContact.getName(),
                 primaryContact == null ? null : primaryContact.getPhone(),
-                identityVerificationStatus
+                identityVerificationStatus,
+                nameVerified
         );
     }
 }

@@ -15,10 +15,7 @@ import org.coryd.profile.repository.IdentityVerificationRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.List;
 
-import static org.coryd.profile.service.SmileIdResults.blankToNull;
-import static org.coryd.profile.service.SmileIdResults.safe;
 
 /**
  * The NIN check everyone does (Biometric KYC: NIN looked up with NIMC, live selfie matched to the NIN
@@ -33,6 +30,8 @@ class NinCheck implements SmileIdCheckHandler {
     private final IdentityVerificationService identityVerificationService;
     private final IdentityVerificationDecider decider;
     private final SmileIdProperties properties;
+    private final VerifiedIdentityService verifiedIdentityService;
+    private final DriverIdentity driverIdentity;
 
     @Override
     public SmileIdCheckType type() {
@@ -56,6 +55,10 @@ class NinCheck implements SmileIdCheckHandler {
 
     @Override
     public void validateStart(String userId, UserRole role) {
+        if (role == UserRole.DRIVER && properties.driversLookUpNin()) {
+            throw new BadRequestException("Drivers confirm their NIN by number and verify their face on the licence check - "
+                    + "update the app if it's asking for a selfie here");
+        }
         identityVerificationService.requireProfileName(userId, role);
         if (properties.isSandbox()) {
             return; // dev: re-run the check as often as you like, whatever the person's status
@@ -79,6 +82,7 @@ class NinCheck implements SmileIdCheckHandler {
             verification.setStatus(VerificationStatus.PENDING);
         }
         verification.setNinLast4(nin.substring(nin.length() - 4));
+        verification.setNinFingerprint(driverIdentity.fingerprint(nin));
         verification.setConsentAt(now);
         verification.setSubmittedAt(now);
         verification.setRejectionReason(null);
@@ -98,33 +102,7 @@ class NinCheck implements SmileIdCheckHandler {
 
     @Override
     public SmileIdDecision onClear(String userId, SmileIdResult.IdFields idFields) {
-        String recordFirst = idFields == null ? null : blankToNull(idFields.firstName());
-        String recordLast = idFields == null ? null : blankToNull(idFields.lastName());
-        String fullName = idFields == null ? null : blankToNull(idFields.fullName());
-        String onRecord = (fullName != null ? fullName : safe(recordFirst) + " " + safe(recordLast)).trim();
-        // Sandbox checks are all sent as the test identity, so that's whose name comes back.
-        List<IdentityVerificationService.Name> names = properties.isSandbox()
-                ? List.of(SmileIdResults.testIdentityName(properties))
-                : identityVerificationService.profileNames(userId);
-        if (names.isEmpty() || recordFirst == null || recordLast == null) {
-            return SmileIdDecision.ops(VerificationCheckOutcome.PROVIDER_ERROR, null, true,
-                    "Smile ID cleared this check but the NIMC name couldn't be compared (NIMC: " + onRecord + ")");
-        }
-        // Their rider or driver profile, and NIMC sometimes holds the names the other way round - the best fit counts.
-        IdentityVerificationService.Name best = names.get(0);
-        double score = -1;
-        for (IdentityVerificationService.Name name : names) {
-            double s = NameMatcher.bestOrder(name.firstName(), name.lastName(), recordFirst, recordLast);
-            if (s > score) {
-                score = s;
-                best = name;
-            }
-        }
-        if (score < properties.getNameMatchThreshold()) {
-            return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true,
-                    "NIN is held by " + onRecord + ", profile says " + best.firstName() + " " + best.lastName());
-        }
-        return SmileIdDecision.approve(score, "NIMC confirmed " + onRecord + ", live selfie matched the NIN photo");
+        return identityVerificationService.matchNimcName(userId, idFields, ", live selfie matched the NIN photo");
     }
 
     @Override
@@ -143,9 +121,10 @@ class NinCheck implements SmileIdCheckHandler {
     }
 
     @Override
-    public void approve(String userId) {
+    public void approve(String userId, SmileIdResult.IdFields idFields) {
         identityVerificationRepository.findByUserId(userId)
                 .ifPresent(v -> decider.approve(v, IdentityVerificationDecider.SMILE_ID));
+        verifiedIdentityService.applyFromNimc(userId, idFields);
     }
 
     @Override

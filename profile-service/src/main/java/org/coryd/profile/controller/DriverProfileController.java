@@ -8,12 +8,15 @@ import org.coryd.profile.dto.DriverOnboardingStatusResponse;
 import org.coryd.profile.dto.DriverProfileResponse;
 import org.coryd.profile.dto.DriverSummary;
 import org.coryd.profile.dto.RiderSummary;
+import org.coryd.profile.dto.NinLookupRequest;
+import org.coryd.profile.dto.NinLookupResponse;
 import org.coryd.profile.dto.SmileIdSession;
 import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.dto.VerificationStatusResponse;
 import org.coryd.profile.service.DriverProfileService;
 import org.coryd.profile.entity.SmileIdCheckType;
+import org.coryd.profile.service.NinLookupService;
 import org.coryd.profile.service.SmileIdCheckService;
 import org.coryd.profile.service.FavoriteDriverService;
 import org.coryd.profile.service.VerificationAggregationService;
@@ -45,6 +48,7 @@ public class DriverProfileController {
     private final VerificationAggregationService verificationAggregationService;
     private final FavoriteDriverService favoriteDriverService;
     private final SmileIdCheckService smileIdCheckService;
+    private final NinLookupService ninLookupService;
 
     @GetMapping("/me")
     public ApiResponse<DriverProfileResponse> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
@@ -64,6 +68,16 @@ public class DriverProfileController {
     @PostMapping("/me/licence-check/session")
     public ApiResponse<SmileIdSession> startLicenceCheck(@AuthenticationPrincipal CoRydUserDetails principal) {
         return ApiResponse.ok(smileIdCheckService.start(principal.getUserId(), principal.getActiveRole(), SmileIdCheckType.DRIVERS_LICENCE, null));
+    }
+
+    /**
+     * The driver's NIN step: their NIN looked up with NIMC by number, no selfie (their licence check matches their
+     * face). Answers CHECKING straight away; the result arrives within seconds - poll GET /me for ninStatus.
+     */
+    @PostMapping("/me/nin-lookup")
+    public ApiResponse<NinLookupResponse> lookUpNin(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                    @Valid @RequestBody NinLookupRequest request) {
+        return ApiResponse.ok(ninLookupService.start(principal.getUserId(), request.nin()));
     }
 
     /** Driver-side equivalent of identity-service's rider GET /auth/onboarding-status - lets the driver app resume onboarding at the right screen. Self-only (like /me above), not driverId-scoped - avoids the id/userId mixup a driverId path param invites. */

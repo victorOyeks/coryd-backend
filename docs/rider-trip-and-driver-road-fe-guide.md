@@ -13,6 +13,8 @@ This covers the backend changes from 25 October 2026. Every endpoint below goes 
 | 4d | [Suggested price](#4d-suggested-price) | Driver | Prefill the fare with a suggestion the driver can keep or change. |
 | 5 | [Passenger list in stop order](#5-passenger-list-in-stop-order) | Driver | Sort passengers by two new distance fields. |
 | 6 | [Delete account](#6-delete-account) | Both | New Settings action. |
+| 7 | [Name locked once verified](#7-name-locked-once-verified) | Both | After the NIN check passes, the name can't be edited. |
+| 8 | [Drivers: NIN by number, no selfie](#8-drivers-nin-by-number-no-selfie) | Driver | The NIN step becomes a number-only lookup; the face is matched on the licence check. Riders unchanged. |
 
 ### The problem we saw in testing
 
@@ -290,6 +292,96 @@ Riders and drivers can delete their own account (Settings → Delete account). T
 
 ---
 
+## 7. Name locked once verified
+
+People still type their first and last name, **as on their NIN**, before the NIN check. The check compares it with the NIMC record:
+
+- **Close enough:** approved, and **the name they typed is kept** (we don't replace it with NIMC's spelling).
+- **Too different:** goes to ops, as before. If ops approves, the typed name is kept.
+
+**Once the NIN check is approved, the name can't be changed in the app.**
+
+**`GET` / `PUT /profile/riders/me`** and **`GET` / `PUT /profile/drivers/me`** have a new field:
+
+| Field | Meaning |
+| --- | --- |
+| `nameVerified` | `true` once the NIN check is approved. |
+
+When `nameVerified` is `true`:
+- Show the name as verified (e.g. "Victor Oyekanmi ✓ Verified with NIN") and make the first and last name fields **read-only**.
+- Keep sending the profile as you do today. A different name in the request is **ignored**, not refused, so saving an email or photo still works. Show the name that comes back in the response.
+- If someone's name is wrong or has legally changed, they contact support.
+
+Before the check (`nameVerified` is `false`), the name is editable as today. Tell people to type it exactly as on their NIN, since a different name sends their check to ops and slows them down.
+
+---
+
+## 8. Drivers: NIN by number, no selfie
+
+To cut Smile ID costs, each driver now does **one** face match instead of two:
+
+| | Rider app | Driver app |
+| --- | --- | --- |
+| NIN | NIN + live selfie, as today | **NIN number only**, no camera |
+| Licence | — | Licence + live selfie, as today |
+| Verified when | The NIN check passes | **Both** pass, and the NIN record and the licence are the same person (name, and date of birth where both have one) |
+
+The **NIN step comes first**: the licence check won't open until the NIN is confirmed (or with ops).
+
+### Which flow a driver gets
+
+`GET /profile/drivers/me` has new fields:
+
+| Field | Meaning |
+| --- | --- |
+| `ninLookup` | `true`: use the number-only lookup below. `false`: the older NIN + selfie check (only while the backend switch is off for older app builds). |
+| `ninStatus` | `PENDING` (ask for the NIN), `CHECKING` (result on its way), `MATCH` (done), `IN_REVIEW` (with ops), `REJECTED` (ops turned it down; they can try again). |
+| `ninLast4` | Last four digits of the NIN they gave, for "NIN ending 4455". |
+| `ninRetryReason` | Why the last lookup didn't work, while `ninStatus` is `PENDING`: `NIN_NOT_FOUND` ("We couldn't find that NIN - check the number") or `TRY_LATER`. |
+| `ninTriesLeft` | Lookups left (3 to start with). |
+
+A driver who already passed the NIN + selfie check (for example a verified rider who becomes a driver) shows `ninStatus: MATCH` and goes straight to the licence.
+
+### The lookup: `POST /profile/drivers/me/nin-lookup`
+
+```json
+{ "nin": "22233344455", "consent": true }
+```
+
+**Not instant (a change from your draft).** Smile ID answers this lookup on our webhook, like every other check, usually within a few seconds. The endpoint replies straight away:
+
+```json
+{ "ninStatus": "CHECKING", "ninLast4": "4455" }
+```
+
+Then poll `GET /profile/drivers/me` every 2-3 seconds until `ninStatus` is no longer `CHECKING`, and show a "Checking your NIN…" state meanwhile. Sending the request again while it's checking does nothing new (it just answers `CHECKING`).
+
+It can also answer `"ninStatus": "IN_REVIEW"` straight away, when the NIN is already on another account (ops looks at it; no lookup is made).
+
+| Error | When | Show |
+| --- | --- | --- |
+| `400` *"NIN must be 11 digits"* | Wrong format. Check it in the app first, too: it's free. | Inline on the field |
+| `400` *"Agree to the NIN check to continue"* | `consent` not `true` | Inline |
+| `400` *"Give it a few seconds before trying again"* | Within 30 seconds of the last try | Disable the button for 30 seconds after each try |
+| `400` *"NIMC had no record of that NIN when you tried it - check the number and try again"* | The same NIN that already came back not found | Inline |
+| `400` *"You've used all your NIN tries - contact CoRyd support…"* | 3 lookups used | The message, with a link to support |
+| `400` *"Your NIN is already confirmed"* / *"Your NIN is with our team…"* | Already done, or with ops | Refresh the profile |
+| `400` *"Drivers confirm their NIN by number and verify their face on the licence check…"* | The driver app calling the old NIN + selfie session | Shouldn't happen once updated |
+| `400` *"Confirm your NIN first - it's the step before your licence"* | Licence check opened before the NIN | Send them to the NIN step |
+| `502` *"Identity checks are unavailable right now…"* | Smile ID couldn't be reached | The message, with Try again |
+
+**Each lookup costs money**, so: validate the 11 digits before sending, disable the button while checking and for 30 seconds after, and don't retry automatically.
+
+### What the driver sees
+
+1. **NIN screen** (when `ninStatus` is `PENDING` or `REJECTED`): NIN field, consent checkbox, Continue. On `NIN_NOT_FOUND`, show the message and the tries left.
+2. **Checking** (`CHECKING`): a short spinner while polling.
+3. **`MATCH`**: on to the licence check (unchanged).
+4. **`IN_REVIEW`**: "Our team is checking your NIN - we'll let you know." The licence check can still be done meanwhile.
+5. **Verified**: once both are done, `GET /profile/identity-verification/me` shows `APPROVED`, `GET /identity/auth/onboarding-status` shows `identityVerified: true`, and they can post routes. A driver verified this way can also book rides without another check.
+
+---
+
 ## Checklist
 
 **Rider app**
@@ -299,6 +391,7 @@ Riders and drivers can delete their own account (Settings → Delete account). T
 - [ ] Pay Now, Booking Confirmed and active trip lead with `pickupLabel` → `dropoffLabel`, with pins on `overviewPolyline`.
 - [ ] Upcoming trips show `pickupLabel` → `dropoffLabel`.
 - [ ] Settings → Delete account.
+- [ ] Profile: name read-only with a "Verified with NIN" mark when `nameVerified` is `true`.
 
 **Driver app**
 - [ ] Post-route road picker: `route-options` with no `via` (choose a road) and with `via` ("I go through…").
@@ -307,3 +400,6 @@ Riders and drivers can delete their own account (Settings → Delete account). T
 - [ ] Fare field prefilled from `fare-suggestion`, labelled "Suggested", editable. Refreshed when the ends or the road change.
 - [ ] Passenger list sorted by `pickupAlongRouteMeters` / `dropoffAlongRouteMeters`.
 - [ ] Settings → Delete account.
+- [ ] Profile: name read-only with a "Verified with NIN" mark when `nameVerified` is `true`.
+- [ ] NIN step: number + consent only when `ninLookup` is `true`; poll `GET /profile/drivers/me` while `CHECKING`; tries left and the not-found message shown; button disabled while checking and for 30 s after.
+- [ ] Licence check offered only once `ninStatus` is `MATCH` or `IN_REVIEW`.

@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -47,9 +48,14 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         }
     }
 
+    /** Webhooks whose body is someone's identity record (name, date of birth, address, location) - never logged.
+     * The request line and the outcome still are, and the parts we keep are on the check's own record. */
+    private static final List<String> UNLOGGED_BODY_PATHS = List.of("/webhooks/smile-id");
+
     private void logRequest(ContentCachingRequestWrapper request) {
         String body = new String(request.getContentAsByteArray(), StandardCharsets.UTF_8);
-        String maskedBody = SensitiveDataMasker.maskJsonBody(body);
+        String maskedBody = UNLOGGED_BODY_PATHS.stream().anyMatch(request.getRequestURI()::contains)
+                ? "<not logged: identity record>" : SensitiveDataMasker.maskJsonBody(body);
 
         String clientIp = RequestLoggingSupport.getClientIp(request);
         String remoteAddr = request.getRemoteAddr();
