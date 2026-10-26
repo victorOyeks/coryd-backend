@@ -2,8 +2,10 @@ package org.coryd.common.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.util.Names;
@@ -23,6 +25,18 @@ public class JwtUtil {
 
     @Value("${jwt.expiration-ms:86400000}")
     private long expirationMs;
+
+    /**
+     * Built once: the parser is immutable and thread-safe, and building one looks up jjwt's JSON reader through
+     * ServiceLoader - done per request, a burst of first requests after a restart raced on that lookup and one
+     * failed with NoSuchElementException (a 500 instead of a checked token).
+     */
+    private JwtParser parser;
+
+    @PostConstruct
+    void buildParser() {
+        parser = Jwts.parser().verifyWith(signingKey()).build();
+    }
 
     private SecretKey signingKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
@@ -46,11 +60,7 @@ public class JwtUtil {
     }
 
     public Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(signingKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
+        return parser.parseSignedClaims(token).getPayload();
     }
 
     public boolean isTokenValid(String token) {
