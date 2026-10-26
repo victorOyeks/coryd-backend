@@ -29,6 +29,7 @@ public final class SensitiveDataMasker {
             "phoneNumber", "phone_number", "phone", "mobile",
             "governmentIdUrl", "government_id_url",
             "dateOfBirth", "date_of_birth", "dob",
+            "nin", "idNumber", "id_number", "bvn",
 
             // Financial
             "cardNumber", "card_number", "pan", "maskedPan",

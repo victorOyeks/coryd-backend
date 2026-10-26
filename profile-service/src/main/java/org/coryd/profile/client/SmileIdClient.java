@@ -1,6 +1,7 @@
 package org.coryd.profile.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.ExternalServiceException;
 import org.coryd.common.http.HttpTimeouts;
@@ -17,7 +18,9 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -28,6 +31,8 @@ import java.util.UUID;
 @Slf4j
 @Component
 public class SmileIdClient {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SmileIdProperties properties;
     private final RestClient restClient;
@@ -78,27 +83,32 @@ public class SmileIdClient {
     /**
      * POST /v3/enhanced_kyc - a NIN looked up with NIMC by number, no selfie. Accepted straight away (202);
      * the result comes to the same webhook as every other check, carrying checkId in partner_params.
-     * Multipart only, nested fields written as user_details[given_names] and so on.
+     * Multipart only; user_details, consent and partner_params each go as one field holding JSON.
      */
     public void submitNinLookup(NinLookup lookup) {
         String token = mintToken();
+        // Nested objects go as one field each holding JSON - Smile ID ignores bracketed names like consent[granted].
+        Map<String, String> userDetails = new LinkedHashMap<>();
+        userDetails.put("given_names", lookup.givenNames());
+        userDetails.put("last_name", lookup.lastName());
+        if (lookup.email() != null) {
+            userDetails.put("email", lookup.email());
+        }
+        if (lookup.phone() != null) {
+            userDetails.put("phone_number", lookup.phone());
+        }
+        Map<String, Object> consent = new LinkedHashMap<>();
+        consent.put("granted", true);
+        consent.put("granted_at", lookup.consentAt().toString());
+        consent.put("notice_language", "EN");
+        consent.put("notice_privacy_policy_url", properties.getPrivacyNoticeUrl());
         List<String[]> fields = new ArrayList<>();
         fields.add(new String[]{"country", "NG"});
         fields.add(new String[]{"id_type", lookup.idType()});
         fields.add(new String[]{"id_number", lookup.nin()});
-        fields.add(new String[]{"user_details[given_names]", lookup.givenNames()});
-        fields.add(new String[]{"user_details[last_name]", lookup.lastName()});
-        if (lookup.email() != null) {
-            fields.add(new String[]{"user_details[email]", lookup.email()});
-        }
-        if (lookup.phone() != null) {
-            fields.add(new String[]{"user_details[phone_number]", lookup.phone()});
-        }
-        fields.add(new String[]{"consent[granted]", "true"});
-        fields.add(new String[]{"consent[granted_at]", lookup.consentAt().toString()});
-        fields.add(new String[]{"consent[notice_language]", "EN"});
-        fields.add(new String[]{"consent[notice_privacy_policy_url]", properties.getPrivacyNoticeUrl()});
-        fields.add(new String[]{"partner_params[coryd_check_id]", lookup.checkId()});
+        fields.add(new String[]{"user_details", json(userDetails)});
+        fields.add(new String[]{"consent", json(consent)});
+        fields.add(new String[]{"partner_params", json(Map.of("coryd_check_id", lookup.checkId()))});
         if (properties.getCallbackUrl() != null && !properties.getCallbackUrl().isBlank()) {
             fields.add(new String[]{"callback_url", properties.getCallbackUrl()});
         }
@@ -121,6 +131,14 @@ public class SmileIdClient {
         } catch (Exception e) {
             log.error("Smile ID NIN lookup {} not accepted (sandbox={}): {}", lookup.checkId(), properties.isSandbox(), e.getMessage());
             throw new ExternalServiceException("Identity checks are unavailable right now - try again in a few minutes", e);
+        }
+    }
+
+    private static String json(Object value) {
+        try {
+            return JSON.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
     }
 
