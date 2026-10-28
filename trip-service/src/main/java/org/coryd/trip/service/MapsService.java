@@ -1,5 +1,7 @@
 package org.coryd.trip.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.exception.BadRequestException;
@@ -27,11 +29,14 @@ public class MapsService {
 
     private final GoogleMapsClient googleMapsClient;
     private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
 
     private static final String PLACE_COORDS_PREFIX = "place:coords:";
     private static final Duration PLACE_COORDS_TTL   = Duration.ofDays(30);
     private static final String ROUTE_PREVIEW_PREFIX = "route:preview:";
     private static final Duration ROUTE_PREVIEW_TTL  = Duration.ofDays(7);
+    private static final String ROUTE_OPTIONS_PREFIX = "route:options:";
+    private static final Duration ROUTE_OPTIONS_TTL  = Duration.ofDays(1);
 
     private static final String MAPS_FAILURES_KEY   = "maps:circuit:failures";
     private static final int CIRCUIT_OPEN_THRESHOLD = 5;
@@ -167,18 +172,32 @@ public class MapsService {
         }
     }
 
-    /** The driver's road choices while posting a route. Not cached: asked once per screen, and with via points
-     * the combinations hardly ever repeat. */
+    /** The driver's road choices while posting a route. Google offers alternatives only when its traffic picture
+     * suggests them, so the same two points can come back with three roads one minute and one the next. A choice of
+     * two or more is kept for a day so the screen shows the same roads each time it opens; a lone road isn't kept,
+     * so the next open asks again. With via points the combinations hardly ever repeat, so those aren't cached. */
     public List<RoutePreview> getRouteOptions(double originLat, double originLng, double destLat, double destLng,
                                               List<double[]> via) {
+        String cacheKey = via.isEmpty() ? buildOptionsCacheKey(originLat, originLng, destLat, destLng) : null;
+        if (cacheKey != null) {
+            try {
+                String cached = redisTemplate.opsForValue().get(cacheKey);
+                if (cached != null) {
+                    return objectMapper.readValue(cached, new TypeReference<List<RoutePreview>>() { });
+                }
+            } catch (Exception e) {
+                log.warn("Route options cache read failed: {}", e.getMessage());
+            }
+        }
+
         if (isMapsCircuitOpen()) {
             log.warn("Maps circuit open - rejecting route-options request");
             throw new BadRequestException("Maps service is temporarily unavailable. Please try again in a moment.");
         }
+        List<RoutePreview> options;
         try {
-            List<RoutePreview> options = googleMapsClient.getRouteOptions(originLat, originLng, destLat, destLng, via);
+            options = googleMapsClient.getRouteOptions(originLat, originLng, destLat, destLng, via);
             resetMapsCircuit();
-            return options;
         } catch (BadRequestException e) {
             throw e;
         } catch (Exception e) {
@@ -186,6 +205,15 @@ public class MapsService {
             log.error("Route options call failed: {}", e.getMessage());
             throw new BadRequestException("Unable to load roads. Please try again.");
         }
+
+        if (cacheKey != null && options.size() > 1) {
+            try {
+                redisTemplate.opsForValue().set(cacheKey, objectMapper.writeValueAsString(options), ROUTE_OPTIONS_TTL);
+            } catch (Exception e) {
+                log.warn("Route options cache write failed: {}", e.getMessage());
+            }
+        }
+        return options;
     }
 
     /** The search-results list's pickup-ETA column - one batched call across every result row instead of one Directions call per row. Not cached: a batch is keyed by wherever this particular rider is standing right now against N route origins, which essentially never repeats, so caching would just waste Redis writes. */
@@ -242,6 +270,10 @@ public class MapsService {
         return ROUTE_PREVIEW_PREFIX
                 + Math.round(lat1 * 10000) + "," + Math.round(lng1 * 10000)
                 + ":" + Math.round(lat2 * 10000) + "," + Math.round(lng2 * 10000);
+    }
+
+    private static String buildOptionsCacheKey(double lat1, double lng1, double lat2, double lng2) {
+        return ROUTE_OPTIONS_PREFIX + buildRouteCacheKey(lat1, lng1, lat2, lng2).substring(ROUTE_PREVIEW_PREFIX.length());
     }
 
     private static String nullSafe(String s) {

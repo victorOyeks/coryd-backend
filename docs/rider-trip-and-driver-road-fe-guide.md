@@ -130,7 +130,7 @@ There is more than one way from Ikorodu to Victoria Island. Until now we always 
 
 Use it in two ways:
 
-**Choose between Google's roads.** Send only the two ends. You get Google's usual road first, plus up to two others. Often there is only one; then show it selected, and offer "I go through…" as the way to change it.
+**Choose between Google's roads.** Send only the two ends. You get Google's usual road first, plus up to two others. Often there is only one; then show it selected, and offer "I go through…" as the way to change it. Google decides how many roads to offer from live traffic, so the server keeps a choice of two or more for a day: reopening the screen for the same two ends shows the same roads. A single road isn't kept, so the next open may come back with more.
 
 ```json
 {
