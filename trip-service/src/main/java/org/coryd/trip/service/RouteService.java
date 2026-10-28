@@ -160,7 +160,7 @@ public class RouteService {
         if (suspendedUserRepository.existsById(driverId)) {
             throw new BadRequestException("This account is suspended. Contact CoRyd support.");
         }
-        if (identityVerificationPolicy.blocksUnverified() && !identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(driverId)) {
+        if (identityVerificationPolicy.blocksUnverified() && !driverIdentityVerified(driverId)) {
             throw new BadRequestException("Verify your identity to post a route");
         }
         requirePostingEligibility(driverId);
@@ -837,6 +837,23 @@ public class RouteService {
         }
     }
 
+    /**
+     * Whether the driver is verified as a person - the same answer for posting a route and for posting-eligibility.
+     * The local copy of an approved identity check settles it; otherwise profile-service's rule decides, which also
+     * accepts a lookup driver whose NIN is confirmed and licence approved. Unreachable profile-service: not verified.
+     */
+    private boolean driverIdentityVerified(String driverId) {
+        if (identityVerificationCacheRepository.existsByUserIdAndVerifiedTrue(driverId)) {
+            return true;
+        }
+        try {
+            return profileServiceClient.fetchOnboarding(driverId).identityVerified();
+        } catch (Exception e) {
+            log.warn("Could not read identity verification for driver {}: {}", driverId, e.getMessage());
+            return false;
+        }
+    }
+
     /** Drives the driver app's onboarding gate and its document countdown. */
     @Transactional(readOnly = true)
     public DriverPostingEligibilityResponse postingEligibility(String driverId) {
@@ -861,9 +878,12 @@ public class RouteService {
             }
         }
 
+        boolean identityVerified = driverIdentityVerified(driverId);
         boolean graceOver = verificationPolicy.graceExpired(firstRouteAt, Instant.now());
         String blockedReason = null;
-        if (!approved && !verificationPolicy.neverEnforces()) {
+        if (identityVerificationPolicy.blocksUnverified() && !identityVerified) {
+            blockedReason = "IDENTITY_NOT_VERIFIED";
+        } else if (!approved && !verificationPolicy.neverEnforces()) {
             if (verificationPolicy.blocksUnverified()) {
                 blockedReason = "AWAITING_APPROVAL";
             } else if (!identityOk) {
@@ -891,6 +911,7 @@ public class RouteService {
                 blockedReason == null,
                 approved,
                 identityOk,
+                identityVerified,
                 vehicleOk,
                 payoutAccountOk,
                 payment == null ? null : payment.amountOwed(),

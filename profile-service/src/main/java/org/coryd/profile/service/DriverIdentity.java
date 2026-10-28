@@ -40,6 +40,7 @@ public class DriverIdentity {
 
     /** decidedBy for a driver verified by their NIN lookup and licence together. */
     static final String DECIDED_BY = "SMILE_ID_NIN_LOOKUP_AND_LICENCE";
+    private static final String CROSS_CHECK_PREFIX = "cross-check-";
 
     private final DriverProfileRepository driverProfileRepository;
     private final IdentityVerificationRepository identityVerificationRepository;
@@ -56,8 +57,9 @@ public class DriverIdentity {
         }
         IdentityVerification verification = identityVerificationRepository.findByUserId(userId).orElse(null);
         DriverProfile driver = driverProfileRepository.findByUserId(userId).orElse(null);
+        // An IN_REVIEW left from an earlier NIN + selfie attempt doesn't hold them back - only a mismatch ops hasn't decided
         if (verification == null || driver == null || verification.getStatus() == VerificationStatus.APPROVED
-                || verification.getStatus() == VerificationStatus.IN_REVIEW
+                || (verification.getStatus() == VerificationStatus.IN_REVIEW && crossCheckFlagged(userId))
                 || driver.getNinStatus() != VerificationStatus.APPROVED
                 || driver.getGovernmentIdStatus() != VerificationStatus.APPROVED) {
             return;
@@ -69,7 +71,7 @@ public class DriverIdentity {
             verificationCheckRepository.save(VerificationCheck.builder()
                     .driverId(userId)
                     .checkType(VerificationCheckType.NIN_LOOKUP)
-                    .subjectKey("cross-check-" + UUID.randomUUID())
+                    .subjectKey(CROSS_CHECK_PREFIX + UUID.randomUUID())
                     .outcome(VerificationCheckOutcome.NAME_MISMATCH)
                     .providerSummary(SmileIdResults.truncate("NIN and licence don't agree: " + mismatch))
                     .build());
@@ -78,6 +80,36 @@ public class DriverIdentity {
         }
         decider.approve(verification, DECIDED_BY);
         log.info("Driver {} identity verified by NIN lookup and licence", userId);
+    }
+
+    /**
+     * The one rule for "is this driver verified as a person", read by trip-service for both posting a route and
+     * posting-eligibility: their identity check is approved, or - in the lookup flow - the NIN is confirmed and the
+     * licence approved, unless the two records disagreed and ops hasn't approved them since.
+     */
+    public boolean verified(String userId) {
+        IdentityVerification verification = identityVerificationRepository.findByUserId(userId).orElse(null);
+        if (verification != null && verification.getStatus() == VerificationStatus.APPROVED) {
+            return true;
+        }
+        if (!properties.driversLookUpNin() || verification == null) {
+            return false;
+        }
+        DriverProfile driver = driverProfileRepository.findByUserId(userId).orElse(null);
+        if (driver == null || driver.getNinStatus() != VerificationStatus.APPROVED
+                || driver.getGovernmentIdStatus() != VerificationStatus.APPROVED) {
+            return false;
+        }
+        boolean opsHasIt = verification.getStatus() == VerificationStatus.IN_REVIEW
+                || verification.getStatus() == VerificationStatus.REJECTED;
+        return !(opsHasIt && crossCheckFlagged(userId));
+    }
+
+    /** completeIfReady once found the NIN and licence of different people. */
+    private boolean crossCheckFlagged(String userId) {
+        return verificationCheckRepository.findByDriverId(userId).stream()
+                .anyMatch(c -> c.getCheckType() == VerificationCheckType.NIN_LOOKUP
+                        && c.getSubjectKey() != null && c.getSubjectKey().startsWith(CROSS_CHECK_PREFIX));
     }
 
     /** The NIMC record from the lookup against the licence Smile ID read - null when they agree, or there's nothing to compare. */

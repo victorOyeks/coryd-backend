@@ -540,6 +540,45 @@ class SmileIdCheckServiceTest {
         }
 
         @Test
+        void aConfirmedNinAndAnApprovedLicenceCountAsVerifiedForPosting() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+            assertThat(driverIdentity.verified("driver-2")).as("licence not approved yet").isFalse();
+
+            drivers.get("driver-2").setGovernmentIdStatus(VerificationStatus.APPROVED);
+
+            assertThat(driverIdentity.verified("driver-2")).isTrue();
+        }
+
+        @Test
+        void aLeftoverSelfieReviewDoesntHoldBackALookupDriver() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+            verifications.get("driver-2").setStatus(VerificationStatus.IN_REVIEW); // an older NIN + selfie attempt with ops
+            drivers.get("driver-2").setGovernmentIdStatus(VerificationStatus.APPROVED);
+
+            assertThat(driverIdentity.verified("driver-2")).isTrue();
+            driverIdentity.completeIfReady("driver-2");
+
+            verify(decider).approve(verifications.get("driver-2"), DriverIdentity.DECIDED_BY);
+        }
+
+        @Test
+        void aNinAndLicenceOfDifferentPeopleAreNotVerifiedUntilOpsDecides() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+            String licenceJob = service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
+            service.handle(result(licenceJob, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"id_number\":\"KJA61125AB07\","
+                    + "\"expiration_date\":\"2031-05-28\",\"date_of_birth\":\"1985-01-01\"}"));
+            drivers.get("driver-2").setGovernmentIdStatus(VerificationStatus.APPROVED);
+            driverIdentity.completeIfReady("driver-2");
+
+            assertThat(driverIdentity.verified("driver-2")).isFalse();
+            driverIdentity.completeIfReady("driver-2");
+            verify(decider, never()).approve(any(), anyString());
+        }
+
+        @Test
         void aNameThatDoesntMatchGoesToOps() throws Exception {
             String job = lookUp("22233344455");
             service.handle(result(job, "clear", null, nimc("CHIOMA", "EZE")));

@@ -202,7 +202,8 @@ public class ProfileServiceClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record DriverOnboarding(boolean identitySubmitted, boolean vehicleSubmitted,
-                                   boolean identityApproved, boolean vehicleApproved) {
+                                   boolean identityApproved, boolean vehicleApproved,
+                                   boolean identityVerified) {
 
         public boolean identityMeets(boolean requireApproved) {
             return requireApproved ? identityApproved : identitySubmitted;

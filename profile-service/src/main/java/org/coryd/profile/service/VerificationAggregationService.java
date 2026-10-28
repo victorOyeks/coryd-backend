@@ -364,7 +364,8 @@ public class VerificationAggregationService {
                 identitySubmitted,
                 vehicle != null,
                 identityApproved,
-                vehicle != null && vehicle.getVerificationStatus() == VerificationStatus.APPROVED);
+                vehicle != null && vehicle.getVerificationStatus() == VerificationStatus.APPROVED,
+                driverIdentity.verified(driverId));
     }
 
     /** Rejection reasons are personal - a driver sees only their own, ops sees any. */

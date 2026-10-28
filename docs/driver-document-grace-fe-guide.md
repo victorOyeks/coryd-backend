@@ -71,6 +71,7 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
     "canPostRoutes": true,
     "documentsApproved": false,
     "identityOk": true,
+    "identityVerified": true,
     "vehicleOk": true,
     "blockedReason": null,
     "prerequisiteLevel": "APPROVED",
@@ -88,6 +89,7 @@ GET /trip/routes/drivers/me/posting-eligibility     ← authenticated, driver ro
 | `canPostRoutes` | Whether posting will succeed right now. **Drive the Post Route button off this.** |
 | `documentsApproved` | Fully approved on all four items. When `true`, ignore everything else here. |
 | `identityOk` | The driver's licence meets the current `prerequisiteLevel` |
+| `identityVerified` | The driver is verified as a person: NIN + selfie approved, or (lookup drivers) NIN confirmed and licence approved. `POST /routes` uses the same rule |
 | `vehicleOk` | Vehicle meets the current `prerequisiteLevel` |
 | `prerequisiteLevel` | `SUBMITTED` or `APPROVED` — what "required" currently means |
 | `blockedReason` | Why posting is blocked, or `null`. See the table below |
@@ -104,6 +106,7 @@ It's self-scoped — there is no `{driverId}` variant, and a driver can only eve
 | Value | Meaning | Send them to |
 |---|---|---|
 | `null` | Not blocked | — |
+| `IDENTITY_NOT_VERIFIED` | Not verified as a person yet (checked first, whenever identity verification is enforced). Lookup drivers: NIN not confirmed, licence not approved, or the two are with ops because they didn't agree | The NIN / licence step that isn't done — `ninStatus` and the licence status on `GET /profile/drivers/me` say which |
 | `IDENTITY_REQUIRED` | No driver's licence on file | Driver's licence upload |
 | `VEHICLE_REQUIRED` | Identity done, no vehicle registered | Add vehicle (make, model, colour, plate) |
 | `IDENTITY_PENDING_APPROVAL` | Uploaded, awaiting ops review *(APPROVED level only)* | "Under review" screen — nothing for them to do |

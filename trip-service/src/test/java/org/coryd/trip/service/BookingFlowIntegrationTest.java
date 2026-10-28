@@ -1113,6 +1113,33 @@ class BookingFlowIntegrationTest {
     }
 
     @Test
+    void postingAndEligibilityAgreeOnALookupDriversIdentity() {
+        policySettings();
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.STRICT);
+        try {
+            // NIN confirmed and licence approved, but no approved NIN + selfie check in the local copy
+            org.mockito.Mockito.when(profileServiceClient.fetchOnboarding(DRIVER))
+                    .thenReturn(new org.coryd.trip.client.ProfileServiceClient.DriverOnboarding(true, true, true, true, false));
+            var blocked = routeService.postingEligibility(DRIVER);
+            assertThat(blocked.canPostRoutes()).isFalse();
+            assertThat(blocked.identityVerified()).isFalse();
+            assertThat(blocked.blockedReason()).isEqualTo("IDENTITY_NOT_VERIFIED");
+            assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(1, ChronoUnit.DAYS))))
+                    .isInstanceOf(BadRequestException.class).hasMessageContaining("Verify your identity to post a route");
+
+            org.mockito.Mockito.when(profileServiceClient.fetchOnboarding(DRIVER))
+                    .thenReturn(new org.coryd.trip.client.ProfileServiceClient.DriverOnboarding(true, true, true, true, true));
+            var open = routeService.postingEligibility(DRIVER);
+            assertThat(open.canPostRoutes()).isTrue();
+            assertThat(open.identityVerified()).isTrue();
+            assertThat(routeService.post(DRIVER, DRIVER, postRequest(Instant.now().plus(1, ChronoUnit.DAYS))).getId()).isNotNull();
+        } finally {
+            identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.OFF);
+        }
+    }
+
+    @Test
     void withStrictVerificationOnlyAVerifiedRiderCanBookAndTheDriverSeesTheBadge() {
         RoutePost route = route(4);
         identityVerificationPolicy.setEnforcement(org.coryd.trip.config.policy.IdentityVerificationPolicy.Enforcement.STRICT);
