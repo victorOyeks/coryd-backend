@@ -140,7 +140,7 @@ public class SmileIdCheckService {
 
         SmileIdDecision decision = decide(handler, userId, result);
         String summary = decision.kind() == SmileIdDecision.Kind.RETRY
-                ? decision.summary() : decision.summary() + SmileIdResults.fraudNote(result);
+                ? decision.summary() : decision.summary() + SmileIdResults.fraudNote(result) + handler.resultNote(userId);
         verificationCheckRepository.save(VerificationCheck.builder()
                 .driverId(userId)
                 .checkType(handler.recordedAs())

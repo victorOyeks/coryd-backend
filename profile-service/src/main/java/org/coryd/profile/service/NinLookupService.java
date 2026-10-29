@@ -2,8 +2,6 @@ package org.coryd.profile.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
-import org.coryd.common.enums.VerificationCheckOutcome;
-import org.coryd.common.enums.VerificationCheckType;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.profile.client.IdentityServiceClient;
@@ -15,11 +13,9 @@ import org.coryd.profile.entity.DriverProfile;
 import org.coryd.profile.entity.IdentityVerification;
 import org.coryd.profile.entity.SmileIdCheck;
 import org.coryd.profile.entity.SmileIdCheckType;
-import org.coryd.profile.entity.VerificationCheck;
 import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.IdentityVerificationRepository;
 import org.coryd.profile.repository.SmileIdCheckRepository;
-import org.coryd.profile.repository.VerificationCheckRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -30,9 +26,9 @@ import java.util.UUID;
 /**
  * Starts a driver's NIN lookup. Every lookup is billed, so everything that can be answered without one is
  * answered here first, free: the number's format (by the request), a NIN already confirmed, a number NIMC
- * already said doesn't exist, a NIN already on another account (straight to ops), a lookup still running,
- * a retry too soon after the last, and tries used up. Only then is Smile ID asked - and its answer comes to
- * the webhook like every other check (NinLookupCheck).
+ * already said doesn't exist, a lookup still running, a retry too soon after the last, and tries used up.
+ * Only then is Smile ID asked - and its answer comes to the webhook like every other check (NinLookupCheck).
+ * A NIN already on another account is still looked up; the result's note tells ops which account.
  *
  * <p>Deliberately not one transaction: the check is saved before Smile ID is called, so a result that comes
  * back quickly always finds it.
@@ -49,7 +45,6 @@ public class NinLookupService {
 
     private final NinLookupCheck check;
     private final SmileIdCheckRepository smileIdCheckRepository;
-    private final VerificationCheckRepository verificationCheckRepository;
     private final DriverProfileRepository driverProfileRepository;
     private final IdentityVerificationRepository identityVerificationRepository;
     private final DriverIdentity driverIdentity;
@@ -57,13 +52,11 @@ public class NinLookupService {
     private final IdentityServiceClient identityServiceClient;
     private final SmileIdProperties properties;
 
-    NinLookupService(NinLookupCheck check, SmileIdCheckRepository smileIdCheckRepository,
-                     VerificationCheckRepository verificationCheckRepository, DriverProfileRepository driverProfileRepository,
+    NinLookupService(NinLookupCheck check, SmileIdCheckRepository smileIdCheckRepository, DriverProfileRepository driverProfileRepository,
                      IdentityVerificationRepository identityVerificationRepository, DriverIdentity driverIdentity,
                      SmileIdClient smileIdClient, IdentityServiceClient identityServiceClient, SmileIdProperties properties) {
         this.check = check;
         this.smileIdCheckRepository = smileIdCheckRepository;
-        this.verificationCheckRepository = verificationCheckRepository;
         this.driverProfileRepository = driverProfileRepository;
         this.identityVerificationRepository = identityVerificationRepository;
         this.driverIdentity = driverIdentity;
@@ -99,20 +92,7 @@ public class NinLookupService {
             throw new BadRequestException("NIN checks are unavailable right now - try again later");
         }
 
-        Optional<String> usedBy = sandbox ? Optional.empty() : driverIdentity.usedElsewhere(userId, fingerprint);
         check.opened(userId, nin, fingerprint);
-        if (usedBy.isPresent()) {
-            verificationCheckRepository.save(VerificationCheck.builder()
-                    .driverId(userId)
-                    .checkType(VerificationCheckType.NIN_LOOKUP)
-                    .subjectKey("duplicate-" + UUID.randomUUID())
-                    .outcome(VerificationCheckOutcome.DETAILS_MISMATCH)
-                    .providerSummary("This NIN was already given on another account (" + usedBy.get() + ") - not looked up")
-                    .build());
-            check.sendToOps(userId);
-            log.info("Driver {} gave a NIN already on account {} - sent to ops without a lookup", userId, usedBy.get());
-            return new NinLookupResponse(IN_REVIEW, nin.substring(7));
-        }
 
         String checkId = "coryd-ninl-" + UUID.randomUUID();
         lookup.setCheckId(checkId);

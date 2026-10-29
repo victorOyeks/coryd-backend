@@ -46,6 +46,11 @@ interface SmileIdCheckHandler {
 
     void sendToOps(String userId);
 
+    /** Anything this check adds to a result's note for ops - "" when there's nothing. */
+    default String resultNote(String userId) {
+        return "";
+    }
+
     /** Anything this check does once a result is recorded, whatever it was. */
     default void afterResult(String userId, SmileIdDecision decision) {
     }

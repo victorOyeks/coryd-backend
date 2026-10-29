@@ -129,6 +129,19 @@ class NinLookupCheck implements SmileIdCheckHandler {
         return null;
     }
 
+    /** The same NIN on another account doesn't stop the lookup - ops sees which account on the result. */
+    @Override
+    public String resultNote(String userId) {
+        if (properties.isSandbox()) {
+            return "";
+        }
+        return identityVerificationRepository.findByUserId(userId)
+                .map(IdentityVerification::getNinFingerprint)
+                .flatMap(fingerprint -> driverIdentity.usedElsewhere(userId, fingerprint))
+                .map(other -> " | Same NIN as another CoRyd account: " + other)
+                .orElse("");
+    }
+
     /** A NIN NIMC doesn't know is remembered, so the same number isn't paid for twice. */
     @Override
     public void afterResult(String userId, SmileIdDecision decision) {

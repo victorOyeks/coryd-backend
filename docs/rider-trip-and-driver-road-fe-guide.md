@@ -356,7 +356,7 @@ A driver who already passed the NIN + selfie check (for example a verified rider
 
 Then poll `GET /profile/drivers/me` every 2-3 seconds until `ninStatus` is no longer `CHECKING`, and show a "Checking your NIN…" state meanwhile. Sending the request again while it's checking does nothing new (it just answers `CHECKING`).
 
-It can also answer `"ninStatus": "IN_REVIEW"` straight away, when the NIN is already on another account (ops looks at it; no lookup is made).
+A NIN already on another account is looked up like any other; ops sees which account on the result.
 
 | Error | When | Show |
 | --- | --- | --- |

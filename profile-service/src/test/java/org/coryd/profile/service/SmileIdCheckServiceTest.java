@@ -127,7 +127,7 @@ class SmileIdCheckServiceTest {
         LicenceCheck licence = new LicenceCheck(driverRepo, verificationRepo, aggregation, properties);
         NinLookupCheck lookupCheck = new NinLookupCheck(driverRepo, verificationRepo, identityService, verifiedIdentity, driverIdentity, properties);
         service = new SmileIdCheckService(List.of(nin, licence, lookupCheck), checkRepo, recordRepo, smileIdClient, properties, json);
-        ninLookup = new NinLookupService(lookupCheck, checkRepo, recordRepo, driverRepo, verificationRepo, driverIdentity,
+        ninLookup = new NinLookupService(lookupCheck, checkRepo, driverRepo, verificationRepo, driverIdentity,
                 smileIdClient, identityClient, properties);
 
         riders.put("rider-1", RiderProfile.builder().userId("rider-1").firstName("Grace").lastName("Amanda").build());
@@ -588,6 +588,21 @@ class SmileIdCheckServiceTest {
         }
 
         @Test
+        void aNinAlreadyOnAnotherAccountIsStillLookedUpAndOpsIsTold() throws Exception {
+            verifications.put("other-account", IdentityVerification.builder().userId("other-account")
+                    .ninFingerprint(driverIdentity.fingerprint("22233344455")).build());
+
+            String job = lookUp("22233344455");
+            verify(smileIdClient).submitNinLookup(any());
+            assertThat(drivers.get("driver-2").getNinStatus()).isEqualTo(VerificationStatus.PENDING);
+
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+
+            assertThat(drivers.get("driver-2").getNinStatus()).isEqualTo(VerificationStatus.APPROVED);
+            assertThat(last().getProviderSummary()).contains("Same NIN as another CoRyd account: other-account");
+        }
+
+        @Test
         void aNinNimcDoesntKnowIsNeverPaidForTwice() throws Exception {
             String job = lookUp("22233344455");
             service.handle(result(job, "block", "identifier_not_found", null));
@@ -615,17 +630,6 @@ class SmileIdCheckServiceTest {
 
             assertThatThrownBy(() -> ninLookup.start("driver-2", "19999999999")).hasMessageContaining("used all your NIN tries");
             verify(smileIdClient, org.mockito.Mockito.times(3)).submitNinLookup(any());
-        }
-
-        @Test
-        void aNinAlreadyOnAnotherAccountGoesToOpsWithoutALookup() {
-            service.start("rider-1", UserRole.RIDER, SmileIdCheckType.NIN, "22233344455");
-
-            var started = ninLookup.start("driver-2", "22233344455");
-
-            assertThat(started.ninStatus()).isEqualTo("IN_REVIEW");
-            verify(smileIdClient, never()).submitNinLookup(any());
-            assertThat(last().getProviderSummary()).contains("rider-1");
         }
 
         @Test
