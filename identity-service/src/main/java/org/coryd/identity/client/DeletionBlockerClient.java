@@ -40,16 +40,18 @@ public class DeletionBlockerClient {
                 .build();
     }
 
-    /** Every reason, in words the person can act on - empty when nothing stands in the way. */
-    public List<String> blockers(String userId) {
-        List<String> reasons = new ArrayList<>(ask(trip, "trip", userId));
-        reasons.addAll(ask(payment, "payment", userId));
+    /** Every reason, in words the person can act on - empty when nothing stands in the way. byOps: ops is deleting the
+     * account, not its owner - payment-service may then let a debt through (ACCOUNT_DELETION_ALLOW_OWING). */
+    public List<String> blockers(String userId, boolean byOps) {
+        List<String> reasons = new ArrayList<>(ask(trip, "trip", userId, byOps));
+        reasons.addAll(ask(payment, "payment", userId, byOps));
         return reasons;
     }
 
-    private static List<String> ask(RestClient client, String name, String userId) {
+    private static List<String> ask(RestClient client, String name, String userId, boolean byOps) {
         try {
-            BlockersView view = client.get().uri("/internal/users/{userId}/deletion-blockers", userId).retrieve().body(BlockersView.class);
+            BlockersView view = client.get().uri("/internal/users/{userId}/deletion-blockers?byOps={byOps}", userId, byOps)
+                    .retrieve().body(BlockersView.class);
             return view == null || view.data() == null ? List.of() : view.data();
         } catch (Exception e) {
             throw new ExternalServiceException("We couldn't check your " + name + " records just now - please try again in a few minutes", e);

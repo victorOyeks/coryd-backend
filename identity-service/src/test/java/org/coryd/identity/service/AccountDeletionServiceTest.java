@@ -20,6 +20,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -47,7 +48,7 @@ class AccountDeletionServiceTest {
     void setUp() {
         user = User.builder().id("user-1").phone("08031234567").build();
         when(users.findById("user-1")).thenReturn(Optional.of(user));
-        when(blockers.blockers("user-1")).thenReturn(List.of());
+        when(blockers.blockers(eq("user-1"), anyBoolean())).thenReturn(List.of());
         when(waitlist.findByWhatsappNumber(anyString())).thenReturn(Optional.empty());
     }
 
@@ -68,7 +69,7 @@ class AccountDeletionServiceTest {
 
     @Test
     void someoneOnATripOrWithMoneyMovingIsToldWhyAndNothingIsDeleted() {
-        when(blockers.blockers("user-1")).thenReturn(List.of("you're on a trip right now - wait until it's finished",
+        when(blockers.blockers(eq("user-1"), anyBoolean())).thenReturn(List.of("you're on a trip right now - wait until it's finished",
                 "you owe CoRyd ₦2,500 - pay it back first"));
 
         assertThatThrownBy(() -> service.deleteOwn("user-1"))
@@ -92,8 +93,17 @@ class AccountDeletionServiceTest {
     }
 
     @Test
+    void paymentsAreToldWhetherOpsOrTheOwnerIsDeleting() {
+        service.deleteOwn("user-1");
+        verify(blockers).blockers("user-1", false);
+
+        service.deleteByOps("user-1", "ops-9");
+        verify(blockers).blockers("user-1", true);
+    }
+
+    @Test
     void ifTripsOrPaymentsCantBeAskedNothingIsDeleted() {
-        when(blockers.blockers("user-1")).thenThrow(new ExternalServiceException("try again"));
+        when(blockers.blockers(eq("user-1"), anyBoolean())).thenThrow(new ExternalServiceException("try again"));
 
         assertThatThrownBy(() -> service.deleteOwn("user-1")).isInstanceOf(ExternalServiceException.class);
         verify(users, never()).delete(any());

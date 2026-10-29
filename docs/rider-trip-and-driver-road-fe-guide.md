@@ -286,7 +286,7 @@ Riders and drivers can delete their own account (Settings → Delete account). T
 | Error | When | Show |
 | --- | --- | --- |
 | `400` *"Confirm that you want to delete your account"* | `confirm` not `true` | Shouldn't happen if you ask first. |
-| `400` *"This account can't be deleted yet: …"* | On a trip right now, owes CoRyd money, or riders' payments are still settling. The message lists every reason. | The message as-is. |
+| `400` *"This account can't be deleted yet: …"* | On a trip right now, owes CoRyd money (unless the server allows that - `ACCOUNT_DELETION_ALLOW_OWING`), or riders' payments are still settling. The message lists every reason. | The message as-is. |
 | `400` *"Your account is suspended - contact CoRyd support to close it"* | Suspended account | The message, with a link to support. |
 | `502` *"We couldn't check your trip/payment records just now - please try again in a few minutes"* | A service couldn't be reached | The message, with a Try again button. |
 

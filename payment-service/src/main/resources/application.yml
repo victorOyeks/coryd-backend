@@ -47,6 +47,9 @@ jwt:
 payment:
   # A driver owing more than this from refunded trips can't post routes until they pay it back.
   driver-owed-limit: ${DRIVER_OWED_LIMIT:10000}
+  # Whether an account that owes CoRyd can be deleted: NEVER, OPS (ops can, the owner can't) or ALWAYS.
+  # What they owe stays on record under the deleted account's ID.
+  account-deletion-allow-owing: ${ACCOUNT_DELETION_ALLOW_OWING:NEVER}
   settlement-sync:
     cron: ${PAYMENT_SETTLEMENT_SYNC_CRON:0 15 */6 * * *}
 

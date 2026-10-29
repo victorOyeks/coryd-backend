@@ -29,7 +29,7 @@ import java.util.List;
  * The phone number is free afterwards, so the person can sign up again and start fresh.
  *
  * <p>Refused, with the reasons, while the person is on a trip or has money still moving (trip-service and
- * payment-service decide). Upcoming trips and bookings don't stop it - they're cancelled and refunded,
+ * payment-service decide - including, by setting, whether a driver who owes CoRyd can be deleted, and by whom). Upcoming trips and bookings don't stop it - they're cancelled and refunded,
  * as they are for a suspension.
  */
 @Slf4j
@@ -54,18 +54,18 @@ public class AccountDeletionService {
         if (!user.isActive()) {
             throw new BadRequestException("Your account is suspended - contact CoRyd support to close it");
         }
-        delete(user, SELF);
+        delete(user, SELF, false);
     }
 
     /** Ops deleting any account, suspended or not. */
     @Transactional
     public void deleteByOps(String userId, String opsUserId) {
-        delete(find(userId), opsUserId);
+        delete(find(userId), opsUserId, true);
     }
 
-    private void delete(User user, String deletedBy) {
+    private void delete(User user, String deletedBy, boolean byOps) {
         String userId = user.getId();
-        List<String> blockers = deletionBlockerClient.blockers(userId);
+        List<String> blockers = deletionBlockerClient.blockers(userId, byOps);
         if (!blockers.isEmpty()) {
             throw new BadRequestException("This account can't be deleted yet: " + String.join("; ", blockers));
         }
