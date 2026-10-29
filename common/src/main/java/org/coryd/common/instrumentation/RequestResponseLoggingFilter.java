@@ -71,6 +71,11 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
     }
 
     private void logResponse(ContentCachingResponseWrapper response) {
+        String contentType = response.getContentType();
+        if (contentType != null && contentType.startsWith("text/html")) {
+            log.info("RESPONSE {} | body: <html page>", response.getStatus());
+            return;
+        }
         String body = new String(response.getContentAsByteArray(), StandardCharsets.UTF_8);
         String maskedBody = SensitiveDataMasker.maskJsonBody(body);
 

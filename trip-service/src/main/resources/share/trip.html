@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>CoRyd trip</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --brand: #F2B705;
+    --brand-soft: #FFF6D6;
+    --ink: #1F1F1F;
+    --muted: #6B6B6B;
+    --line: #ECE7DA;
+    --card: #FFFFFF;
+    --bg: #FAF7F0;
+    --ok: #1E8E5A;
+    --warn: #B4540A;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand-soft: #3A3010;
+      --ink: #F2F2F2;
+      --muted: #A6A6A6;
+      --line: #2E2E2E;
+      --card: #1C1C1C;
+      --bg: #121212;
+      --ok: #4CC38A;
+      --warn: #F0A050;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 8px; padding: 14px 16px; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: -0.3px; }
+  .logo span { color: var(--brand); }
+  .tag { margin-left: auto; font-size: 12px; color: var(--muted); }
+  main { max-width: 560px; margin: 0 auto; padding: 0 16px 24px; }
+  #map { height: 46vh; min-height: 260px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: var(--card); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-top: 12px; }
+  .status { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 0 rgba(30,142,90,.5); animation: pulse 1.8s infinite; }
+  @keyframes pulse { to { box-shadow: 0 0 0 10px rgba(30,142,90,0); } }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .driver { display: flex; gap: 12px; align-items: center; }
+  .avatar { width: 52px; height: 52px; border-radius: 50%; background: var(--brand-soft); display: grid; place-items: center;
+    font-weight: 700; color: var(--ink); overflow: hidden; flex: none; }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .name { font-weight: 700; font-size: 16px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; color: var(--ok); border: 1px solid currentColor;
+    border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: 2px; }
+  .plate { display: inline-block; font-weight: 700; letter-spacing: 1px; background: var(--brand); color: #1F1F1F;
+    border-radius: 6px; padding: 2px 8px; margin-top: 6px; }
+  .trip { display: grid; grid-template-columns: 14px 1fr; gap: 4px 10px; }
+  .pin { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; }
+  .pin.from { background: #1F9E8F; }
+  .pin.to { background: var(--brand); border-radius: 2px; }
+  .label { font-size: 12px; color: var(--muted); }
+  .place { font-weight: 600; overflow-wrap: anywhere; }
+  .help { font-size: 13px; color: var(--muted); text-align: center; margin-top: 16px; }
+  .help strong { color: var(--ink); }
+  .error { text-align: center; padding: 40px 16px; }
+  .error h1 { font-size: 20px; margin: 0 0 6px; }
+  .hidden { display: none; }
+  .car-marker { width: 18px; height: 18px; border-radius: 50%; background: var(--brand); border: 3px solid #fff;
+    box-shadow: 0 1px 6px rgba(0,0,0,.35); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Co<span>Ryd</span></div>
+  <div class="tag">Shared trip</div>
+</header>
+<main>
+  <section id="error" class="card error hidden">
+    <h1>This trip link isn't available</h1>
+    <p class="sub" id="error-text">It may have expired. Ask the person who shared it to send a new one.</p>
+  </section>
+
+  <div id="content" class="hidden">
+    <div id="map" role="img" aria-label="Map of the trip"></div>
+
+    <section class="card">
+      <div class="status"><span class="dot" id="dot"></span><span id="status-text">Loading…</span></div>
+      <div class="sub" id="status-sub"></div>
+    </section>
+
+    <section class="card driver">
+      <div class="avatar" id="avatar"></div>
+      <div>
+        <div><span class="name" id="driver-name"></span><span class="badge hidden" id="verified">Verified</span></div>
+        <div class="sub" id="vehicle"></div>
+        <div class="plate hidden" id="plate"></div>
+      </div>
+    </section>
+
+    <section class="card trip">
+      <span class="pin from"></span>
+      <div><div class="label">From</div><div class="place" id="origin"></div></div>
+      <span class="pin to"></span>
+      <div><div class="label">To</div><div class="place" id="destination"></div></div>
+      <span></span>
+      <div class="sub" id="departure"></div>
+    </section>
+
+    <p class="help">If you think someone on this trip is in danger, call <strong>112</strong>.</p>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  var REFRESH_MS = 20000;
+  var STALE_MS = 5 * 60 * 1000;
+  var LAGOS = [6.5244, 3.3792];
+  var map, carMarker, drawnTrip = false, timer;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function lagosTime(iso, withDay) {
+    var opts = { timeZone: 'Africa/Lagos', hour: 'numeric', minute: '2-digit' };
+    if (withDay) { opts.weekday = 'short'; opts.day = 'numeric'; opts.month = 'short'; }
+    return new Intl.DateTimeFormat('en-NG', opts).format(new Date(iso));
+  }
+
+  function ago(iso) {
+    var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins === 1) return '1 min ago';
+    if (mins < 60) return mins + ' mins ago';
+    return lagosTime(iso, false);
+  }
+
+  // Google's encoded polyline format
+  function decode(str) {
+    var points = [], index = 0, lat = 0, lng = 0;
+    while (index < str.length) {
+      var b, shift = 0, result = 0;
+      do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+      shift = 0; result = 0;
+      do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+      points.push([lat / 1e5, lng / 1e5]);
+    }
+    return points;
+  }
+
+  function statusText(t) {
+    var finished = { COMPLETED: 'This trip has ended', CANCELLED: 'This trip was cancelled' };
+    var booking = {
+      EN_ROUTE_TO_PICKUP: 'Driver is on the way to the pickup',
+      AT_PICKUP: 'Driver is at the pickup',
+      IN_PROGRESS: 'On the way',
+      COMPLETED: 'This ride has ended',
+      CANCELLED_RIDER: 'This ride was cancelled',
+      CANCELLED_DRIVER: 'This ride was cancelled',
+      NO_SHOW: 'This ride didn’t go ahead'
+    };
+    if (finished[t.tripStatus]) return { text: finished[t.tripStatus], done: true };
+    if (t.status && booking[t.status]) {
+      return { text: booking[t.status], done: /^(COMPLETED|CANCELLED|NO_SHOW)/.test(t.status) };
+    }
+    if (t.tripStatus === 'IN_PROGRESS') return { text: 'On the way', done: false };
+    return { text: 'Leaves at ' + lagosTime(t.departureTime, false), done: false };
+  }
+
+  function ensureMap() {
+    if (map) return;
+    map = L.map('map', { zoomControl: true, attributionControl: true }).setView(LAGOS, 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+  }
+
+  function drawTrip(t) {
+    if (drawnTrip) return;
+    drawnTrip = true;
+    var bounds = [];
+    if (t.routePolyline) {
+      var line = decode(t.routePolyline);
+      L.polyline(line, { color: '#D9A400', weight: 5, opacity: 0.9 }).addTo(map);
+      bounds = bounds.concat(line);
+    }
+    if (t.originLat != null) {
+      L.circleMarker([t.originLat, t.originLng], { radius: 7, color: '#fff', weight: 2, fillColor: '#1F9E8F', fillOpacity: 1 })
+        .addTo(map).bindTooltip('From');
+      bounds.push([t.originLat, t.originLng]);
+    }
+    if (t.destinationLat != null) {
+      L.circleMarker([t.destinationLat, t.destinationLng], { radius: 7, color: '#fff', weight: 2, fillColor: '#F2B705', fillOpacity: 1 })
+        .addTo(map).bindTooltip('To');
+      bounds.push([t.destinationLat, t.destinationLng]);
+    }
+    if (bounds.length > 1) map.fitBounds(bounds, { padding: [24, 24] });
+  }
+
+  function showDriver(t) {
+    $('driver-name').textContent = t.driverName || 'Your driver';
+    $('verified').classList.toggle('hidden', !t.driverVerified);
+    var avatar = $('avatar');
+    avatar.textContent = '';
+    if (t.driverPhotoUrl && /^https:\/\//.test(t.driverPhotoUrl)) {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.src = t.driverPhotoUrl;
+      avatar.appendChild(img);
+    } else {
+      avatar.textContent = (t.driverName || '?').trim().charAt(0).toUpperCase();
+    }
+    var car = [t.vehicleMake, t.vehicleModel].filter(Boolean).join(' ');
+    $('vehicle').textContent = car ? car + (t.vehicleHasAC ? ' · AC' : '') : '';
+    $('plate').textContent = t.vehiclePlate || '';
+    $('plate').classList.toggle('hidden', !t.vehiclePlate);
+    $('origin').textContent = t.originLabel || '';
+    $('destination').textContent = t.destinationLabel || '';
+    $('departure').textContent = t.departureTime ? 'Departure ' + lagosTime(t.departureTime, true) : '';
+  }
+
+  function showStatus(t) {
+    var s = statusText(t);
+    var loc = t.location || {};
+    var stale = loc.available && loc.recordedAt && (Date.now() - new Date(loc.recordedAt).getTime() > STALE_MS);
+    $('status-text').textContent = s.text;
+    $('dot').classList.toggle('live', !!loc.available && !stale && !s.done);
+    var sub = '';
+    if (!s.done) {
+      if (loc.available && loc.recordedAt) {
+        sub = (stale ? 'Last seen ' : 'Location updated ') + ago(loc.recordedAt);
+      } else if (loc.message) {
+        sub = loc.message;
+      }
+    }
+    $('status-sub').textContent = sub;
+    return s.done;
+  }
+
+  function showLocation(t) {
+    var loc = t.location || {};
+    if (!loc.available || loc.lat == null) return;
+    var pos = [loc.lat, loc.lng];
+    if (!carMarker) {
+      carMarker = L.marker(pos, { icon: L.divIcon({ className: '', html: '<div class="car-marker"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) })
+        .addTo(map).bindTooltip('Driver');
+      map.setView(pos, Math.max(map.getZoom(), 14));
+    } else {
+      carMarker.setLatLng(pos);
+      if (!map.getBounds().pad(-0.1).contains(pos)) map.panTo(pos);
+    }
+  }
+
+  function fail(message) {
+    clearInterval(timer);
+    $('content').classList.add('hidden');
+    $('error').classList.remove('hidden');
+    if (message) $('error-text').textContent = message;
+  }
+
+  function load(first) {
+    fetch(window.location.pathname, { headers: { Accept: 'application/json' }, cache: 'no-store' })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.success || !res.body.data) {
+          if (first) fail(res.body && res.body.message);
+          return;
+        }
+        var t = res.body.data;
+        $('content').classList.remove('hidden');
+        ensureMap();
+        if (first) { map.invalidateSize(); showDriver(t); }
+        drawTrip(t);
+        showLocation(t);
+        if (showStatus(t)) clearInterval(timer);
+      })
+      .catch(function () {
+        if (first) fail('Couldn’t load the trip. Check your connection and refresh the page.');
+      });
+  }
+
+  load(true);
+  timer = setInterval(function () { load(false); }, REFRESH_MS);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(false); });
+})();
+</script>
+</body>
+</html>

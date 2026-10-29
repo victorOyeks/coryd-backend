@@ -558,7 +558,9 @@ public class BookingService {
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? booking.getVehiclePlateSnapshot() : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
-                locationService.getLocation(bookingId)
+                locationService.getLocation(bookingId),
+                route.getStatus(), route.getOriginLat(), route.getOriginLng(),
+                route.getDestinationLat(), route.getDestinationLng(), route.getRoutePolyline()
         );
     }
 
@@ -582,7 +584,9 @@ public class BookingService {
                 vehicle == null ? null : vehicle.model(),
                 vehicle == null ? null : vehicle.plateNumber(),
                 vehicle != null && vehicle.hasAC(),
-                locationService.peekRouteLocation(routePostId)
+                locationService.peekRouteLocation(routePostId),
+                route.getStatus(), route.getOriginLat(), route.getOriginLng(),
+                route.getDestinationLat(), route.getDestinationLng(), route.getRoutePolyline()
         );
     }
 

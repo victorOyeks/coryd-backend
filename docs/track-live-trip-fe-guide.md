@@ -234,6 +234,8 @@ POST /bookings/{bookingId}/share         ("Share trip details" → returns a lin
 POST /bookings/{bookingId}/sos?triggeredBy={riderId}&latitude=..&longitude=..   ("Alert emergency contact now")
 ```
 
+The share link (from a rider's booking, or `POST /routes/{routePostId}/share` for a driver's whole trip) opens as a web page in the contact's browser: driver, car and plate, from → to, and the driver's position on a map, refreshed every 20 seconds. Nothing to build in the app. Asked for as JSON (`Accept: application/json`), the same link returns the data, now with `tripStatus`, `originLat/Lng`, `destinationLat/Lng` and `routePolyline` too.
+
 ---
 
 ## Step 7 — Rider leaves the screen
