@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,6 +42,8 @@ public class DriverIdentity {
     /** decidedBy for a driver verified by their NIN lookup and licence together. */
     static final String DECIDED_BY = "SMILE_ID_NIN_LOOKUP_AND_LICENCE";
     private static final String CROSS_CHECK_PREFIX = "cross-check-";
+    /** Approved although NIN and licence share only some names - for ops to review, never holding the driver back. */
+    private static final String PARTIAL_CROSS_CHECK_PREFIX = "partial-cross-check-";
 
     private final DriverProfileRepository driverProfileRepository;
     private final IdentityVerificationRepository identityVerificationRepository;
@@ -64,7 +67,8 @@ public class DriverIdentity {
                 || driver.getGovernmentIdStatus() != VerificationStatus.APPROVED) {
             return;
         }
-        String mismatch = properties.isSandbox() ? null : licenceMismatch(verification, userId);
+        CrossCheck crossCheck = properties.isSandbox() ? CrossCheck.AGREE : licenceMismatch(verification, userId);
+        String mismatch = crossCheck.mismatch();
         if (mismatch != null) {
             verification.setStatus(VerificationStatus.IN_REVIEW);
             identityVerificationRepository.save(verification);
@@ -77,6 +81,17 @@ public class DriverIdentity {
                     .build());
             log.info("Driver {} NIN and licence don't agree - sent to ops: {}", userId, mismatch);
             return;
+        }
+        if (crossCheck.partial() != null) {
+            verificationCheckRepository.save(VerificationCheck.builder()
+                    .driverId(userId)
+                    .checkType(VerificationCheckType.NIN_LOOKUP)
+                    .subjectKey(PARTIAL_CROSS_CHECK_PREFIX + UUID.randomUUID())
+                    .outcome(VerificationCheckOutcome.PARTIAL_NAME_MATCH)
+                    .providerSummary(SmileIdResults.truncate("Approved on a partial name match - review: NIN and licence names differ: "
+                            + crossCheck.partial()))
+                    .build());
+            log.info("Driver {} NIN and licence share only some names - approved, flagged for ops: {}", userId, crossCheck.partial());
         }
         decider.approve(verification, DECIDED_BY);
         log.info("Driver {} identity verified by NIN lookup and licence", userId);
@@ -112,29 +127,41 @@ public class DriverIdentity {
                         && c.getSubjectKey() != null && c.getSubjectKey().startsWith(CROSS_CHECK_PREFIX));
     }
 
-    /** The NIMC record from the lookup against the licence Smile ID read - null when they agree, or there's nothing to compare. */
-    private String licenceMismatch(IdentityVerification nimc, String userId) {
+    /** mismatch sends the driver to ops; partial (names that only partly agree) approves them and flags it for ops. */
+    private record CrossCheck(String mismatch, String partial) {
+        static final CrossCheck AGREE = new CrossCheck(null, null);
+    }
+
+    /** The NIMC record from the lookup against the licence Smile ID read - AGREE when they do, or there's nothing to compare. */
+    private CrossCheck licenceMismatch(IdentityVerification nimc, String userId) {
         SmileIdResult.IdFields licence = latestLicence(userId).orElse(null);
         if (licence == null || nimc.getVerifiedFirstName() == null || nimc.getVerifiedLastName() == null
                 || licence.firstName() == null || licence.lastName() == null) {
-            return null; // a licence approved by ops from a photo, before Smile ID - ops already compared it by eye
+            return CrossCheck.AGREE; // a licence approved by ops from a photo, before Smile ID - ops already compared it by eye
         }
+        String partial = null;
         double score = NameMatcher.bestOrder(nimc.getVerifiedFirstName(), nimc.getVerifiedLastName(), licence.firstName(), licence.lastName());
         if (score < properties.getNameMatchThreshold()) {
-            return "NIMC has " + nimc.getVerifiedFirstName() + " " + nimc.getVerifiedLastName()
+            String names = "NIMC has " + nimc.getVerifiedFirstName() + " " + nimc.getVerifiedLastName()
                     + ", the licence has " + licence.firstName() + " " + licence.lastName();
+            boolean sharesAName = NameMatcher.sharesAName(List.of(nimc.getVerifiedFirstName(), nimc.getVerifiedLastName()),
+                    IdentityVerificationService.recordNames(licence), properties.getNameMatchThreshold());
+            if (!properties.approvesPartialNames() || !sharesAName) {
+                return new CrossCheck(names, null);
+            }
+            partial = names;
         }
         LocalDate licenceDob = VerifiedIdentityService.date(licence.dateOfBirth());
         if (nimc.getVerifiedDateOfBirth() != null && licenceDob != null && !nimc.getVerifiedDateOfBirth().equals(licenceDob)) {
-            return "NIMC date of birth " + nimc.getVerifiedDateOfBirth() + ", licence " + licenceDob;
+            return new CrossCheck("NIMC date of birth " + nimc.getVerifiedDateOfBirth() + ", licence " + licenceDob, null);
         }
-        return null;
+        return new CrossCheck(null, partial);
     }
 
     private Optional<SmileIdResult.IdFields> latestLicence(String userId) {
         return verificationCheckRepository.findByDriverId(userId).stream()
                 .filter(c -> c.getCheckType() == VerificationCheckType.DRIVERS_LICENCE && c.getRawResponse() != null
-                        && c.getOutcome() == VerificationCheckOutcome.MATCH)
+                        && (c.getOutcome() == VerificationCheckOutcome.MATCH || c.getOutcome() == VerificationCheckOutcome.PARTIAL_NAME_MATCH))
                 .max(Comparator.comparing(VerificationCheck::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
                 .flatMap(c -> {
                     try {

@@ -38,6 +38,7 @@ profile-service ◀── POST /profile/webhooks/smile-id (signed result) ──
 | Smile ID result | NIN | Licence |
 | --- | --- | --- |
 | `clear`, and what Smile ID read matches the person | **Approved** (`decidedBy: SMILE_ID`); trip-service unlocks booking/posting | **`GOVERNMENT_ID` approved**, exactly like an ops approval: the driver is notified and goes live if it was the last item |
+| `clear`, and only some names match (one name in common, e.g. a married name) | **Approved**, check marked `PARTIAL_NAME_MATCH` and listed for ops to review afterwards | **`GOVERNMENT_ID` approved**, same marking and list |
 | `clear`, but it doesn't match | Ops queue: NIMC name ≠ profile (`NAME_MISMATCH`) | Driver verification queue: name, number or expiry wrong |
 | `block` `face_verification_failed` | Retry `FACE_MISMATCH`, uses a try | Same |
 | `block` `identifier_not_found` | Retry `NIN_NOT_FOUND`, uses a try | — |
@@ -51,6 +52,13 @@ profile-service ◀── POST /profile/webhooks/smile-id (signed result) ──
 Name matching accepts either name order. For the NIN, either of the person's profiles (rider or driver) counts.
 
 **Nothing here rejects anyone.** Only ops rejects, with a reason the person sees.
+
+**Partial name matches.** A name below `SMILE_ID_NAME_MATCH_THRESHOLD` that still shares at least one name with the record - any of the person's names against any on the record, middle names included, spelling drift allowed, initials not counted - is approved with `SMILE_ID_PARTIAL_NAME_MATCH=APPROVE` (default) instead of waiting for ops. Example: profile *Grace Oyekanmi*, NIMC *Grace Oluwafunmilola Dare*. The same applies to a lookup driver's NIN against their licence (a `NIN_LOOKUP` check with subject `partial-cross-check-…`); a date of birth that differs still goes to ops. Each one is listed for ops until reviewed:
+- `GET /ops/identity-verification/partial-name-matches?page=&size=` - oldest first: `checkId`, `userId`, profile name, `checkType` (`NIN_FACE`, `DRIVERS_LICENCE` or `NIN_LOOKUP`), `nameMatchScore`, `summary` (both names and the Smile ID job), `approvedAt`.
+- `POST /ops/identity-verification/partial-name-matches/{checkId}/reviewed` - same person, take it off the list.
+- Not the same person: reject with `POST /ops/identity-verification/{userId}/decision` (`{"approve": false, "reason": "..."}`) for `NIN_FACE` / `NIN_LOOKUP`, or the driver's `GOVERNMENT_ID` decision for `DRIVERS_LICENCE`, then mark it reviewed.
+
+`SMILE_ID_PARTIAL_NAME_MATCH=OPS` puts these back in the ops queue as `NAME_MISMATCH`.
 
 **Smile Secure.** If Smile ID has seen the same NIN or face on another CoRyd account, the check's note in the ops queue says so and names that user.
 
@@ -83,6 +91,7 @@ SMILE_ID_SANDBOX=true            # dev; false in production
 SMILE_ID_CALLBACK_URL=           # blank = the portal's URL for this environment
 SMILE_ID_ID_TYPE=NIN_V2
 SMILE_ID_NAME_MATCH_THRESHOLD=0.85
+SMILE_ID_PARTIAL_NAME_MATCH=APPROVE
 ```
 
 A sandbox key only works with `SMILE_ID_SANDBOX=true` (`testapi.smileidentity.com`), and a production key only with `false` (`api.smileidentity.com`). A mismatch shows up as a 502 *"Identity checks are unavailable…"* on `/session`, with a 401 from Smile ID in the profile-service log.

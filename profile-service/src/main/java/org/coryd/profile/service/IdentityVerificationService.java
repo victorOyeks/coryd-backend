@@ -13,6 +13,7 @@ import org.coryd.common.response.PagedResponse;
 import org.coryd.profile.config.SmileIdProperties;
 import org.coryd.profile.dto.IdentityVerificationQueueItem;
 import org.coryd.profile.dto.IdentityVerificationResponse;
+import org.coryd.profile.dto.PartialNameMatchItem;
 import org.coryd.profile.dto.SmileIdResult;
 import org.coryd.profile.dto.SubmitIdentityVerificationRequest;
 import org.coryd.profile.entity.DriverProfile;
@@ -128,6 +129,38 @@ public class IdentityVerificationService {
         }));
     }
 
+    /** Approvals on a partial name match ops hasn't reviewed yet, oldest first. */
+    @Transactional(readOnly = true)
+    public PagedResponse<PartialNameMatchItem> partialNameMatches(UserRole callerRole, Pageable pageable) {
+        requireOps(callerRole);
+        Page<VerificationCheck> page = verificationCheckRepository
+                .findByOutcomeAndReviewedAtIsNullOrderByCreatedAtAsc(VerificationCheckOutcome.PARTIAL_NAME_MATCH, pageable);
+        List<String> userIds = page.getContent().stream().map(VerificationCheck::getDriverId).distinct().toList();
+        Map<String, Name> names = new HashMap<>();
+        driverProfileRepository.findByUserIdIn(userIds).forEach(d -> names.put(d.getUserId(), new Name(d.getFirstName(), d.getLastName())));
+        riderProfileRepository.findByUserIdIn(userIds).forEach(r -> names.putIfAbsent(r.getUserId(), new Name(r.getFirstName(), r.getLastName())));
+        return PagedResponse.from(page.map(c -> {
+            Name profile = names.get(c.getDriverId());
+            return new PartialNameMatchItem(c.getId(), c.getDriverId(),
+                    profile == null ? null : profile.firstName(), profile == null ? null : profile.lastName(),
+                    c.getCheckType(), c.getNameMatchScore(), c.getProviderSummary(), c.getCreatedAt());
+        }));
+    }
+
+    /** Ops is satisfied it's the same person - it leaves the list. To undo the approval, reject instead. */
+    @Transactional
+    public void markPartialNameMatchReviewed(String checkId, UserRole callerRole, String callerId) {
+        requireOps(callerRole);
+        VerificationCheck check = verificationCheckRepository.findById(checkId)
+                .filter(c -> c.getOutcome() == VerificationCheckOutcome.PARTIAL_NAME_MATCH)
+                .orElseThrow(() -> new ResourceNotFoundException("No partial name match with that id"));
+        if (check.getReviewedAt() == null) {
+            check.setReviewedAt(Instant.now());
+            check.setReviewedBy(callerId);
+            verificationCheckRepository.save(check);
+        }
+    }
+
     @Transactional
     public IdentityVerificationResponse decide(String riderId, UserRole callerRole, String callerId, boolean approve, String reason) {
         requireOps(callerRole);
@@ -175,7 +208,8 @@ public class IdentityVerificationService {
 
     /**
      * A NIN Smile ID found: the NIMC name against their rider and driver profile names (NIMC sometimes holds them the
-     * other way round - the best fit counts). Close enough approves; otherwise ops. confirmed ends the approval note.
+     * other way round - the best fit counts). Close enough approves; one name in common approves for ops to review
+     * after (SMILE_ID_PARTIAL_NAME_MATCH); otherwise ops. confirmed ends the approval note.
      */
     SmileIdDecision matchNimcName(String userId, SmileIdResult.IdFields idFields, String confirmed) {
         String recordFirst = idFields == null ? null : SmileIdResults.blankToNull(idFields.firstName());
@@ -200,10 +234,24 @@ public class IdentityVerificationService {
             }
         }
         if (score < smileIdProperties.getNameMatchThreshold()) {
-            return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true,
-                    "NIN is held by " + onRecord + ", profile says " + best.firstName() + " " + best.lastName());
+            String mismatch = "NIN is held by " + onRecord + ", profile says " + best.firstName() + " " + best.lastName();
+            if (smileIdProperties.approvesPartialNames() && sharesAName(names, idFields)) {
+                return SmileIdDecision.approveForReview(score, "Approved on a partial name match - review: " + mismatch + confirmed);
+            }
+            return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true, mismatch);
         }
         return SmileIdDecision.approve(score, "NIMC confirmed " + onRecord + confirmed);
+    }
+
+    /** Any of their profile names against any name on the record, middle names included. */
+    boolean sharesAName(List<Name> names, SmileIdResult.IdFields idFields) {
+        List<String> entered = names.stream().flatMap(n -> java.util.stream.Stream.of(n.firstName(), n.lastName())).toList();
+        return NameMatcher.sharesAName(entered, recordNames(idFields), smileIdProperties.getNameMatchThreshold());
+    }
+
+    static List<String> recordNames(SmileIdResult.IdFields idFields) {
+        return idFields == null ? List.of()
+                : java.util.Arrays.asList(idFields.firstName(), idFields.otherNames(), idFields.lastName(), idFields.fullName());
     }
 
     /** Their rider and driver profile names, whichever exist - the result is matched against the closer one. */

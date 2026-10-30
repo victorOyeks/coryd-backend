@@ -66,4 +66,10 @@ public class VerificationCheck extends BaseEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "raw_response", columnDefinition = "jsonb")
     private String rawResponse;
+
+    /** A PARTIAL_NAME_MATCH ops has looked at - it then leaves their review list. */
+    private java.time.Instant reviewedAt;
+
+    @Column(length = 36)
+    private String reviewedBy;
 }

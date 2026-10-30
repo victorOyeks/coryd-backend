@@ -1,7 +1,10 @@
 package org.coryd.profile.service;
 
 import java.text.Normalizer;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Compares a name a driver typed against the one on a government record. Exact equality is the
@@ -25,6 +28,33 @@ public final class NameMatcher {
         double first = similarity(firstToken(enteredFirst), firstToken(recordFirst));
         double last = similarity(firstToken(enteredLast), firstToken(recordLast));
         return Math.min(first, last);
+    }
+
+    /**
+     * At least one name in common - any of the entered names against any on the record, middle names included,
+     * each spelt within threshold. Lets a married or reordered name through that score() rightly calls different.
+     * Initials don't count.
+     */
+    public static boolean sharesAName(List<String> entered, List<String> record, double threshold) {
+        List<String> ours = tokens(entered);
+        List<String> theirs = tokens(record);
+        for (String a : ours) {
+            for (String b : theirs) {
+                if (similarity(a, b) >= threshold) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static List<String> tokens(List<String> names) {
+        return names.stream()
+                .filter(Objects::nonNull)
+                .flatMap(n -> Arrays.stream(normalize(n).split(" ")))
+                .filter(t -> t.length() > 1)
+                .distinct()
+                .toList();
     }
 
     /** FRSC often puts "JOHN OLUWASEUN" in the first-name field; only the given name is comparable. */

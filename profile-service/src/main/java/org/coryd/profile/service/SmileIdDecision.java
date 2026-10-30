@@ -14,6 +14,11 @@ record SmileIdDecision(Kind kind, VerificationCheckOutcome outcome, Double nameM
         return new SmileIdDecision(Kind.APPROVE, VerificationCheckOutcome.MATCH, score, summary, null, true);
     }
 
+    /** Approved on a partial name match - recorded as PARTIAL_NAME_MATCH so it lands in ops' review list. */
+    static SmileIdDecision approveForReview(double score, String summary) {
+        return new SmileIdDecision(Kind.APPROVE, VerificationCheckOutcome.PARTIAL_NAME_MATCH, score, summary, null, true);
+    }
+
     static SmileIdDecision retry(SmileIdRetryReason reason, VerificationCheckOutcome outcome, boolean usesATry, String summary) {
         return new SmileIdDecision(Kind.RETRY, outcome, null, summary, reason, usesATry);
     }

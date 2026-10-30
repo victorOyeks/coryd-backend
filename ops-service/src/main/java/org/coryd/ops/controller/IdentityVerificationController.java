@@ -31,6 +31,22 @@ public class IdentityVerificationController {
         return ApiResponse.ok(profileServiceClient.identityVerificationQueue(page, Math.min(size, 50)));
     }
 
+    /**
+     * People approved although only some of their names matched the record (a married or reordered name) - each with
+     * both names and the Smile ID job in summary. Mark it reviewed if it's the same person; if not, reject them with
+     * the identity decision below (NIN_FACE / NIN_LOOKUP) or the driver's GOVERNMENT_ID decision (DRIVERS_LICENCE).
+     */
+    @GetMapping("/partial-name-matches")
+    public ApiResponse<JsonNode> partialNameMatches(@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(profileServiceClient.partialNameMatches(page, Math.min(size, 50)));
+    }
+
+    @PostMapping("/partial-name-matches/{checkId}/reviewed")
+    public ApiResponse<Void> partialNameMatchReviewed(@PathVariable String checkId) {
+        profileServiceClient.markPartialNameMatchReviewed(checkId);
+        return ApiResponse.ok("Marked as reviewed", null);
+    }
+
     @PostMapping("/{userId}/decision")
     public ApiResponse<JsonNode> decide(@PathVariable String userId, @Valid @RequestBody IdentityVerificationDecision decision) {
         return ApiResponse.ok(profileServiceClient.decideIdentityVerification(userId, decision.approve(), decision.reason()));

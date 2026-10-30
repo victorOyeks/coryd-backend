@@ -8,6 +8,7 @@ import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.SmileIdSession;
 import org.coryd.profile.dto.IdentityVerificationDecisionRequest;
 import org.coryd.profile.dto.IdentityVerificationQueueItem;
+import org.coryd.profile.dto.PartialNameMatchItem;
 import org.coryd.profile.dto.IdentityVerificationResponse;
 import org.coryd.profile.dto.StartIdentityCheckRequest;
 import org.coryd.profile.dto.SubmitIdentityVerificationRequest;
@@ -63,6 +64,20 @@ public class IdentityVerificationController {
                                                                            @RequestParam(defaultValue = "0") int page,
                                                                            @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(identityVerificationService.queue(principal.getActiveRole(), PageRequest.of(page, Math.min(size, 50))));
+    }
+
+    /** Ops: people approved on a partial name match (a married or reordered name), to check after the fact. */
+    @GetMapping("/partial-name-matches")
+    public ApiResponse<PagedResponse<PartialNameMatchItem>> partialNameMatches(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                               @RequestParam(defaultValue = "0") int page,
+                                                                               @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(identityVerificationService.partialNameMatches(principal.getActiveRole(), PageRequest.of(page, Math.min(size, 50))));
+    }
+
+    @PostMapping("/partial-name-matches/{checkId}/reviewed")
+    public ApiResponse<Void> partialNameMatchReviewed(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String checkId) {
+        identityVerificationService.markPartialNameMatchReviewed(checkId, principal.getActiveRole(), principal.getUserId());
+        return ApiResponse.ok("Marked as reviewed", null);
     }
 
     @PatchMapping("/{userId}")

@@ -40,6 +40,19 @@ public class SmileIdProperties {
     private double nameMatchThreshold = 0.85;
 
     /**
+     * A name below the threshold that still shares one name with the record (a married name, a dropped middle
+     * name): APPROVE lets them through with the check marked PARTIAL_NAME_MATCH for ops to look at afterwards,
+     * OPS holds them until ops decides, as any other mismatch.
+     */
+    private PartialNameMatch partialNameMatch = PartialNameMatch.APPROVE;
+
+    public enum PartialNameMatch { APPROVE, OPS }
+
+    public boolean approvesPartialNames() {
+        return partialNameMatch == PartialNameMatch.APPROVE;
+    }
+
+    /**
      * Sandbox only: the Smile ID test identity every check is sent as, so every sandbox check succeeds.
      * Smile ID's sandbox only answers for its test identities (matched on these three fields), and this
      * one comes back "clear" for both Biometric KYC and Document Verification. Never used on live.

@@ -61,6 +61,8 @@ smile-id:
   callback-url: ${SMILE_ID_CALLBACK_URL:}
   id-type: ${SMILE_ID_ID_TYPE:NIN_V2}
   name-match-threshold: ${SMILE_ID_NAME_MATCH_THRESHOLD:0.85}
+  # Below the threshold but sharing at least one name with the record: APPROVE (flagged for ops to review after) or OPS
+  partial-name-match: ${SMILE_ID_PARTIAL_NAME_MATCH:APPROVE}
   # Sandbox only: every check is sent as this Smile ID test identity (Clearwater always comes back clear).
   test-identity:
     given-names: ${SMILE_ID_TEST_GIVEN_NAMES:Amina Fatou}

@@ -34,5 +34,6 @@
     <include file="db/changelog/023-smile-id.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/024-verified-identity.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/025-driver-nin-lookup.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/026-partial-name-match-review.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

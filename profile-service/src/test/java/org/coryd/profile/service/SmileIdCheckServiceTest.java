@@ -269,6 +269,27 @@ class SmileIdCheckServiceTest {
         }
 
         @Test
+        void aMarriedNameSharingOneNameIsApprovedAndListedForOps() throws Exception {
+            riders.get("rider-1").setLastName("Oyekanmi");
+            service.handle(result(job, "clear", null,
+                    "{\"first_name\":\"GRACE\",\"other_names\":\"OLUWAFUNMILOLA\",\"last_name\":\"DARE\",\"full_name\":\"GRACE OLUWAFUNMILOLA DARE\"}"));
+
+            verify(decider).approve(any(), anyString());
+            assertThat(last().getOutcome()).isEqualTo(VerificationCheckOutcome.PARTIAL_NAME_MATCH);
+            assertThat(last().getProviderSummary()).contains("partial name match").contains("GRACE OLUWAFUNMILOLA DARE").contains("Grace Oyekanmi");
+        }
+
+        @Test
+        void aSharedNameStillGoesToOpsWhenPartialMatchesAreSetToOps() throws Exception {
+            properties.setPartialNameMatch(SmileIdProperties.PartialNameMatch.OPS);
+            riders.get("rider-1").setLastName("Oyekanmi");
+            service.handle(result(job, "clear", null, nimc("GRACE", "DARE")));
+
+            verify(decider, never()).approve(any(), anyString());
+            assertThat(last().getOutcome()).isEqualTo(VerificationCheckOutcome.NAME_MISMATCH);
+        }
+
+        @Test
         void aFaceMismatchOrUnknownNinIsTheirsToRetryAndUsesATry() throws Exception {
             service.handle(result(job, "block", "face_verification_failed", null));
 
@@ -386,6 +407,15 @@ class SmileIdCheckServiceTest {
                 assertThat(last().getProviderSummary()).contains(c[4]);
             }
             verify(aggregation, never()).autoApproveGovernmentId(anyString(), anyString());
+        }
+
+        @Test
+        void aLicenceSharingOneNameIsApprovedAndListedForOps() throws Exception {
+            service.handle(result(job, "clear", null, licence("TUNDE", "ADEYEMI", "ABC12345DE67", "2030-01-01")));
+
+            verify(aggregation).autoApproveGovernmentId("driver-1", LicenceCheck.DECIDED_BY);
+            assertThat(last().getOutcome()).isEqualTo(VerificationCheckOutcome.PARTIAL_NAME_MATCH);
+            assertThat(last().getProviderSummary()).contains("partial name match").contains("TUNDE ADEYEMI");
         }
 
         @Test
@@ -537,6 +567,23 @@ class SmileIdCheckServiceTest {
             verify(decider, never()).approve(any(), anyString());
             assertThat(verifications.get("driver-2").getStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
             assertThat(last().getProviderSummary()).contains("date of birth");
+        }
+
+        @Test
+        void aNinAndLicenceSharingOneNameVerifyTheDriverAndAreListedForOps() throws Exception {
+            String job = lookUp("22233344455");
+            service.handle(result(job, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"AYENI\",\"date_of_birth\":\"2000-05-28\"}"));
+            String licenceJob = service.start("driver-2", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null).checkId();
+            service.handle(result(licenceJob, "clear", null, "{\"first_name\":\"MAYOWA\",\"last_name\":\"OKONKWO\",\"id_number\":\"KJA61125AB07\","
+                    + "\"expiration_date\":\"2031-05-28\",\"date_of_birth\":\"2000-05-28\"}"));
+            drivers.get("driver-2").setGovernmentIdStatus(VerificationStatus.APPROVED);
+
+            driverIdentity.completeIfReady("driver-2");
+
+            verify(decider).approve(verifications.get("driver-2"), DriverIdentity.DECIDED_BY);
+            assertThat(last().getOutcome()).isEqualTo(VerificationCheckOutcome.PARTIAL_NAME_MATCH);
+            assertThat(last().getSubjectKey()).startsWith("partial-cross-check-");
+            assertThat(last().getProviderSummary()).contains("Mayowa Ayeni").contains("MAYOWA OKONKWO");
         }
 
         @Test

@@ -90,6 +90,21 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** Approvals on a partial name match not yet reviewed - profile-service checks the forwarded token is OPS_ADMIN. */
+    public JsonNode partialNameMatches(int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/identity-verification/partial-name-matches").queryParam("page", page).queryParam("size", size).build())
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public void markPartialNameMatchReviewed(String checkId) {
+        DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
+                .uri("/identity-verification/partial-name-matches/{checkId}/reviewed", checkId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
     public JsonNode decideIdentityVerification(String userId, boolean approve, String reason) {
         Map<String, Object> body = new HashMap<>();
         body.put("approve", approve);

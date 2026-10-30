@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Locale;
 
 import static org.coryd.profile.service.SmileIdResults.blankToNull;
@@ -135,9 +136,15 @@ class LicenceCheck implements SmileIdCheckHandler {
                 ? SmileIdResults.testIdentityName(properties)
                 : new IdentityVerificationService.Name(profile.getFirstName(), profile.getLastName());
         double score = NameMatcher.bestOrder(expected.firstName(), expected.lastName(), recordFirst, recordLast);
+        String partial = null;
         if (score < properties.getNameMatchThreshold()) {
-            return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true,
-                    "Licence is in the name of " + onLicence + ", profile says " + expected.firstName() + " " + expected.lastName());
+            String mismatch = "Licence is in the name of " + onLicence + ", profile says " + expected.firstName() + " " + expected.lastName();
+            boolean sharesAName = NameMatcher.sharesAName(List.of(expected.firstName(), expected.lastName()),
+                    IdentityVerificationService.recordNames(idFields), properties.getNameMatchThreshold());
+            if (!properties.approvesPartialNames() || !sharesAName) {
+                return SmileIdDecision.ops(VerificationCheckOutcome.NAME_MISMATCH, score, true, mismatch);
+            }
+            partial = "Approved on a partial name match - review: " + mismatch + ". ";
         }
         String number = normalize(idFields.idNumber());
         if (!properties.isSandbox() && number != null && !number.equals(normalize(profile.getIdNumber()))) {
@@ -148,9 +155,10 @@ class LicenceCheck implements SmileIdCheckHandler {
         if (expires != null && expires.isBefore(LocalDate.now(LAGOS))) {
             return SmileIdDecision.ops(VerificationCheckOutcome.DETAILS_MISMATCH, score, true, "Licence expired on " + expires);
         }
-        return SmileIdDecision.approve(score, "Genuine licence in the name of " + onLicence
+        String summary = "Genuine licence in the name of " + onLicence
                 + (number == null ? "" : ", number " + number) + (expires == null ? "" : ", valid to " + expires)
-                + ", live selfie matched the licence photo");
+                + ", live selfie matched the licence photo";
+        return partial == null ? SmileIdDecision.approve(score, summary) : SmileIdDecision.approveForReview(score, partial + summary);
     }
 
     @Override
