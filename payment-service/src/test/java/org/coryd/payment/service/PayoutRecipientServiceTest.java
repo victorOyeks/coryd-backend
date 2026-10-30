@@ -59,7 +59,7 @@ class PayoutRecipientServiceTest {
     void savingAnAccountResolvesItAndCreatesTheSubaccountFaresSplitTo() {
         when(paystack.resolveAccountNumber("0123451525", "057"))
                 .thenReturn(new PaystackGatewayClient.ResolvedAccount("0123451525", "ADA OBI"));
-        when(paystack.createSubaccount("ADA OBI", "0123451525", "057", new java.math.BigDecimal("95.00")))
+        when(paystack.createSubaccount("ADA OBI", "0123451525", "057", new java.math.BigDecimal("5.00")))
                 .thenReturn(new PaystackGatewayClient.SubaccountResult("ACCT_1", "42"));
         when(repository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
 

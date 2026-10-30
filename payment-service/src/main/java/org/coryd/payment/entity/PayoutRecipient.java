@@ -49,6 +49,10 @@ public class PayoutRecipient extends BaseEntity {
     @Column(length = 50)
     private String gatewaySubaccountId;
 
+    /** Our share as last set on the subaccount on Paystack (5.00 = 5%) - null if never confirmed. */
+    @Column(precision = 5, scale = 2)
+    private java.math.BigDecimal gatewaySplitPercentage;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean isDefault = false;

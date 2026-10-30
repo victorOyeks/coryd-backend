@@ -72,6 +72,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -977,6 +978,44 @@ class PaymentFlowIntegrationTest {
         assertThat(payoutRecipientRepository.findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(DRIVER))
                 .get().extracting(PayoutRecipient::getGatewaySubaccountId).isEqualTo("777");
         assertThat(payoutRecipientRepository.findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull("bad-details")).isEmpty();
+    }
+
+    @Test
+    void newSubaccountsAreCreatedWithOurCommissionNotTheDriversShare() {
+        payoutRecipientRepository.deleteAll();
+        payoutRecipientRepository.save(recipient(DRIVER, null, null));
+        when(gatewayClient.createSubaccount(anyString(), anyString(), anyString(), any()))
+                .thenReturn(new PaystackGatewayClient.SubaccountResult(SUBACCOUNT, "777"));
+
+        subaccountBackfill.run(null);
+
+        verify(gatewayClient).createSubaccount(anyString(), anyString(), anyString(), eq(new BigDecimal("5.00")));
+        verify(gatewayClient, never()).updateSubaccountPercentage(anyString(), any());
+    }
+
+    @Test
+    void subaccountsWithoutOurCurrentCommissionAreCorrectedOnceEachAndAFailureIsRetriedNextBoot() {
+        payoutRecipientRepository.deleteAll();
+        payoutRecipientRepository.save(recipient(DRIVER, SUBACCOUNT, "777"));
+        payoutRecipientRepository.save(recipient("same-test-subaccount", SUBACCOUNT, "777"));
+        PayoutRecipient rejected = recipient("rejected", "ACCT_rejected", "888");
+        payoutRecipientRepository.save(rejected);
+        PayoutRecipient alreadyRight = recipient("already-right", "ACCT_right", "999");
+        alreadyRight.setGatewaySplitPercentage(new BigDecimal("5.00"));
+        payoutRecipientRepository.save(alreadyRight);
+        doThrow(new BadRequestException("Could not update that subaccount's split."))
+                .when(gatewayClient).updateSubaccountPercentage(eq("ACCT_rejected"), any());
+
+        subaccountBackfill.run(null);
+
+        verify(gatewayClient, times(1)).updateSubaccountPercentage(SUBACCOUNT, new BigDecimal("5.00"));
+        verify(gatewayClient, never()).updateSubaccountPercentage(eq("ACCT_right"), any());
+        assertThat(payoutRecipientRepository.findAll())
+                .filteredOn(r -> r.getGatewaySubaccountCode().equals(SUBACCOUNT))
+                .allSatisfy(r -> assertThat(r.getGatewaySplitPercentage()).isEqualByComparingTo("5"));
+        assertThat(payoutRecipientRepository.findAll())
+                .filteredOn(r -> r.getDriverId().equals("rejected"))
+                .allSatisfy(r -> assertThat(r.getGatewaySplitPercentage()).isNull());
     }
 
     // ---- helpers ---------------------------------------------------------------------------------

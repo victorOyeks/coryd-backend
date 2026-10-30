@@ -217,8 +217,8 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
     }
 
     /**
-     * percentageCharge is the SUBACCOUNT's share, not ours - 95 leaves us the 5% commission. The
-     * settlement schedule must stay a fixed calendar; releasing on trip completion is what Paystack
+     * percentageCharge is the MAIN account's share - ours, the commission - and the subaccount gets the
+     * rest. The settlement schedule must stay a fixed calendar; releasing on trip completion is what Paystack
      * refused to approve.
      */
     public SubaccountResult createSubaccount(String businessName, String accountNumber, String bankCode, BigDecimal percentageCharge) {
@@ -243,6 +243,18 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
             throw new BadRequestException("Could not register that bank account for earnings. Please try again.");
         }
         return new SubaccountResult(response.data().subaccountCode(), response.data().id());
+    }
+
+    /** Changes the share we take on every later charge split to this subaccount; past charges keep theirs. */
+    public void updateSubaccountPercentage(String subaccountCode, BigDecimal percentageCharge) {
+        SubaccountResponse response = call("subaccount update", "Could not update that subaccount's split.", () -> restClient().put()
+                .uri("/subaccount/{code}", subaccountCode)
+                .body(Map.of("percentage_charge", percentageCharge))
+                .retrieve()
+                .body(SubaccountResponse.class));
+        if (response == null || !response.status()) {
+            throw new BadRequestException("Could not update that subaccount's split.");
+        }
     }
 
     /** For subaccounts created before we kept the id. */

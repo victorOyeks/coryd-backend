@@ -60,7 +60,7 @@ public class PayoutRecipientService {
                 .orElseGet(() -> paystackGatewayClient.resolveAccountNumber(request.accountNumber(), request.bankCode()));
         PaystackGatewayClient.SubaccountResult subaccount = paystackGatewayClient.createSubaccount(
                 resolved.accountName(), request.accountNumber(), request.bankCode(),
-                commissionProperties.driverSharePercentage());
+                commissionProperties.paystackPercentageCharge());
 
         boolean isFirstAccount = !payoutRecipientRepository.existsByDriverId(driverId);
         PayoutRecipient recipient = PayoutRecipient.builder()
@@ -71,6 +71,7 @@ public class PayoutRecipientService {
                 .accountName(resolved.accountName())
                 .gatewaySubaccountCode(subaccount.code())
                 .gatewaySubaccountId(subaccount.id())
+                .gatewaySplitPercentage(commissionProperties.paystackPercentageCharge())
                 .isDefault(isFirstAccount)
                 .build();
 
