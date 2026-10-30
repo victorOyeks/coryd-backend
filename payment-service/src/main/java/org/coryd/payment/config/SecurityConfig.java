@@ -45,6 +45,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/payments/webhook").permitAll()
+                        .requestMatchers("/payments/clane/webhook").permitAll()
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
                         .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
                         .anyRequest().authenticated())

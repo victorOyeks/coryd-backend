@@ -48,14 +48,14 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         }
     }
 
-    /** Webhooks whose body is someone's identity record (name, date of birth, address, location) - never logged.
+    /** Webhooks whose body is someone's identity record (name, date of birth, address, location) or payment details - never logged.
      * The request line and the outcome still are, and the parts we keep are on the check's own record. */
-    private static final List<String> UNLOGGED_BODY_PATHS = List.of("/webhooks/smile-id");
+    private static final List<String> UNLOGGED_BODY_PATHS = List.of("/webhooks/smile-id", "/payments/clane/webhook");
 
     private void logRequest(ContentCachingRequestWrapper request) {
         String body = new String(request.getContentAsByteArray(), StandardCharsets.UTF_8);
         String maskedBody = UNLOGGED_BODY_PATHS.stream().anyMatch(request.getRequestURI()::contains)
-                ? "<not logged: identity record>" : SensitiveDataMasker.maskJsonBody(body);
+                ? "<not logged: identity or payment details>" : SensitiveDataMasker.maskJsonBody(body);
 
         String clientIp = RequestLoggingSupport.getClientIp(request);
         String remoteAddr = request.getRemoteAddr();
