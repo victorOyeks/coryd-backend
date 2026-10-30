@@ -36,6 +36,7 @@ public class BetaSignupService {
         BetaSignup signup = betaSignupRepository.findByWhatsappNumber(number)
                 .orElseGet(() -> BetaSignup.builder().whatsappNumber(number).build());
         signup.setName(request.name().trim());
+        signup.setEmail(request.email().trim().toLowerCase(Locale.ROOT));
         signup.setWillMostly(request.willMostly());
         signup.setUsualRoute(request.usualRoute().trim());
         signup.setDevice(request.device());

@@ -18,13 +18,13 @@ public interface BetaSignupRepository extends JpaRepository<BetaSignup, String> 
 
     Optional<BetaSignup> findByWhatsappNumber(String whatsappNumber);
 
-    /** Ops list - any filter left null matches everything; search looks at name, number and route. */
+    /** Ops list - any filter left null matches everything; search looks at name, number, email and route. */
     @Query("""
             select b from BetaSignup b
             where (:status is null or b.status = :status)
               and (:willMostly is null or b.willMostly = :willMostly)
               and (:device is null or b.device = :device)
-              and (:search is null or lower(b.name) like :search or b.whatsappNumber like :search or lower(b.usualRoute) like :search)
+              and (:search is null or lower(b.name) like :search or b.whatsappNumber like :search or b.email like :search or lower(b.usualRoute) like :search)
             order by b.createdAt desc
             """)
     Page<BetaSignup> search(@Param("status") BetaSignup.Status status, @Param("willMostly") BetaSignup.Intent willMostly,

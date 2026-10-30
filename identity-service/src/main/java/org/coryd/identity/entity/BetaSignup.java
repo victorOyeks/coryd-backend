@@ -41,6 +41,10 @@ public class BetaSignup extends BaseEntity {
     @Column(nullable = false, unique = true, length = 20)
     private String whatsappNumber;
 
+    /** Lower-cased. What ops adds to TestFlight / Play testing - null only on sign-ups from before it was asked. */
+    @Column(length = 254)
+    private String email;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 10)
     private Intent willMostly;
