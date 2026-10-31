@@ -290,7 +290,7 @@ a refund marked issued is not yet money in the rider's account.
 **US-9.1** View a driver's earnings: lifetime gross, lifetime commission, earned since last payout,
 and any settlement debt.
 
-**US-9.2** List a driver's weekly Paystack payouts (settlements) with status `PENDING`, `PROCESSING`,
+**US-9.2** List a driver's Paystack payouts (next working day) (settlements) with status `PENDING`, `PROCESSING`,
 `SUCCESS` or `FAILED`.
 
 **US-9.3** See what each driver owes from refunded trips. Paystack takes every refund from CoRyd's
@@ -563,7 +563,7 @@ live-search session cleanup, document expiry, ops report jobs
 | OTP validity | 5 minutes | `AuthService.OTP_TTL_MINUTES` |
 | Document grace period | 30 days from first route | `driver.verification.grace-period-days` |
 | Prerequisite level | Approved identity + vehicle | `driver.verification.prerequisite-level` |
-| Driver payout | Split to the driver's own Paystack subaccount at charge time, settled weekly | `DriverSplitResolver` |
+| Driver payout | Split to the driver's own Paystack subaccount at charge time, settled the next working day | `DriverSplitResolver` |
 | Stored balances | None - card-only, refunds to the card | `PaymentService` |
 | Reporting timezone | `Africa/Lagos` | `report.timezone` |
 

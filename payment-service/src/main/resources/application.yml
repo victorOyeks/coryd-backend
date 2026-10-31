@@ -56,8 +56,9 @@ payment:
 paystack:
   secret-key: ${PAYSTACK_SECRET_KEY:sk_test_placeholder}
   base-url: https://api.paystack.co
-  # auto (T+1), weekly or monthly - never manual, which is conditional release by another name.
-  settlement-schedule: ${PAYSTACK_SETTLEMENT_SCHEDULE:weekly}
+  # auto (next working day), weekly or monthly - never manual, which is conditional release by another name.
+  # Existing drivers' subaccounts are moved to a new value on startup.
+  settlement-schedule: ${PAYSTACK_SETTLEMENT_SCHEDULE:auto}
   # Who pays the fee on a split charge. Verify against a real test-mode split before going live -
   # left unset, Paystack bills the main account, which is more than our commission on a 2,500 fare.
   split-fee-bearer: ${PAYSTACK_SPLIT_FEE_BEARER:}

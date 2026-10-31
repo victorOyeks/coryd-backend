@@ -24,7 +24,7 @@ class PayoutRecipientServiceTest {
     private final PayoutRecipientRepository repository = mock(PayoutRecipientRepository.class);
     private final PaystackGatewayClient paystack = mock(PaystackGatewayClient.class);
     private final PayoutRecipientService service = new PayoutRecipientService(repository, paystack, new CommissionProperties(),
-            new ResolvedAccountCache());
+            new ResolvedAccountCache(), new org.coryd.payment.gateway.PaystackProperties());
 
     @Test
     void savingRightAfterTheLookupReusesTheBanksAnswerInsteadOfAskingAgain() {

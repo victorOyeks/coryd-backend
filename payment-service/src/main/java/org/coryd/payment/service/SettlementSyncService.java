@@ -28,7 +28,7 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class SettlementSyncService {
 
-    /** Weekly settlements, so a few months back covers every status that can still change. */
+    /** Payouts settle within days, so a few months back covers every status that can still change. */
     private static final Duration LOOKBACK = Duration.ofDays(90);
     private static final int PER_PAGE = 100;
     private static final int MAX_PAGES = 10;

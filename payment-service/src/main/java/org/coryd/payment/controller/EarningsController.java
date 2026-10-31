@@ -81,7 +81,7 @@ public class EarningsController {
                 principal.getUserId(), principal.getActiveRole()));
     }
 
-    /** Paystack's weekly payouts to the driver's bank, newest first. */
+    /** Paystack's payouts to the driver's bank, newest first. */
     @GetMapping("/drivers/{driverId}/payouts")
     public ApiResponse<PagedResponse<DriverPayoutItem>> payouts(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                 @PathVariable String driverId,
@@ -101,7 +101,7 @@ public class EarningsController {
                 request == null ? null : request.callbackUrl()));
     }
 
-    /** Everything in one list: trips earned, weekly payouts, and every change to what's owed - newest first. */
+    /** Everything in one list: trips earned, payouts, and every change to what's owed - newest first. */
     @GetMapping("/drivers/{driverId}/statement")
     public ApiResponse<PagedResponse<DriverStatementItem>> statement(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                      @PathVariable String driverId,

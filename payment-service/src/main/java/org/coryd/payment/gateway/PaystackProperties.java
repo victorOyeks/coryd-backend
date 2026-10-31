@@ -13,8 +13,12 @@ public class PaystackProperties {
     private String secretKey;
     private String baseUrl = "https://api.paystack.co";
 
-    /** auto (T+1), weekly or monthly. Never "manual" - that is conditional release by another name. */
-    private String settlementSchedule = "weekly";
+    /**
+     * auto (the next working day - the only cycle Paystack offers subaccounts beyond weekly or monthly,
+     * with no choice of weekday), weekly or monthly. Never "manual" - that is conditional release by
+     * another name. Existing subaccounts are moved to a new value on startup.
+     */
+    private String settlementSchedule = "auto";
 
     /**
      * Who pays Paystack's fee on a split charge. Unset leaves Paystack's default, which is the main

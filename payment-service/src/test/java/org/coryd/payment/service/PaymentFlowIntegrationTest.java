@@ -89,7 +89,7 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @Import({PaymentService.class, EarningsService.class, SavedCardService.class, SettlementSyncService.class,
-        CommissionProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class,
+        CommissionProperties.class, org.coryd.payment.gateway.PaystackProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class,
         PaymentHistoryService.class, org.coryd.payment.repository.PaymentHistoryRepository.class})
 class PaymentFlowIntegrationTest {
 
@@ -990,7 +990,7 @@ class PaymentFlowIntegrationTest {
         subaccountBackfill.run(null);
 
         verify(gatewayClient).createSubaccount(anyString(), anyString(), anyString(), eq(new BigDecimal("5.00")));
-        verify(gatewayClient, never()).updateSubaccountPercentage(anyString(), any());
+        verify(gatewayClient, never()).updateSubaccount(anyString(), any(), anyString());
     }
 
     @Test
@@ -1002,20 +1002,37 @@ class PaymentFlowIntegrationTest {
         payoutRecipientRepository.save(rejected);
         PayoutRecipient alreadyRight = recipient("already-right", "ACCT_right", "999");
         alreadyRight.setGatewaySplitPercentage(new BigDecimal("5.00"));
+        alreadyRight.setGatewaySettlementSchedule("auto");
         payoutRecipientRepository.save(alreadyRight);
         doThrow(new BadRequestException("Could not update that subaccount's split."))
-                .when(gatewayClient).updateSubaccountPercentage(eq("ACCT_rejected"), any());
+                .when(gatewayClient).updateSubaccount(eq("ACCT_rejected"), any(), anyString());
 
         subaccountBackfill.run(null);
 
-        verify(gatewayClient, times(1)).updateSubaccountPercentage(SUBACCOUNT, new BigDecimal("5.00"));
-        verify(gatewayClient, never()).updateSubaccountPercentage(eq("ACCT_right"), any());
+        verify(gatewayClient, times(1)).updateSubaccount(SUBACCOUNT, new BigDecimal("5.00"), "auto");
+        verify(gatewayClient, never()).updateSubaccount(eq("ACCT_right"), any(), anyString());
         assertThat(payoutRecipientRepository.findAll())
                 .filteredOn(r -> r.getGatewaySubaccountCode().equals(SUBACCOUNT))
                 .allSatisfy(r -> assertThat(r.getGatewaySplitPercentage()).isEqualByComparingTo("5"));
         assertThat(payoutRecipientRepository.findAll())
                 .filteredOn(r -> r.getDriverId().equals("rejected"))
                 .allSatisfy(r -> assertThat(r.getGatewaySplitPercentage()).isNull());
+    }
+
+    @Test
+    void subaccountsStillOnWeeklyPayoutsAreMovedToTheNextWorkingDay() {
+        payoutRecipientRepository.deleteAll();
+        PayoutRecipient weekly = recipient(DRIVER, SUBACCOUNT, "777");
+        weekly.setGatewaySplitPercentage(new BigDecimal("5.00"));
+        weekly.setGatewaySettlementSchedule("weekly");
+        payoutRecipientRepository.save(weekly);
+
+        subaccountBackfill.run(null);
+        subaccountBackfill.run(null);
+
+        verify(gatewayClient, times(1)).updateSubaccount(SUBACCOUNT, new BigDecimal("5.00"), "auto");
+        assertThat(payoutRecipientRepository.findAll()).singleElement()
+                .extracting(PayoutRecipient::getGatewaySettlementSchedule).isEqualTo("auto");
     }
 
     // ---- helpers ---------------------------------------------------------------------------------

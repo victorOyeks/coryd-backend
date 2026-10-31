@@ -8,6 +8,7 @@ import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.dto.PayoutRecipientRequest;
 import org.coryd.payment.entity.PayoutRecipient;
 import org.coryd.payment.gateway.PaystackGatewayClient;
+import org.coryd.payment.gateway.PaystackProperties;
 import org.coryd.payment.repository.PayoutRecipientRepository;
 
 import java.math.BigDecimal;
@@ -25,6 +26,7 @@ public class PayoutRecipientService {
     private final PaystackGatewayClient paystackGatewayClient;
     private final CommissionProperties commissionProperties;
     private final ResolvedAccountCache resolvedAccountCache;
+    private final PaystackProperties paystackProperties;
 
 
     public List<PaystackGatewayClient.BankOption> listBanks() {
@@ -72,6 +74,7 @@ public class PayoutRecipientService {
                 .gatewaySubaccountCode(subaccount.code())
                 .gatewaySubaccountId(subaccount.id())
                 .gatewaySplitPercentage(commissionProperties.paystackPercentageCharge())
+                .gatewaySettlementSchedule(paystackProperties.getSettlementSchedule())
                 .isDefault(isFirstAccount)
                 .build();
 

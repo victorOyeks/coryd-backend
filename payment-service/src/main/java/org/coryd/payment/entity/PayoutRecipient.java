@@ -53,6 +53,10 @@ public class PayoutRecipient extends BaseEntity {
     @Column(precision = 5, scale = 2)
     private java.math.BigDecimal gatewaySplitPercentage;
 
+    /** The payout schedule as last set on the subaccount on Paystack (auto, weekly...) - null if never confirmed. */
+    @Column(length = 20)
+    private String gatewaySettlementSchedule;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean isDefault = false;

@@ -40,7 +40,7 @@ public class PaymentHistoryService {
         }));
     }
 
-    /** A driver's trips earned, weekly payouts, and every change to what they owe from refunded trips. */
+    /** A driver's trips earned, payouts, and every change to what they owe from refunded trips. */
     @Transactional(readOnly = true)
     public PagedResponse<DriverStatementItem> driverStatement(String driverId, Pageable pageable, String callerId, UserRole callerRole) {
         requireSelfOrOps(driverId, callerId, callerRole);

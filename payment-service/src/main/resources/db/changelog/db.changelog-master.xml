@@ -22,5 +22,6 @@
     <include file="db/changelog/011-driver-debt-entries.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/012-refunds-and-payment-cards.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/013-subaccount-split-percentage.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/014-subaccount-settlement-schedule.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

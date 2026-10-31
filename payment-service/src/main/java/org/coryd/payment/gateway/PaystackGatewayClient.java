@@ -245,11 +245,12 @@ public class PaystackGatewayClient implements PaymentGatewayClient {
         return new SubaccountResult(response.data().subaccountCode(), response.data().id());
     }
 
-    /** Changes the share we take on every later charge split to this subaccount; past charges keep theirs. */
-    public void updateSubaccountPercentage(String subaccountCode, BigDecimal percentageCharge) {
+    /** Sets the share we take and when the driver is paid out, for every later charge split to this
+     * subaccount; past charges keep theirs. */
+    public void updateSubaccount(String subaccountCode, BigDecimal percentageCharge, String settlementSchedule) {
         SubaccountResponse response = call("subaccount update", "Could not update that subaccount's split.", () -> restClient().put()
                 .uri("/subaccount/{code}", subaccountCode)
-                .body(Map.of("percentage_charge", percentageCharge))
+                .body(Map.of("percentage_charge", percentageCharge, "settlement_schedule", settlementSchedule))
                 .retrieve()
                 .body(SubaccountResponse.class));
         if (response == null || !response.status()) {

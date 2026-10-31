@@ -4,7 +4,7 @@ package org.coryd.payment.dto;
 public enum DriverStatementType {
     /** A completed trip, or a kept late-cancellation fee - amount is net of commission. */
     TRIP_EARNING,
-    /** Paystack's weekly payout to the driver's bank. */
+    /** Paystack's payout to the driver's bank - the next working day after the fare. */
     PAYOUT,
     REFUNDED_TRIP,
     RECOVERED_FROM_FARE,

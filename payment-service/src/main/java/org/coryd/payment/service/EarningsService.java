@@ -67,7 +67,7 @@ import java.util.Objects;
 
 /**
  * The driver's earnings ledger. The money itself moved at charge time - each fare was split to the
- * driver's Paystack subaccount and settles to their bank weekly - so nothing here is a balance we
+ * driver's Paystack subaccount and settles to their bank the next working day - so nothing here is a balance we
  * hold. It records what each trip earned, what Paystack has paid out, and what a driver owes back.
  */
 @Slf4j

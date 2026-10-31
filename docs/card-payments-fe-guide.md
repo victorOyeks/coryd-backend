@@ -17,7 +17,7 @@ All paths below sit under `https://api-dev.coryd.ng`. They use the normal `Autho
 
 **Drivers**
 - A driver needs a saved bank account before posting a trip (`PAYOUT_ACCOUNT_REQUIRED`).
-- New earnings screens: summary, trip list, and weekly payouts taken from Paystack's records.
+- New earnings screens: summary, trip list, and payouts taken from Paystack's records.
 - When a trip the driver was paid for is refunded, their share is recorded as owed and taken from their next fares. They get a push each time this changes.
 - A driver owing more than ₦10,000 can't post trips (`AMOUNT_OWED`). They can pay it back by card in the app: all of it, or just enough to get under the limit.
 
@@ -143,7 +143,7 @@ The driver's share of each fare goes to their Paystack account the moment the ri
 | Field | Show as |
 |---|---|
 | `todayNet`, `lifetimeNet` | Earned today, earned in total, after commission |
-| `earnedSinceLastPayout` | **"Earned since your last payout"**: on its way in the next weekly payout |
+| `earnedSinceLastPayout` | **"Earned since your last payout"**: paid to their bank the next working day (a Friday or weekend fare arrives Monday) |
 | `paidToBank` | **"Paid to your bank"**: total Paystack has paid out |
 | `payoutInProgress` | A payout Paystack has started but not finished. Show it only when it's above 0 |
 | `lastPayoutAt` | "Last payout on …". `null` before the first payout |
@@ -268,7 +268,7 @@ Every trip payment and every refund back to the card, newest first, in the stand
 
 ## 6. Driver statement: `GET /payment/earnings/drivers/{driverId}/statement?page=0&size=20`
 
-Everything in one list, newest first, in the standard paged shape: trips earned, weekly payouts to the bank, and every change to what they owe. The separate lists in section 4 still work for screens that only need one kind.
+Everything in one list, newest first, in the standard paged shape: trips earned, payouts to the bank, and every change to what they owe. The separate lists in section 4 still work for screens that only need one kind.
 
 ```json
 {
