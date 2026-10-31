@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class TripController {
 
     private final TripOpsService tripOpsService;
+    private final org.coryd.ops.client.TripServiceClient tripServiceClient;
 
     /** Trips table - status is omitted entirely for the "All" tab. */
     @GetMapping
@@ -47,6 +48,13 @@ public class TripController {
     }
 
     /** The "View" page for one trip. */
+    /** Drivers who keep moving trips riders have booked within the last hour before departure - most first. */
+    @GetMapping("/time-changes/last-minute")
+    public ApiResponse<com.fasterxml.jackson.databind.JsonNode> lastMinuteTimeChanges(@RequestParam(defaultValue = "30") int days,
+                                                                                      @RequestParam(defaultValue = "2") int minLastMinute) {
+        return ApiResponse.ok(tripServiceClient.lastMinuteTimeChanges(Math.max(1, Math.min(days, 365)), Math.max(1, minLastMinute)));
+    }
+
     @GetMapping("/{routePostId}")
     public ApiResponse<TripDetailResponse> trip(@PathVariable String routePostId) {
         return ApiResponse.ok(tripOpsService.trip(routePostId));

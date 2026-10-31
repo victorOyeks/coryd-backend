@@ -83,16 +83,25 @@ public class NotifyMeService {
             if (request.repeatTime() == null || request.repeatWeeks() == null) {
                 throw new BadRequestException("A repeating request needs repeatTime and repeatWeeks");
             }
+            if (request.expiresInMinutes() != null) {
+                throw new BadRequestException("expiresInMinutes is for a one-off request - a repeating one runs for repeatWeeks");
+            }
             LocalTime time = LocalTime.parse(request.repeatTime());
             int mask = request.repeatDays().stream().distinct().mapToInt(GeoMath::dayBit).sum();
             Instant until = GeoMath.lagos(now).toLocalDate().plusWeeks(request.repeatWeeks()).plusDays(1)
                     .atStartOfDay(GeoMath.LAGOS).toInstant();
-            builder.daysMask(mask).timeMinutes(time.getHour() * 60 + time.getMinute()).expiresAt(until);
+            builder.daysMask(mask).timeMinutes(time.getHour() * 60 + time.getMinute()).expiresAt(until)
+                    .anyTimeOfDay(Boolean.TRUE.equals(request.anyTimeOfDay()));
         } else {
             if (request.desiredDepartureTime() == null) {
                 throw new BadRequestException("Choose a departure time, or the days and time it repeats");
             }
-            Instant expiresAt = request.desiredDepartureTime().plus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
+            if (Boolean.TRUE.equals(request.anyTimeOfDay())) {
+                throw new BadRequestException("anyTimeOfDay is for a repeating request - a one-off has its own time");
+            }
+            Instant expiresAt = request.expiresInMinutes() != null
+                    ? now.plus(request.expiresInMinutes(), ChronoUnit.MINUTES)
+                    : request.desiredDepartureTime().plus(matchingProperties.getTimeToleranceMinutes(), ChronoUnit.MINUTES);
             if (!expiresAt.isAfter(now)) {
                 throw new BadRequestException("That departure time has already passed");
             }
@@ -118,14 +127,15 @@ public class NotifyMeService {
             return Duration.between(a.getDesiredDepartureTime(), b.getDesiredDepartureTime()).abs().toMinutes() <= window;
         }
         if (a.isRepeating() && b.isRepeating()) {
-            return (a.getDaysMask() & b.getDaysMask()) != 0 && minutesApart(a.getTimeMinutes(), b.getTimeMinutes()) <= window;
+            return (a.getDaysMask() & b.getDaysMask()) != 0
+                    && (a.isAnyTimeOfDay() || b.isAnyTimeOfDay() || minutesApart(a.getTimeMinutes(), b.getTimeMinutes()) <= window);
         }
         NotifyMeRequest repeating = a.isRepeating() ? a : b;
         Instant oneOffTime = (a.isRepeating() ? b : a).getDesiredDepartureTime();
         ZonedDateTime oneOff = GeoMath.lagos(oneOffTime);
         return oneOffTime.isBefore(repeating.getExpiresAt())
                 && (repeating.getDaysMask() & GeoMath.dayBit(oneOff.getDayOfWeek())) != 0
-                && minutesApart(repeating.getTimeMinutes(), oneOff.getHour() * 60 + oneOff.getMinute()) <= window;
+                && (repeating.isAnyTimeOfDay() || minutesApart(repeating.getTimeMinutes(), oneOff.getHour() * 60 + oneOff.getMinute()) <= window);
     }
 
     @Transactional(readOnly = true)
@@ -174,7 +184,7 @@ public class NotifyMeService {
         notifyMeRequestRepository.findMatchingRepeating(now, GeoMath.dayBit(departure.getDayOfWeek()),
                         route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng(), radiusKm)
                 .stream()
-                .filter(r -> minutesApart(r.getTimeMinutes(), departureMinutes) <= tolerance)
+                .filter(r -> r.isAnyTimeOfDay() || minutesApart(r.getTimeMinutes(), departureMinutes) <= tolerance)
                 .forEach(r -> tell(r, route));
 
         if (routeMatcher.enabled()) {
@@ -200,7 +210,7 @@ public class NotifyMeService {
             if (request.isRepeating()) {
                 ZonedDateTime local = GeoMath.lagos(pickup);
                 if ((request.getDaysMask() & GeoMath.dayBit(local.getDayOfWeek())) == 0
-                        || minutesApart(request.getTimeMinutes(), local.getHour() * 60 + local.getMinute()) > tolerance) {
+                        || !request.isAnyTimeOfDay() && minutesApart(request.getTimeMinutes(), local.getHour() * 60 + local.getMinute()) > tolerance) {
                     continue;
                 }
             } else {
@@ -280,6 +290,6 @@ public class NotifyMeService {
                 : null;
         String time = r.getTimeMinutes() == null ? null : String.format("%02d:%02d", r.getTimeMinutes() / 60, r.getTimeMinutes() % 60);
         return new NotifyMeResponse(r.getId(), r.getOriginLabel(), r.getDestinationLabel(), r.getOriginLat(), r.getOriginLng(),
-                r.getDestinationLat(), r.getDestinationLng(), r.getDesiredDepartureTime(), days, time, r.getExpiresAt());
+                r.getDestinationLat(), r.getDestinationLng(), r.getDesiredDepartureTime(), days, time, r.getExpiresAt(), r.isAnyTimeOfDay());
     }
 }

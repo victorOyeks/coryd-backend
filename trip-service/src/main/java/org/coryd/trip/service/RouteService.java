@@ -492,7 +492,8 @@ public class RouteService {
                 BookingService.SEAT_HOLD_MINUTES, base.routeNote(),
                 route.getRoutePolyline() != null ? route.getRoutePolyline()
                         : overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
-                unavailableReason == null, unavailableReason, route.getViaSummary()
+                unavailableReason == null, unavailableReason, route.getViaSummary(),
+                base.vehicleColour(), route.getOriginalDepartureTime(), route.getTimeChangeCount()
         );
     }
 
@@ -643,7 +644,9 @@ public class RouteService {
                     partWay.contains(route.getId()),
                     stop(along.get(route.getId()), true, pickupLabel),
                     stop(along.get(route.getId()), false, dropoffLabel),
-                    route.getViaSummary()
+                    route.getViaSummary(),
+                    vehicle == null ? null : vehicle.color(),
+                    route.getTimeChangeCount()
             );
         }).toList();
     }

@@ -26,6 +26,8 @@ public record SharedTripResponse(
         Double originLng,
         Double destinationLat,
         Double destinationLng,
-        String routePolyline
+        String routePolyline,
+        /** The car's colour - null if the driver never gave one. */
+        String vehicleColour
 ) {
 }

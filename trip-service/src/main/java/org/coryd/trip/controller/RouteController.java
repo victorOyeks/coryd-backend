@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.trip.dto.ChangeTripTimeRequest;
 import org.coryd.trip.dto.DriverPostingEligibilityResponse;
 import org.coryd.trip.dto.FareSuggestionRequest;
 import org.coryd.trip.dto.FareSuggestionResponse;
@@ -14,6 +15,7 @@ import org.coryd.trip.dto.PostRouteRequest;
 import org.coryd.trip.dto.RideDetailsResponse;
 import org.coryd.trip.dto.RideSearchResult;
 import org.coryd.trip.dto.RouteSummary;
+import org.coryd.trip.dto.RouteTimeChangeResponse;
 import org.coryd.trip.dto.SearchRequest;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.entity.SuggestedFareRange;
@@ -21,6 +23,7 @@ import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
 import org.coryd.trip.service.FareSuggestionService;
 import org.coryd.trip.service.RouteService;
+import org.coryd.trip.service.RouteTimeChangeService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -44,6 +47,7 @@ public class RouteController {
     private final RouteService routeService;
     private final BookingService bookingService;
     private final FareSuggestionService fareSuggestionService;
+    private final RouteTimeChangeService routeTimeChangeService;
 
     /** Whether this driver may post routes, and how long they have left to upload documents. Always self-scoped. */
     @GetMapping("/drivers/me/posting-eligibility")
@@ -126,6 +130,13 @@ public class RouteController {
     public ApiResponse<Void> cancel(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId) {
         routeService.cancel(routePostId, principal.getUserId());
         return ApiResponse.ok("Route cancelled", null);
+    }
+
+    /** "Running late / Change time" - before the trip starts. With riders booked: later only, within limits, and they're told. */
+    @PostMapping("/{routePostId}/change-time")
+    public ApiResponse<RouteTimeChangeResponse> changeTime(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId,
+                                                           @Valid @RequestBody ChangeTripTimeRequest request) {
+        return ApiResponse.ok("Trip time changed", routeTimeChangeService.change(routePostId, principal.getUserId(), request));
     }
 
     /** "Start Trip" button on the Ready to Depart screen. */

@@ -16,6 +16,8 @@ import java.util.List;
 
 public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
+    List<RoutePost> findTop50ByDriverIdAndStatusNotOrderByCreatedAtDesc(String driverId, RouteStatus status);
+
     Page<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId, Pageable pageable);
 
     /** Ops Console trips table - status tab plus a search across either end of the route or the trip id, newest departure first. */

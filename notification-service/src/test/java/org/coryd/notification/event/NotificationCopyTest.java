@@ -34,6 +34,32 @@ class NotificationCopyTest {
     }
 
     @Test
+    void ridersOnAMovedTripAreToldTheNewAndOldTimeAndOnlyThoseMovedFarEnoughHearCancellingIsFree() {
+        listener.onRouteTimeChanged(org.coryd.common.kafka.events.RouteTimeChangedEvent.builder()
+                .routePostId("route-9").originLabel("Church X").destinationLabel("Ajah")
+                .previousDepartureTime(Instant.parse("2026-10-11T12:30:00Z"))
+                .departureTime(Instant.parse("2026-10-11T13:00:00Z"))
+                .riders(List.of(
+                        org.coryd.common.kafka.events.RouteTimeChangedEvent.RiderBooking.builder().riderId("rider-1").bookingId("b-1").freeCancellation(true).build(),
+                        org.coryd.common.kafka.events.RouteTimeChangedEvent.RiderBooking.builder().riderId("rider-2").bookingId("b-2").freeCancellation(false).build()))
+                .build());
+
+        verify(dispatch).sendPush(eq("rider-1"), eq("Your trip's time changed"),
+                eq("Your ride Church X -> Ajah now leaves Sun 11 Oct at 2:00 PM (was Sun 11 Oct at 1:30 PM). "
+                        + "Your seat is kept - if the new time doesn't work, you can cancel free for a full refund."),
+                eq("ROUTE_TIME_CHANGED"), eq("b-1"));
+        verify(dispatch).sendPush(eq("rider-2"), eq("Your trip's time changed"),
+                eq("Your ride Church X -> Ajah now leaves Sun 11 Oct at 2:00 PM (was Sun 11 Oct at 1:30 PM). Your seat is kept."),
+                eq("ROUTE_TIME_CHANGED"), eq("b-2"));
+    }
+
+    @Test
+    void aTimeChangeWithNoRidersSendsNothing() {
+        listener.onRouteTimeChanged(org.coryd.common.kafka.events.RouteTimeChangedEvent.builder().routePostId("route-9").build());
+        org.mockito.Mockito.verifyNoInteractions(dispatch);
+    }
+
+    @Test
     void anSosTextsTheContactsAndEveryOpsPhoneAndEmailsEveryOpsAddress() {
         sos.setOpsPhones(List.of("08011111111", " 08022222222 ", ""));
         sos.setOpsEmails(List.of("ops@coryd.ng", "founder@coryd.ng"));
@@ -193,6 +219,36 @@ class NotificationCopyTest {
         listener.onRouteDepartureReminder(reminder("DRIVER_GET_READY", 3));
         verify(dispatch).sendRoutePush(any(), any(),
                 eq("Your route Lekki -> Ikoyi departs in 29 minutes - 3 riders booked."), any(), any());
+    }
+
+    @Test
+    void getReadyReminderAddsHowManyNearTheStartAreGoingTheDriversWay() {
+        RouteDepartureReminderEvent four = reminder("DRIVER_GET_READY", 1);
+        four.setWaitingNearby(4);
+        listener.onRouteDepartureReminder(four);
+        verify(dispatch).sendRoutePush(any(), any(), eq("Your route Lekki -> Ikoyi departs in 29 minutes - 1 rider booked."
+                + " 4 people near the start are going your way."), eq("DRIVER_DEPARTURE_REMINDER"), eq("route-1"));
+
+        RouteDepartureReminderEvent one = reminder("DRIVER_GET_READY", 0);
+        one.setWaitingNearby(1);
+        listener.onRouteDepartureReminder(one);
+        verify(dispatch).sendRoutePush(any(), any(), eq("Your route Lekki -> Ikoyi departs in 29 minutes - no riders booked yet."
+                + " 1 person near the start is going your way."), any(), any());
+
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.waitingCopy(0)).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.waitingCopy(null)).isEmpty();
+    }
+
+    @Test
+    void aDriverNearWaitingRidersIsToldWhereTheyreGoingAndAskedIfTheyreLeaving() {
+        listener.onDriverNearbyDemand(org.coryd.common.kafka.events.DriverNearbyDemandEvent.builder()
+                .driverId("driver-1").destinationLabel("Ajah").riderCount(4).build());
+        verify(dispatch).sendPush(eq("driver-1"), eq("People near you are going your way"),
+                eq("4 people near you are going to Ajah. Leaving now? Share your empty seats."), eq("DRIVER_NEARBY_DEMAND"), eq(null));
+
+        org.assertj.core.api.Assertions.assertThat(NotificationEventListener.nearbyDemandCopy(
+                org.coryd.common.kafka.events.DriverNearbyDemandEvent.builder().riderCount(1).destinationLabel(" ").build()))
+                .isEqualTo("1 person near you is going your way. Leaving now? Share your empty seats.");
     }
 
     @Test

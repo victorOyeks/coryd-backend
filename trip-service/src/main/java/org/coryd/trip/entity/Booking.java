@@ -78,4 +78,9 @@ public class Booking extends BaseEntity {
     private String dropoffLabel;
     private Double dropoffLat;
     private Double dropoffLng;
+
+    /** How much later the trip now leaves than when this rider booked it - past the limit, cancelling is free. */
+    @Builder.Default
+    @Column(nullable = false)
+    private int departureShiftMinutes = 0;
 }

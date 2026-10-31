@@ -23,6 +23,12 @@ public record NotifyMeCreateRequest(
         Instant desiredDepartureTime,
         List<DayOfWeek> repeatDays,
         @Pattern(regexp = "^([01]\\d|2[0-3]):[0-5]\\d$", message = "repeatTime must be HH:mm, e.g. 07:00") String repeatTime,
-        @Min(1) @Max(12) Integer repeatWeeks
+        @Min(1) @Max(12) Integer repeatWeeks,
+        /** One-off only: stop waiting this many minutes from now (e.g. 45 while standing in a car park) instead of
+         * an hour past desiredDepartureTime. */
+        @Min(value = 5, message = "expiresInMinutes must be at least 5") @Max(value = 720, message = "expiresInMinutes can be at most 720") Integer expiresInMinutes,
+        /** Repeating only: a ride at any time on those days counts, not only around repeatTime - e.g. after a church
+         * service that can run late. repeatTime is still sent, as the usual time. */
+        Boolean anyTimeOfDay
 ) {
 }

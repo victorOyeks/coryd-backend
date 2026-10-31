@@ -91,6 +91,14 @@ public class TripServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** Drivers who keep moving booked trips at the last minute - passed through as trip-service shapes it. */
+    public JsonNode lastMinuteTimeChanges(int days, int minLastMinute) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/internal/ops/trips/time-changes/last-minute")
+                        .queryParam("days", days).queryParam("minLastMinute", minLastMinute).build())
+                .retrieve().body(JsonNode.class));
+    }
+
     public JsonNode pilotMetrics(int days) {
         return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri(b -> b.path("/internal/ops/pilot-metrics").queryParam("days", days).build())

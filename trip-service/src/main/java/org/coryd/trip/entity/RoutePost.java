@@ -96,4 +96,12 @@ public class RoutePost extends BaseEntity {
 
     /** Set when RouteTemplateService posted this trip from a driver's regular route. */
     private String routeTemplateId;
+
+    /** The departure before the driver first changed it - null while it has never changed. */
+    private Instant originalDepartureTime;
+
+    /** Changes made while riders were booked - capped, see TimeChangeProperties. */
+    @Builder.Default
+    @Column(nullable = false)
+    private int timeChangeCount = 0;
 }

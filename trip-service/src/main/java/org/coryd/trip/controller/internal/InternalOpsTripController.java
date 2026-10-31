@@ -28,6 +28,7 @@ import java.util.List;
 public class InternalOpsTripController {
 
     private final OpsTripQueryService opsTripQueryService;
+    private final org.coryd.trip.service.RouteTimeChangeService routeTimeChangeService;
 
     /** status is omitted entirely for the "All" tab. */
     @GetMapping
@@ -47,6 +48,13 @@ public class InternalOpsTripController {
     @GetMapping("/live")
     public ApiResponse<List<OpsLiveTripItem>> live(@RequestParam(required = false) String search) {
         return ApiResponse.ok(opsTripQueryService.live(search));
+    }
+
+    /** Drivers who keep moving trips riders have booked at the last minute - most first. */
+    @GetMapping("/time-changes/last-minute")
+    public ApiResponse<List<org.coryd.trip.dto.OpsTimeChangeDriverItem>> lastMinuteTimeChanges(
+            @RequestParam(defaultValue = "30") int days, @RequestParam(defaultValue = "2") int minLastMinute) {
+        return ApiResponse.ok(routeTimeChangeService.frequentLastMinuteChangers(days, minLastMinute));
     }
 
     @GetMapping("/{routePostId}")

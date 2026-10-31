@@ -17,7 +17,9 @@ import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
+import org.coryd.common.kafka.events.DriverNearbyDemandEvent;
 import org.coryd.common.kafka.events.RouteDepartureReminderEvent;
+import org.coryd.common.kafka.events.RouteTimeChangedEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripCompletedEvent;
@@ -168,7 +170,8 @@ public class NotificationEventListener {
         switch (kind) {
             case "DRIVER_GET_READY" -> dispatchService.sendRoutePush(event.getDriverId(), "Get ready to depart",
                     "Your route " + routeSummary + " departs " + inMinutes(event.getDepartureTime()) + " - "
-                            + (riderCount == 0 ? "no riders booked yet." : count(riderCount, "rider", "riders") + " booked."),
+                            + (riderCount == 0 ? "no riders booked yet." : count(riderCount, "rider", "riders") + " booked.")
+                            + waitingCopy(event.getWaitingNearby()),
                     "DRIVER_DEPARTURE_REMINDER", event.getRoutePostId());
             case "DRIVER_START_OVERDUE" -> dispatchService.sendRoutePush(event.getDriverId(), "Your trip is due to leave",
                     "Start your route " + routeSummary + " or cancel it - it's cancelled automatically 45 minutes after departure"
@@ -186,6 +189,47 @@ public class NotificationEventListener {
                 }
             }
         }
+    }
+
+    @KafkaListener(topics = KafkaTopics.ROUTE_TIME_CHANGED, groupId = KafkaConfig.GROUP_ID_TRIP)
+    public void onRouteTimeChanged(RouteTimeChangedEvent event) {
+        if (event.getRiders() == null) {
+            return;
+        }
+        for (RouteTimeChangedEvent.RiderBooking rider : event.getRiders()) {
+            dispatchService.sendPush(rider.getRiderId(), "Your trip's time changed", timeChangedCopy(event, rider.isFreeCancellation()),
+                    "ROUTE_TIME_CHANGED", rider.getBookingId());
+        }
+    }
+
+    static String timeChangedCopy(RouteTimeChangedEvent event, boolean freeCancellation) {
+        String body = "Your ride " + event.getOriginLabel() + " -> " + event.getDestinationLabel() + " now leaves "
+                + RIDE_TIME.format(event.getDepartureTime())
+                + (event.getPreviousDepartureTime() == null ? "." : " (was " + RIDE_TIME.format(event.getPreviousDepartureTime()) + ").");
+        return body + (freeCancellation
+                ? " Your seat is kept - if the new time doesn't work, you can cancel free for a full refund."
+                : " Your seat is kept.");
+    }
+
+    /** " 4 people near the start are going your way." - nothing when no one is, or the count wasn't known. */
+    static String waitingCopy(Integer waiting) {
+        if (waiting == null || waiting <= 0) {
+            return "";
+        }
+        return " " + count(waiting, "person", "people") + " near the start " + (waiting == 1 ? "is" : "are") + " going your way.";
+    }
+
+    @KafkaListener(topics = KafkaTopics.DRIVER_NEARBY_DEMAND, groupId = KafkaConfig.GROUP_ID_TRIP)
+    public void onDriverNearbyDemand(DriverNearbyDemandEvent event) {
+        dispatchService.sendPush(event.getDriverId(), "People near you are going your way", nearbyDemandCopy(event),
+                "DRIVER_NEARBY_DEMAND", null);
+    }
+
+    static String nearbyDemandCopy(DriverNearbyDemandEvent event) {
+        String where = event.getDestinationLabel() == null || event.getDestinationLabel().isBlank()
+                ? "your way" : "to " + event.getDestinationLabel();
+        return count(event.getRiderCount(), "person", "people") + " near you " + (event.getRiderCount() == 1 ? "is" : "are")
+                + " going " + where + ". Leaving now? Share your empty seats.";
     }
 
     private static String inMinutes(Instant departure) {

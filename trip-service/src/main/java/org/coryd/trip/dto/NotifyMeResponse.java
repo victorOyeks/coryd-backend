@@ -16,6 +16,8 @@ public record NotifyMeResponse(
         Instant desiredDepartureTime,
         List<DayOfWeek> repeatDays,
         String repeatTime,
-        Instant activeUntil
+        Instant activeUntil,
+        /** Repeating: any ride on those days counts, not only around repeatTime. */
+        boolean anyTimeOfDay
 ) {
 }

@@ -40,6 +40,17 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
 
     List<Booking> findByRiderIdAndStatus(String riderId, BookingStatus status);
 
+    List<Booking> findTop50ByRiderIdAndStatusInOrderByCreatedAtDesc(String riderId, Collection<BookingStatus> statuses);
+
+    /** Of these riders, the ones already holding a seat on a trip leaving between from and to - they have a ride. */
+    @Query("""
+            select distinct b.riderId from Booking b, RoutePost r
+            where r.id = b.routePostId and b.riderId in :riderIds and b.status in :statuses
+              and r.departureTime between :from and :to
+            """)
+    List<String> ridersWithASeatBetween(@Param("riderIds") Collection<String> riderIds, @Param("statuses") Collection<BookingStatus> statuses,
+                                        @Param("from") Instant from, @Param("to") Instant to);
+
     List<Booking> findByRiderIdAndStatusIn(String riderId, Collection<BookingStatus> statuses);
 
     /** Spends one pickup-code attempt before the code is compared, so parallel guesses can't

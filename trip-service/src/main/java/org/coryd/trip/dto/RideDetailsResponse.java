@@ -39,6 +39,12 @@ public record RideDetailsResponse(
         boolean bookable,
         String unavailableReason,
         /** The road the driver picked, in words - null when they left it to Google. overviewPolyline is that road. */
-        String viaSummary
+        String viaSummary,
+        /** The car's colour, to spot it in a car park - null if the driver never gave one. */
+        String vehicleColour,
+        /** The departure before the driver first changed it - null while it never has. */
+        java.time.Instant originalDepartureTime,
+        /** How many times the driver changed this trip's time with riders booked. */
+        int timeChangeCount
 ) {
 }

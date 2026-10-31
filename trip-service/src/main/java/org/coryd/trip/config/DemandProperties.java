@@ -50,4 +50,20 @@ public class DemandProperties {
 
     /** ...and within this much of its time is the same request - a second copy would only push twice per ride. */
     private int notifyMeDuplicateMinutes = 60;
+
+    /** "N people near you are going your way": groups smaller than this aren't shown, so no one rider is singled out. */
+    private int nearbyMinRiders = 2;
+
+    /** A rider counts as waiting nearby for this long after a search. */
+    private int nearbySearchMinutes = 15;
+
+    /** ...if they wanted to leave within this much of now. */
+    private int nearbyDepartureWindowMinutes = 60;
+
+    /** Default and largest radius a nearby count looks around the caller. */
+    private int nearbyDefaultRadiusMeters = 500;
+    private int nearbyMaxRadiusMeters = 2000;
+
+    /** A rider's destination counts as on the way home when it's this close to the straight line there. */
+    private double nearbyCorridorKm = 2.0;
 }

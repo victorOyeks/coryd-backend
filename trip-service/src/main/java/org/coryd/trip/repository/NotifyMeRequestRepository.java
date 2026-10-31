@@ -12,6 +12,19 @@ import java.util.List;
 
 public interface NotifyMeRequestRepository extends JpaRepository<NotifyMeRequest, String> {
 
+    List<NotifyMeRequest> findByCreatedAtAfterAndDesiredDepartureTimeIsNotNull(Instant since);
+
+    /** One-off requests still waiting, starting inside a box and wanting to leave between from and to - the caller checks the exact distance. */
+    @Query("""
+            select n from NotifyMeRequest n
+            where n.cancelled = false and n.fulfilled = false and n.expiresAt > :now
+              and n.desiredDepartureTime between :from and :to
+              and n.originLat between :minLat and :maxLat and n.originLng between :minLng and :maxLng
+            """)
+    List<NotifyMeRequest> findWaitingOneOffsStartingIn(@Param("now") Instant now, @Param("from") Instant from, @Param("to") Instant to,
+                                                       @Param("minLat") double minLat, @Param("maxLat") double maxLat,
+                                                       @Param("minLng") double minLng, @Param("maxLng") double maxLng);
+
     List<NotifyMeRequest> findByFulfilledFalseAndExpiresAtAfter(Instant now);
 
     /** Still-wanted requests - what rider demand counts alongside searches. */

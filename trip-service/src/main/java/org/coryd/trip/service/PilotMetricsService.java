@@ -42,6 +42,7 @@ public class PilotMetricsService {
     private final RoutePostRepository routePostRepository;
     private final BookingRepository bookingRepository;
     private final NotifyMeRequestRepository notifyMeRequestRepository;
+    private final org.coryd.trip.repository.RouteTimeChangeRepository routeTimeChangeRepository;
 
     public PilotMetricsResponse metrics(int days) {
         Instant to = Instant.now();
@@ -54,7 +55,37 @@ public class PilotMetricsService {
 
         return new PilotMetricsResponse(from, to, totals(searches, routes, seats),
                 weekTwoRepeatRate(from, to), notifyMeRequestRepository.countByCreatedAtAfter(from),
-                notifyMeRequestRepository.countBookedSince(from), topSearchedRoutes(searches));
+                notifyMeRequestRepository.countBookedSince(from), topSearchedRoutes(searches),
+                leavingNow(from, to, routes, seats));
+    }
+
+    private PilotMetricsResponse.LeavingNow leavingNow(Instant from, Instant to, List<RoutePost> routes, List<Booking> seats) {
+        Set<String> leavingNowIds = routes.stream()
+                .filter(r -> r.getCreatedAt() != null
+                        && r.getCreatedAt().isAfter(r.getDepartureTime().minus(TripScheduleService.ACTIVE_WINDOW)))
+                .map(RoutePost::getId).collect(Collectors.toSet());
+        long seatsOnThem = seats.stream().filter(b -> leavingNowIds.contains(b.getRoutePostId()))
+                .mapToLong(b -> b.getSeatCount() == null ? 0 : b.getSeatCount()).sum();
+
+        // Waiting for about the moment the request was made - not planning a trip for later.
+        List<org.coryd.trip.entity.NotifyMeRequest> waits = notifyMeRequestRepository.findByCreatedAtAfterAndDesiredDepartureTimeIsNotNull(from).stream()
+                .filter(n -> n.getCreatedAt() != null && n.getCreatedAt().isBefore(to)
+                        && Duration.between(n.getCreatedAt(), n.getDesiredDepartureTime()).abs().compareTo(TripScheduleService.ACTIVE_WINDOW) <= 0)
+                .toList();
+        long found = waits.stream().filter(org.coryd.trip.entity.NotifyMeRequest::isFulfilled).count();
+        Instant now = Instant.now();
+        List<PilotMetricsResponse.UnmetArea> unmet = waits.stream()
+                .filter(n -> !n.isFulfilled() && !n.isCancelled() && !n.getExpiresAt().isAfter(now))
+                .collect(Collectors.groupingBy(n -> label(n.getDestinationLabel()),
+                        Collectors.mapping(org.coryd.trip.entity.NotifyMeRequest::getRiderId, Collectors.toSet())))
+                .entrySet().stream()
+                .map(e -> new PilotMetricsResponse.UnmetArea(e.getKey(), e.getValue().size()))
+                .sorted(Comparator.comparingLong(PilotMetricsResponse.UnmetArea::riders).reversed()
+                        .thenComparing(PilotMetricsResponse.UnmetArea::destinationLabel))
+                .limit(10)
+                .toList();
+        return new PilotMetricsResponse.LeavingNow(leavingNowIds.size(), seatsOnThem, waits.size(), found, rate(found, waits.size()),
+                unmet, routeTimeChangeRepository.countByCreatedAtAfter(from), routeTimeChangeRepository.countByCreatedAtAfterAndLastMinuteTrue(from));
     }
 
     private static PilotMetricsResponse.Totals totals(List<RouteSearch> searches, List<RoutePost> routes, List<Booking> seats) {

@@ -236,7 +236,7 @@ class DemandIntegrationTest {
     @Test
     void requestsAreCheckedAndCapped() {
         assertThatThrownBy(() -> notifyMeService.create("rider-1", new NotifyMeCreateRequest(IKORODU[0], IKORODU[1], VI[0], VI[1],
-                null, null, null, List.of(DayOfWeek.MONDAY), null, 4))).isInstanceOf(BadRequestException.class);
+                null, null, null, List.of(DayOfWeek.MONDAY), null, 4, null, null))).isInstanceOf(BadRequestException.class);
         assertThatThrownBy(() -> notifyMeService.create("rider-1", oneOff(IKORODU, VI, Instant.now().minus(1, ChronoUnit.DAYS))))
                 .isInstanceOf(BadRequestException.class);
 
@@ -479,7 +479,7 @@ class DemandIntegrationTest {
         String longName = "Ikorodu ".repeat(60);
         demandService.recordSearch("rider-1", new SearchRequest(IKORODU[0], IKORODU[1], VI[0], VI[1], tomorrowAt(7, 0), longName, null), 0);
         notifyMeService.create("rider-1", new NotifyMeCreateRequest(IKORODU[0], IKORODU[1], VI[0], VI[1], longName, null,
-                tomorrowAt(7, 0), null, null, null));
+                tomorrowAt(7, 0), null, null, null, null, null));
 
         assertThat(routeSearchRepository.findAll()).singleElement()
                 .satisfies(s -> assertThat(s.getOriginLabel()).hasSize(255));
@@ -591,12 +591,12 @@ class DemandIntegrationTest {
     }
 
     private static NotifyMeCreateRequest oneOff(double[] from, double[] to, Instant when) {
-        return new NotifyMeCreateRequest(from[0], from[1], to[0], to[1], label(from), label(to), when, null, null, null);
+        return new NotifyMeCreateRequest(from[0], from[1], to[0], to[1], label(from), label(to), when, null, null, null, null, null);
     }
 
     private static NotifyMeCreateRequest weekdays(double[] from, double[] to, String time) {
         return new NotifyMeCreateRequest(from[0], from[1], to[0], to[1], label(from), label(to), null,
-                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY), time, 4);
+                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY), time, 4, null, null);
     }
 
     private static Instant tomorrowAt(int hour, int minute) {

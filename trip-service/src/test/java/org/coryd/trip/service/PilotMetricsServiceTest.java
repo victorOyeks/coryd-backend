@@ -28,7 +28,8 @@ class PilotMetricsServiceTest {
     private final RoutePostRepository routes = mock(RoutePostRepository.class);
     private final BookingRepository bookings = mock(BookingRepository.class);
     private final NotifyMeRequestRepository notifyMe = mock(NotifyMeRequestRepository.class);
-    private final PilotMetricsService service = new PilotMetricsService(searches, routes, bookings, notifyMe);
+    private final org.coryd.trip.repository.RouteTimeChangeRepository timeChanges = mock(org.coryd.trip.repository.RouteTimeChangeRepository.class);
+    private final PilotMetricsService service = new PilotMetricsService(searches, routes, bookings, notifyMe, timeChanges);
 
     @Test
     void searchSuccessBookingAndFillAreWorkedOut() {

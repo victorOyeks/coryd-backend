@@ -35,6 +35,10 @@ public record RideSearchResult(
         RideStop pickup,
         RideStop dropoff,
         /** The road the driver picked, in words ("Ojota, Maryland, Osborne") - null when they left it to Google. */
-        String viaSummary
+        String viaSummary,
+        /** The car's colour, to spot it in a car park - null if the driver never gave one. */
+        String vehicleColour,
+        /** How many times the driver changed this trip's time with riders booked. */
+        int timeChangeCount
 ) {
 }

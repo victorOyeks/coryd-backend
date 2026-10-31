@@ -12,8 +12,10 @@ public final class KafkaTopics {
     public static final String ROUTE_CANCELLED = "coryd-route-cancelled";
     public static final String NOTIFY_ME_MATCHED = "coryd-notify-me-matched";
     public static final String DRIVER_DEMAND_ALERT = "coryd-driver-demand-alert";
+    public static final String DRIVER_NEARBY_DEMAND = "coryd-driver-nearby-demand";
     public static final String SEAT_RESERVED = "coryd-seat-reserved";
     public static final String ROUTE_DEPARTURE_REMINDER = "coryd-route-departure-reminder";
+    public static final String ROUTE_TIME_CHANGED = "coryd-route-time-changed";
 
     public static final String BOOKING_CONFIRMED = "coryd-booking-confirmed";
     public static final String BOOKING_CANCELLED = "coryd-booking-cancelled";

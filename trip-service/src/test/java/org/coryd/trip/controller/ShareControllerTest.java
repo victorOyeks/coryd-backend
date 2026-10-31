@@ -42,7 +42,7 @@ class ShareControllerTest {
                 "Ikorodu, Nigeria", "Eko Hotel Roundabout, Lagos, Nigeria", Instant.parse("2026-10-29T08:00:00Z"), null,
                 "Kunle Adeyemi", null, true, "Toyota", "Corolla", "KJA001XA", true,
                 LocationResponse.unavailable("Waiting for the driver's location to come through."),
-                RouteStatus.PUBLISHED, 6.6194, 3.5105, 6.4281, 3.4219, null));
+                RouteStatus.PUBLISHED, 6.6194, 3.5105, 6.4281, 3.4219, null, "Silver"));
 
         mvc.perform(get("/shared/abc.def").header("Accept", "application/json"))
                 .andExpect(status().isOk())

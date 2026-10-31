@@ -47,6 +47,11 @@ public class NotifyMeRequest extends BaseEntity {
 
     private Integer timeMinutes;
 
+    /** Repeating only: a ride at any time on its days counts, not only around timeMinutes. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean anyTimeOfDay = false;
+
     @Column(nullable = false)
     private Instant expiresAt;
 

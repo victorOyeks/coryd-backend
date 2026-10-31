@@ -132,6 +132,18 @@ springdoc:
 # Routes cannot depart further ahead than the payout settlement cycle
 trip:
   max-days-ahead: ${TRIP_MAX_DAYS_AHEAD:3}
+  # A driver running late moves their trip instead of cancelling. Once riders have booked: later only, at most
+  # max-minutes past what they booked and max-count times; a rider moved more than free-cancel-minutes cancels free.
+  # "You saved about N compared with a solo cab" on a rider's booking: base + per road km, roughly a solo ride-hailing fare.
+  savings:
+    enabled: ${SAVINGS_ENABLED:true}
+    solo-cab-base-fare: ${SOLO_CAB_BASE_FARE:700}
+    solo-cab-per-km: ${SOLO_CAB_RATE_PER_KM:200}
+  time-change:
+    max-minutes: ${TRIP_TIME_CHANGE_MAX_MINUTES:120}
+    max-count: ${TRIP_TIME_CHANGE_MAX_COUNT:3}
+    free-cancel-minutes: ${TRIP_TIME_CHANGE_FREE_CANCEL_MINUTES:15}
+    last-minute-minutes: ${TRIP_TIME_CHANGE_LAST_MINUTE_MINUTES:60}
   # Fare suggested to drivers while posting: whole-route km x per-km, rounded, never below the minimum.
   fare:
     per-km: ${FARE_PER_KM:100}
@@ -159,3 +171,13 @@ trip:
     min-riders-for-alert: ${DEMAND_MIN_RIDERS_FOR_ALERT:5}
     match-radius-km: ${DEMAND_MATCH_RADIUS_KM:5}
     max-alerts-per-week: ${DEMAND_MAX_ALERTS_PER_WEEK:3}
+    # "3 others near you are going to Ajah": groups smaller than this are hidden; a search counts for this many minutes.
+    nearby-min-riders: ${DEMAND_NEARBY_MIN_RIDERS:2}
+    nearby-search-minutes: ${DEMAND_NEARBY_SEARCH_MINUTES:15}
+  # Telling a driver who opened the app near waiting riders that they're going the driver's way.
+  nearby-alert:
+    enabled: ${NEARBY_ALERT_ENABLED:true}
+    radius-meters: ${NEARBY_ALERT_RADIUS_METERS:500}
+    presence-minutes: ${NEARBY_ALERT_PRESENCE_MINUTES:30}
+    cooldown-minutes: ${NEARBY_ALERT_COOLDOWN_MINUTES:30}
+    max-per-day: ${NEARBY_ALERT_MAX_PER_DAY:4}

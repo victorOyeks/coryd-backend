@@ -229,7 +229,7 @@ public class ProfileServiceClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record VehicleSummaryItem(String id, String make, String model, String plateNumber, boolean hasAC,
-                                      Integer seatCapacity, VerificationStatus verificationStatus) {
+                                      Integer seatCapacity, VerificationStatus verificationStatus, Integer year, String color) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

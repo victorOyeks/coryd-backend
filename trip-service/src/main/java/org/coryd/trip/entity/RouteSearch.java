@@ -10,6 +10,8 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 
+import java.time.Instant;
+
 /** One rider search, kept for demand totals only - never shown or acted on per rider. */
 @Entity
 @Table(name = "route_searches", schema = "trip")
@@ -49,4 +51,7 @@ public class RouteSearch extends BaseEntity {
 
     @Column(nullable = false)
     private Integer resultCount;
+
+    /** When the rider wanted to leave - null on searches recorded before "riders waiting nearby" counted them. */
+    private Instant desiredDepartureTime;
 }

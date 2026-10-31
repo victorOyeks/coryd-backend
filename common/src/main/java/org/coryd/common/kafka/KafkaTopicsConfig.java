@@ -41,6 +41,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic driverNearbyDemandTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_NEARBY_DEMAND).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic seatReservedTopic() {
         return TopicBuilder.name(KafkaTopics.SEAT_RESERVED).partitions(3).replicas(1).build();
     }
@@ -48,6 +53,11 @@ public class KafkaTopicsConfig {
     @Bean
     public NewTopic routeDepartureReminderTopic() {
         return TopicBuilder.name(KafkaTopics.ROUTE_DEPARTURE_REMINDER).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic routeTimeChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.ROUTE_TIME_CHANGED).partitions(3).replicas(1).build();
     }
 
     @Bean

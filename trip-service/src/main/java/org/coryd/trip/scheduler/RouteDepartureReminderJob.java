@@ -10,6 +10,7 @@ import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.RoutePostRepository;
+import org.coryd.trip.service.NearbyDemandService;
 import org.coryd.trip.service.TripScheduleService;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -44,6 +45,7 @@ public class RouteDepartureReminderJob {
     private final RoutePostRepository routePostRepository;
     private final BookingRepository bookingRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final NearbyDemandService nearbyDemandService;
 
     @Scheduled(fixedDelay = 60_000)
     public void sendUpcomingDepartureReminders() {
@@ -55,7 +57,12 @@ public class RouteDepartureReminderJob {
                     // Posted already inside the window ("leave now") - the driver is on the passenger screen already.
                     boolean postedInsideWindow = route.getCreatedAt() != null
                             && route.getCreatedAt().isAfter(route.getDepartureTime().minus(TripScheduleService.ACTIVE_WINDOW));
-                    return postedInsideWindow ? null : event(route, DRIVER_GET_READY, confirmedRiders(route));
+                    if (postedInsideWindow) {
+                        return null;
+                    }
+                    RouteDepartureReminderEvent ready = event(route, DRIVER_GET_READY, confirmedRiders(route));
+                    ready.setWaitingNearby(waitingAlong(route));
+                    return ready;
                 });
 
         sweep(routePostRepository.findByStatusInAndDepartureTimeBetweenAndReminderSentAtIsNull(
@@ -85,6 +92,16 @@ public class RouteDepartureReminderJob {
             } catch (Exception e) {
                 log.error("Failed to send departure reminder for route {}: {}", route.getId(), e.getMessage(), e);
             }
+        }
+    }
+
+    /** Best-effort - the reminder still goes without the count. */
+    private Integer waitingAlong(RoutePost route) {
+        try {
+            return nearbyDemandService.waitingAlong(route);
+        } catch (Exception e) {
+            log.warn("Could not count riders waiting along route {}: {}", route.getId(), e.getMessage());
+            return null;
         }
     }
 

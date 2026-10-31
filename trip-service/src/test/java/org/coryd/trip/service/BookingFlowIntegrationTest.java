@@ -70,7 +70,7 @@ import static org.mockito.Mockito.verify;
 // The identity (NIN) gate is on by default; these tests cover everything else, and the gate's own tests switch it on.
 @org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
 @Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
-        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class})
+        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class})
 class BookingFlowIntegrationTest {
 
     @Container
@@ -775,7 +775,8 @@ class BookingFlowIntegrationTest {
     void departureReminderGoesOutOnceForARouteAboutToLeave() {
         RoutePost soon = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
         confirm(book(soon, RIDER, 1));
-        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate);
+        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
+                org.mockito.Mockito.mock(NearbyDemandService.class));
 
         job.sendUpcomingDepartureReminders();
         job.sendUpcomingDepartureReminders();
@@ -789,7 +790,8 @@ class BookingFlowIntegrationTest {
     void driverGetsAGetReadyReminderWhenAScheduledRouteEntersTheActiveWindow() {
         RoutePost route = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(25, ChronoUnit.MINUTES)).build());
         postedAt(route, Instant.now().minus(2, ChronoUnit.HOURS));
-        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate);
+        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
+                org.mockito.Mockito.mock(NearbyDemandService.class));
 
         job.sendUpcomingDepartureReminders();
         job.sendUpcomingDepartureReminders();
@@ -801,7 +803,8 @@ class BookingFlowIntegrationTest {
     @Test
     void leaveNowRouteSkipsTheDriverGetReadyReminder() {
         routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(25, ChronoUnit.MINUTES)).build());
-        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate);
+        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
+                org.mockito.Mockito.mock(NearbyDemandService.class));
 
         job.sendUpcomingDepartureReminders();
 
@@ -813,7 +816,8 @@ class BookingFlowIntegrationTest {
         RoutePost route = route(4);
         confirm(book(route, RIDER, 1));
         departAt(route, Instant.now().minus(10, ChronoUnit.MINUTES));
-        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate);
+        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
+                org.mockito.Mockito.mock(NearbyDemandService.class));
 
         job.sendUpcomingDepartureReminders();
         job.sendUpcomingDepartureReminders();

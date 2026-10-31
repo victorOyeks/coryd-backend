@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.trip.dto.SaveHomeRequest;
 import org.coryd.trip.dto.SavePlaceRequest;
 import org.coryd.trip.entity.SavedPlace;
 import org.coryd.trip.service.SavedPlaceService;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,6 +40,19 @@ public class SavedPlaceController {
     public ApiResponse<SavedPlace> add(@AuthenticationPrincipal CoRydUserDetails principal,
                                         @Valid @RequestBody SavePlaceRequest request) {
         return ApiResponse.ok(savedPlaceService.addPlace(principal.getUserId(), request));
+    }
+
+    /** The user's Home, or null data if they haven't set one. */
+    @GetMapping("/home")
+    public ApiResponse<SavedPlace> home(@AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(savedPlaceService.getHome(principal.getUserId()).orElse(null));
+    }
+
+    /** Sets Home - one per user, replacing the old one. Riders and drivers alike. */
+    @PutMapping("/home")
+    public ApiResponse<SavedPlace> saveHome(@AuthenticationPrincipal CoRydUserDetails principal,
+                                            @Valid @RequestBody SaveHomeRequest request) {
+        return ApiResponse.ok(savedPlaceService.saveHome(principal.getUserId(), request));
     }
 
     @DeleteMapping("/{placeId}")

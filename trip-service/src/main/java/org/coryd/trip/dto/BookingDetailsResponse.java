@@ -40,6 +40,18 @@ public record BookingDetailsResponse(
         /** Where this rider gets out - the route's end when they ride all the way. */
         String dropoffLabel,
         Double dropoffLat,
-        Double dropoffLng
+        Double dropoffLng,
+        /** The car's colour, to spot it at pickup - null if the driver never gave one. */
+        String vehicleColour,
+        /** The departure before the driver first changed it - null while it never has. */
+        Instant originalDepartureTime,
+        /** How many times the driver changed the time with riders booked. */
+        int timeChangeCount,
+        /** The trip moved far enough from what this rider booked that cancelling is free, with a full refund. */
+        boolean freeCancellation,
+        /** Roughly what a solo cab would charge for this rider's stretch - null when it can't be worked out or is turned off. */
+        BigDecimal soloCabEstimate,
+        /** soloCabEstimate less what they paid, never below 0 - "You saved about N". Null with soloCabEstimate. */
+        BigDecimal estimatedSaving
 ) {
 }

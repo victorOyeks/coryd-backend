@@ -89,6 +89,7 @@ public class DemandService {
                     .localMinutes(when.getHour() * 60 + when.getMinute())
                     .weekend(GeoMath.isWeekend(when.getDayOfWeek()))
                     .resultCount(resultCount)
+                    .desiredDepartureTime(request.desiredDepartureTime())
                     .build());
         } catch (Exception e) {
             log.warn("Could not record a search for demand: {}", e.getMessage());

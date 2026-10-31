@@ -116,6 +116,8 @@ public class BookingService {
     private final MatchingProperties matchingProperties;
     private final IssueReportRepository issueReportRepository;
     private final CancellationPolicy cancellationPolicy;
+    private final org.coryd.trip.config.TimeChangeProperties timeChangeProperties;
+    private final org.coryd.trip.config.SavingsProperties savingsProperties;
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
      * DriverSummary.verificationStatus, which is identity-only and would
@@ -560,7 +562,8 @@ public class BookingService {
                 vehicle != null && vehicle.hasAC(),
                 locationService.getLocation(bookingId),
                 route.getStatus(), route.getOriginLat(), route.getOriginLng(),
-                route.getDestinationLat(), route.getDestinationLng(), route.getRoutePolyline()
+                route.getDestinationLat(), route.getDestinationLng(), route.getRoutePolyline(),
+                vehicle == null ? null : vehicle.color()
         );
     }
 
@@ -586,7 +589,8 @@ public class BookingService {
                 vehicle != null && vehicle.hasAC(),
                 locationService.peekRouteLocation(routePostId),
                 route.getStatus(), route.getOriginLat(), route.getOriginLng(),
-                route.getDestinationLat(), route.getDestinationLng(), route.getRoutePolyline()
+                route.getDestinationLat(), route.getDestinationLng(), route.getRoutePolyline(),
+                vehicle == null ? null : vehicle.color()
         );
     }
 
@@ -609,6 +613,7 @@ public class BookingService {
         String driverPhone = identityServiceClient.fetchPhone(route.getDriverId());
         boolean rideToEnd = booking.getDropoffLat() == null || booking.getDropoffLng() == null;
 
+        BigDecimal soloCab = soloCabEstimate(booking, route, rideToEnd);
         return new BookingDetailsResponse(
                 booking.getId(), booking.getRoutePostId(), booking.getStatus(),
                 route.getOriginLabel(), route.getDestinationLabel(),
@@ -633,7 +638,13 @@ public class BookingService {
                 booking.getPickupLabel(), booking.getPickupLat(), booking.getPickupLng(),
                 rideToEnd ? route.getDestinationLabel() : booking.getDropoffLabel(),
                 rideToEnd ? route.getDestinationLat() : booking.getDropoffLat(),
-                rideToEnd ? route.getDestinationLng() : booking.getDropoffLng()
+                rideToEnd ? route.getDestinationLng() : booking.getDropoffLng(),
+                vehicle == null ? null : vehicle.color(),
+                route.getOriginalDepartureTime(),
+                route.getTimeChangeCount(),
+                freeCancellation(booking),
+                soloCab,
+                soloCab == null ? null : soloCab.subtract(booking.getFareTotal()).max(BigDecimal.ZERO)
         );
     }
 
@@ -927,11 +938,13 @@ public class BookingService {
         if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
             throw new BadRequestException("This booking can no longer be cancelled - current status is " + booking.getStatus());
         }
-        boolean feeApplies = cancellationPolicy.isFeeApplicable(route.getDepartureTime(), Instant.now());
+        // A rider whose driver moved the trip well past what they booked never pays to leave it.
+        boolean feeApplies = !freeCancellation(booking) && cancellationPolicy.isFeeApplicable(route.getDepartureTime(), Instant.now());
         BigDecimal fee = cancellationPolicy.applyFee(booking.getFareTotal(), feeApplies);
         routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
         routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
-        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window" : "Cancelled free of charge");
+        recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window"
+                : freeCancellation(booking) ? "Cancelled free of charge - the driver changed the trip's time" : "Cancelled free of charge");
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                 .bookingId(booking.getId())
@@ -944,6 +957,27 @@ public class BookingService {
                 .feeAmount(fee)
                 .cancelledAt(LocalDateTime.now())
                 .build());
+    }
+
+    /** A solo cab for this rider's own stretch: base plus road km - straight line times the road factor - rounded to 100. */
+    private BigDecimal soloCabEstimate(Booking booking, RoutePost route, boolean rideToEnd) {
+        Double fromLat = booking.getPickupLat() != null ? booking.getPickupLat() : route.getOriginLat();
+        Double fromLng = booking.getPickupLng() != null ? booking.getPickupLng() : route.getOriginLng();
+        Double toLat = rideToEnd || booking.getDropoffLat() == null ? route.getDestinationLat() : booking.getDropoffLat();
+        Double toLng = rideToEnd || booking.getDropoffLng() == null ? route.getDestinationLng() : booking.getDropoffLng();
+        if (!savingsProperties.isEnabled() || fromLat == null || fromLng == null || toLat == null || toLng == null
+                || booking.getFareTotal() == null) {
+            return null;
+        }
+        double roadKm = org.coryd.trip.util.GeoMath.distanceKm(fromLat, fromLng, toLat, toLng) * savingsProperties.getRoadFactor();
+        BigDecimal estimate = savingsProperties.getSoloCabBaseFare()
+                .add(savingsProperties.getSoloCabPerKm().multiply(BigDecimal.valueOf(roadKm)));
+        return estimate.divide(BigDecimal.valueOf(100), 0, java.math.RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
+    }
+
+    /** The driver has moved this trip further from the time the rider booked than they can be held to. */
+    private boolean freeCancellation(Booking booking) {
+        return booking.getDepartureShiftMinutes() > timeChangeProperties.getFreeCancelMinutes();
     }
 
     /** Driver taps "I'm on my way" - Track Live Trip's "Driver en route to pickup" phase. A repeat
