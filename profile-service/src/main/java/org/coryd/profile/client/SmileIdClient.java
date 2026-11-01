@@ -156,13 +156,57 @@ public class SmileIdClient {
             return false;
         }
         try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(properties.getApiKey().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] expected = mac.doFinal((timestamp + properties.getPartnerId() + "sid_request").getBytes(StandardCharsets.UTF_8));
-            return MessageDigest.isEqual(Base64.getEncoder().encode(expected), signature.trim().getBytes(StandardCharsets.UTF_8));
+            return MessageDigest.isEqual(sign(timestamp).getBytes(StandardCharsets.UTF_8), signature.trim().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             log.error("Could not check a Smile ID signature: {}", e.getMessage());
             return false;
+        }
+    }
+
+    /** The same signature Smile ID uses on its webhooks, made by us to sign a request. */
+    String sign(String timestamp) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(properties.getApiKey().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        byte[] signature = mac.doFinal((timestamp + properties.getPartnerId() + "sid_request").getBytes(StandardCharsets.UTF_8));
+        return new String(Base64.getEncoder().encode(signature), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * POST /v1/job_status with image_links - fresh, short-lived links to the images Smile ID captured for one job
+     * (the licence front and back, the selfie). Fetched when ops opens a licence, never stored. Empty when the job
+     * has no images.
+     */
+    public Map<String, String> jobImages(String smileUserId, String smileJobId) {
+        try {
+            String timestamp = Instant.now().toString();
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("partner_id", properties.getPartnerId());
+            body.put("timestamp", timestamp);
+            body.put("signature", sign(timestamp));
+            body.put("user_id", smileUserId);
+            body.put("job_id", smileJobId);
+            body.put("image_links", true);
+            body.put("history", false);
+            com.fasterxml.jackson.databind.JsonNode response = restClient.post()
+                    .uri("/v1/job_status")
+                    .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                    .body(json(body))
+                    .retrieve()
+                    .body(com.fasterxml.jackson.databind.JsonNode.class);
+            Map<String, String> images = new LinkedHashMap<>();
+            com.fasterxml.jackson.databind.JsonNode links = response == null ? null
+                    : response.has("ImageLinks") ? response.get("ImageLinks") : response.get("image_links");
+            if (links != null && links.isObject()) {
+                links.fields().forEachRemaining(e -> {
+                    if (e.getValue().isTextual() && e.getValue().asText().startsWith("http")) {
+                        images.put(e.getKey(), e.getValue().asText());
+                    }
+                });
+            }
+            return images;
+        } catch (Exception e) {
+            log.warn("Smile ID job {} images unavailable (sandbox={}): {}", smileJobId, properties.isSandbox(), e.getMessage());
+            throw new ExternalServiceException("Smile ID couldn't send the images right now - try again, or open the job in the Smile ID portal", e);
         }
     }
 

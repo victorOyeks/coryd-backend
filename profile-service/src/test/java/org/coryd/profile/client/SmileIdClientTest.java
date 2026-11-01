@@ -31,6 +31,53 @@ class SmileIdClientTest {
     }
 
     @Test
+    void jobImagesAreFetchedWithASignedJobStatusRequest() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        java.util.concurrent.atomic.AtomicReference<String> body = new java.util.concurrent.atomic.AtomicReference<>();
+        server.createContext("/v1/job_status", exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] reply = ("{\"job_complete\":true,\"ImageLinks\":{\"id_card_image\":\"https://s3/front.jpg\","
+                    + "\"id_card_back\":\"https://s3/back.jpg\",\"selfie_image\":\"https://s3/selfie.jpg\",\"error\":\"none\"}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, reply.length);
+            exchange.getResponseBody().write(reply);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SmileIdProperties properties = new SmileIdProperties();
+            properties.setPartnerId("8371");
+            properties.setApiKey("secret-key");
+            var images = new SmileIdClient(properties, "http://127.0.0.1:" + server.getAddress().getPort()).jobImages("smile-user", "smile-job");
+
+            assertThat(images).containsOnlyKeys("id_card_image", "id_card_back", "selfie_image")
+                    .containsEntry("id_card_image", "https://s3/front.jpg");
+            var sent = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body.get());
+            assertThat(sent.get("partner_id").asText()).isEqualTo("8371");
+            assertThat(sent.get("user_id").asText()).isEqualTo("smile-user");
+            assertThat(sent.get("job_id").asText()).isEqualTo("smile-job");
+            assertThat(sent.get("image_links").asBoolean()).isTrue();
+            assertThat(sent.get("signature").asText()).as("signed like Smile ID's own webhooks")
+                    .isEqualTo(sign("secret-key", sent.get("timestamp").asText() + "8371sid_request"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aJobStatusFailureSaysToUseThePortal() throws Exception {
+        SmileIdProperties properties = new SmileIdProperties();
+        properties.setPartnerId("8371");
+        properties.setApiKey("secret-key");
+        SmileIdClient client = new SmileIdClient(properties, "http://127.0.0.1:1");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.jobImages("u", "j"))
+                .isInstanceOf(org.coryd.common.exception.ExternalServiceException.class)
+                .hasMessageContaining("Smile ID portal");
+    }
+
+    @Test
     void rejectsEverythingWhenNotConfigured() throws Exception {
         SmileIdClient client = new SmileIdClient(new SmileIdProperties());
 

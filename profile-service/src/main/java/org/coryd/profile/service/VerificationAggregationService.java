@@ -48,6 +48,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
@@ -64,13 +65,20 @@ public class VerificationAggregationService {
     private final VerificationCheckRepository verificationCheckRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final DriverIdentity driverIdentity;
+    private final org.coryd.profile.repository.VerificationDecisionLogRepository decisionLogRepository;
+    private final org.coryd.profile.repository.SmileIdCheckRepository smileIdCheckRepository;
+
+    /** A licence still out with Smile ID joins the ops queue once it has waited this long - most results land within minutes. */
+    @org.springframework.beans.factory.annotation.Value("${verification.provider-pending-queue-after-minutes:10}")
+    private long providerPendingQueueAfterMinutes = 10;
 
     public VerificationStatusResponse getStatus(String driverId) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
         Vehicle vehicle = primaryVehicle(driverId);
         List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
 
-        List<VerificationQueueItem.Entry> entries = entries(profile, vehicle, documents);
+        List<VerificationQueueItem.Entry> entries = entries(profile, vehicle, documents, licenceCheck(driverId));
+        boolean licenceAwaitingProvider = entries.get(0).awaitingProvider();
         return new VerificationStatusResponse(
                 profile == null ? null : new VerificationStatusResponse.DriverDetails(profile.getFirstName(), profile.getLastName(),
                         profile.getPhotoUrl(), profile.getIdNumber(), profile.getDateOfBirth()),
@@ -79,8 +87,9 @@ public class VerificationAggregationService {
                         profile == null ? VerificationStatus.PENDING : profile.getGovernmentIdStatus(),
                         profile == null ? null : profile.getGovernmentIdRejectionReason(),
                         profile == null ? null : profile.getGovernmentIdUrl(),
-                        profile == null ? null : profile.getGovernmentIdSubmittedAt(),
-                        profile != null && profile.isGovernmentIdResubmitted()),
+                        licenceAwaitingProvider ? entries.get(0).submittedAt() : profile == null ? null : profile.getGovernmentIdSubmittedAt(),
+                        profile != null && profile.isGovernmentIdResubmitted(),
+                        licenceAwaitingProvider),
                 new VerificationStatusResponse.VehicleRegistrationStatus(
                         vehicle == null ? VerificationStatus.PENDING : vehicle.getVerificationStatus(),
                         vehicle == null ? null : vehicle.getRejectionReason(),
@@ -107,6 +116,7 @@ public class VerificationAggregationService {
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         for (ItemDecision decision : request.decisions()) {
             applyDecision(driverId, decision);
+            recordDecision(driverId, decision, request.reviewedBy());
             publishItemDecision(driverId, email, decision, request.reviewedBy());
         }
 
@@ -123,9 +133,85 @@ public class VerificationAggregationService {
         ItemDecision decision = new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null);
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         applyDecision(driverId, decision);
+        recordDecision(driverId, decision, decidedBy);
         publishItemDecision(driverId, email, decision, decidedBy);
         reevaluateAndPublish(driverId, decidedBy);
         log.info("Driver {} licence approved by {}", driverId, decidedBy);
+    }
+
+    /** The audit log - the reason the driver was shown on a rejection, the reviewer's note on an approval. */
+    private void recordDecision(String driverId, ItemDecision decision, String decidedBy) {
+        boolean rejected = decision.status() == VerificationStatus.REJECTED;
+        decisionLogRepository.save(org.coryd.profile.entity.VerificationDecisionLog.builder()
+                .driverId(driverId)
+                .item(decision.item())
+                .status(decision.status())
+                .note(rejected ? decision.rejectionReason() : blankToNull(decision.note()))
+                .decidedBy(decidedBy == null || decidedBy.isBlank() ? "ops" : decidedBy)
+                .build());
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /** A driver's four items as they stand - status, when each was submitted, whether it was re-uploaded. */
+    public List<VerificationQueueItem.Entry> currentItems(String driverId) {
+        return entries(driverProfileRepository.findByUserId(driverId).orElse(null), primaryVehicle(driverId),
+                driverDocumentRepository.findByDriverId(driverId), licenceCheck(driverId));
+    }
+
+    /** The driver's overall status right now. */
+    public VerificationStatus overallStatus(String driverId) {
+        return computeOverallStatus(driverProfileRepository.findByUserId(driverId).orElse(null), primaryVehicle(driverId),
+                driverDocumentRepository.findByDriverId(driverId));
+    }
+
+    /**
+     * After Smile ID overrides an ops decision on the licence: keeps trip-service's posting gate in step. An approval
+     * overturned stops the driver posting (DRIVER_REJECTED notifies nobody); a rejection overturned into an approval
+     * lets them post again. A first-ever approval was already announced by reevaluateAndPublish.
+     */
+    public void publishOverride(String driverId, VerificationStatus before, boolean verifiedBefore, String decidedBy) {
+        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
+        Vehicle vehicle = primaryVehicle(driverId);
+        List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
+        VerificationStatus after = computeOverallStatus(profile, vehicle, documents);
+        if (before == VerificationStatus.APPROVED && after != VerificationStatus.APPROVED && after != VerificationStatus.REJECTED) {
+            logKafkaResult(driverId, KafkaTopics.DRIVER_REJECTED,
+                    kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
+                            .driverId(driverId)
+                            .vehicleId(vehicle == null ? null : vehicle.getId())
+                            .email(profile == null ? null : profile.getEmail())
+                            .rejectionReason("Driver's licence back under review")
+                            .reviewedBy(decidedBy)
+                            .rejectedAt(LocalDateTime.now())
+                            .build()));
+        } else if (before != VerificationStatus.APPROVED && after == VerificationStatus.APPROVED && verifiedBefore) {
+            logKafkaResult(driverId, KafkaTopics.DRIVER_APPROVED,
+                    kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
+                            .driverId(driverId)
+                            .vehicleId(vehicle == null ? null : vehicle.getId())
+                            .email(profile == null ? null : profile.getEmail())
+                            .reviewedBy(decidedBy)
+                            .approvedAt(LocalDateTime.now())
+                            .build()));
+        }
+    }
+
+    /** What Smile ID's late result did to a licence ops had decided, for the audit log. */
+    public void recordProviderOutcome(String driverId, VerificationStatus status, String note, String decidedBy) {
+        decisionLogRepository.save(org.coryd.profile.entity.VerificationDecisionLog.builder()
+                .driverId(driverId)
+                .item(ReviewableItem.GOVERNMENT_ID)
+                .status(status)
+                .note(note == null ? null : note.length() > 500 ? note.substring(0, 500) : note)
+                .decidedBy(decidedBy)
+                .build());
+    }
+
+    private org.coryd.profile.entity.SmileIdCheck licenceCheck(String driverId) {
+        return smileIdCheckRepository.findByUserIdAndCheckType(driverId, org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE).orElse(null);
     }
 
     /** Per-item, because the aggregate events only fire on full approval or overall rejection - a driver whose insurance was approved while a document is still outstanding would otherwise hear nothing. */
@@ -147,11 +233,33 @@ public class VerificationAggregationService {
     /** Ops verification queue - every driver with an item waiting for a decision, longest-waiting first.
      * A null tab is "All". */
     public PagedResponse<VerificationQueueItem> queue(UserRole callerRole, VerificationQueueTab tab, String search, Pageable pageable) {
+        return queue(callerRole, tab, search, pageable, null, null);
+    }
+
+    /** sort: a column header - longest-waiting first when left out. direction: ASC unless DESC. Ties keep the longest-waiting first. */
+    public PagedResponse<VerificationQueueItem> queue(UserRole callerRole, VerificationQueueTab tab, String search, Pageable pageable,
+                                                      org.coryd.common.enums.VerificationQueueSort sort, org.springframework.data.domain.Sort.Direction direction) {
         requireOps(callerRole);
-        List<VerificationQueueItem> rows = waiting(search).stream().filter(row -> tab == null || row.tab() == tab).toList();
+        List<VerificationQueueItem> rows = waiting(search).stream().filter(row -> tab == null || row.tab() == tab)
+                .sorted(order(sort, direction)).toList();
         int from = (int) Math.min(pageable.getOffset(), rows.size());
         int to = Math.min(from + pageable.getPageSize(), rows.size());
         return PagedResponse.from(new PageImpl<>(rows.subList(from, to), pageable, rows.size()));
+    }
+
+    private static Comparator<VerificationQueueItem> order(org.coryd.common.enums.VerificationQueueSort sort,
+                                                           org.springframework.data.domain.Sort.Direction direction) {
+        Comparator<VerificationQueueItem> byColumn = switch (sort == null ? org.coryd.common.enums.VerificationQueueSort.WAITING_SINCE : sort) {
+            case WAITING_SINCE -> Comparator.comparing(VerificationQueueItem::waitingSince, Comparator.nullsLast(Comparator.naturalOrder()));
+            case SUBMITTED_AT -> Comparator.comparing(VerificationQueueItem::submittedAt, Comparator.nullsLast(Comparator.naturalOrder()));
+            case NAME -> Comparator.comparing(row -> (Objects.toString(row.firstName(), "") + " " + Objects.toString(row.lastName(), ""))
+                    .trim().toLowerCase(Locale.ROOT));
+            case DRIVER_REF -> Comparator.comparing(row -> row.driverId().replace("-", "").toLowerCase(Locale.ROOT));
+        };
+        if (direction == org.springframework.data.domain.Sort.Direction.DESC) {
+            byColumn = byColumn.reversed();
+        }
+        return byColumn.thenComparing(VerificationQueueItem::waitingSince, Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
     /** The queue's tab badges - they follow the same search as the list. */
@@ -168,6 +276,10 @@ public class VerificationAggregationService {
         driverProfileRepository.findByGovernmentIdStatus(VerificationStatus.IN_REVIEW).forEach(p -> driverIds.add(p.getUserId()));
         vehicleRepository.findByVerificationStatus(VerificationStatus.IN_REVIEW).forEach(v -> driverIds.add(v.getDriverId()));
         driverDocumentRepository.findByStatus(VerificationStatus.IN_REVIEW).forEach(d -> driverIds.add(d.getDriverId()));
+        Instant providerCutoff = Instant.now().minus(java.time.Duration.ofMinutes(providerPendingQueueAfterMinutes));
+        smileIdCheckRepository.findByCheckTypeAndStartedAtIsNotNull(org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE).stream()
+                .filter(c -> !c.getStartedAt().isAfter(providerCutoff))
+                .forEach(c -> driverIds.add(c.getUserId()));
         if (driverIds.isEmpty()) {
             return List.of();
         }
@@ -178,28 +290,38 @@ public class VerificationAggregationService {
                 .collect(Collectors.groupingBy(Vehicle::getDriverId));
         Map<String, List<DriverDocument>> documents = driverDocumentRepository.findByDriverIdIn(ids).stream()
                 .collect(Collectors.groupingBy(DriverDocument::getDriverId));
+        Map<String, org.coryd.profile.entity.SmileIdCheck> licenceChecks = smileIdCheckRepository
+                .findByCheckTypeAndUserIdIn(org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE, ids).stream()
+                .collect(Collectors.toMap(org.coryd.profile.entity.SmileIdCheck::getUserId, c -> c, (a, b) -> a));
         String term = search == null || search.isBlank() ? null : search.trim().toLowerCase(Locale.ROOT);
 
         return ids.stream()
                 .map(id -> {
                     DriverProfile profile = profiles.get(id);
                     List<VerificationQueueItem.Entry> entries = entries(profile, primary(vehicles.getOrDefault(id, List.of())),
-                            documents.getOrDefault(id, List.of()));
+                            documents.getOrDefault(id, List.of()), licenceChecks.get(id));
                     return new VerificationQueueItem(id, profile == null ? null : profile.getFirstName(),
                             profile == null ? null : profile.getLastName(), profile == null ? null : profile.getPhotoUrl(),
                             tabOf(entries), waitingSince(entries), entries);
                 })
+                // A licence still with Smile ID only counts once it has waited past the cutoff.
+                .filter(row -> row.items().stream().anyMatch(e -> e.status() == VerificationStatus.IN_REVIEW
+                        || e.awaitingProvider() && e.submittedAt() != null && !e.submittedAt().isAfter(providerCutoff)))
                 .filter(row -> term == null || matches(row, term))
                 .sorted(Comparator.comparing(VerificationQueueItem::waitingSince, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
     }
 
     /** The four items in review order - an item never submitted reads PENDING. */
-    private List<VerificationQueueItem.Entry> entries(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents) {
+    private List<VerificationQueueItem.Entry> entries(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents,
+                                                      org.coryd.profile.entity.SmileIdCheck licenceCheck) {
         List<VerificationQueueItem.Entry> entries = new ArrayList<>();
+        boolean awaitingProvider = profile != null && profile.getGovernmentIdStatus() == VerificationStatus.PENDING
+                && licenceCheck != null && licenceCheck.getStartedAt() != null;
         entries.add(new VerificationQueueItem.Entry(ReviewableItem.GOVERNMENT_ID,
                 profile == null ? VerificationStatus.PENDING : profile.getGovernmentIdStatus(),
-                profile == null ? null : profile.getGovernmentIdSubmittedAt(), profile != null && profile.isGovernmentIdResubmitted()));
+                awaitingProvider ? licenceCheck.getStartedAt() : profile == null ? null : profile.getGovernmentIdSubmittedAt(),
+                profile != null && profile.isGovernmentIdResubmitted(), awaitingProvider));
         entries.add(new VerificationQueueItem.Entry(ReviewableItem.VEHICLE,
                 vehicle == null ? VerificationStatus.PENDING : vehicle.getVerificationStatus(),
                 vehicle == null ? null : vehicle.getSubmittedAt(), vehicle != null && vehicle.isResubmitted()));
@@ -215,7 +337,7 @@ public class VerificationAggregationService {
 
     /** RESUBMITTED beats IN_REVIEW beats PENDING - see VerificationQueueTab. */
     private static VerificationQueueTab tabOf(List<VerificationQueueItem.Entry> entries) {
-        boolean resubmitted = entries.stream().anyMatch(e -> e.status() == VerificationStatus.IN_REVIEW && e.resubmitted());
+        boolean resubmitted = entries.stream().anyMatch(e -> e.awaitingOps() && e.resubmitted());
         if (resubmitted) {
             return VerificationQueueTab.RESUBMITTED;
         }
@@ -225,7 +347,7 @@ public class VerificationAggregationService {
 
     private static Instant waitingSince(List<VerificationQueueItem.Entry> entries) {
         return entries.stream()
-                .filter(e -> e.status() == VerificationStatus.IN_REVIEW && e.submittedAt() != null)
+                .filter(e -> e.awaitingOps() && e.submittedAt() != null)
                 .map(VerificationQueueItem.Entry::submittedAt)
                 .min(Comparator.naturalOrder())
                 .orElse(null);
@@ -267,7 +389,7 @@ public class VerificationAggregationService {
         return verificationCheckRepository.findByDriverId(driverId).stream()
                 .map(check -> new VerificationStatusResponse.ProviderCheck(
                         check.getCheckType(), check.getOutcome(), check.getNameMatchScore(),
-                        check.getProviderSummary(), check.getUpdatedAt()))
+                        check.getProviderSummary(), check.getUpdatedAt(), check.getProviderReference()))
                 .sorted(Comparator.comparing(VerificationStatusResponse.ProviderCheck::checkedAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -278,6 +400,10 @@ public class VerificationAggregationService {
             case GOVERNMENT_ID -> {
                 DriverProfile profile = driverProfileRepository.findByUserId(driverId)
                         .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
+                org.coryd.profile.entity.SmileIdCheck check = licenceCheck(driverId);
+                // Decided before Smile ID answered - its result, when it comes, overrides this.
+                profile.setGovernmentIdDecidedDuringCheck(profile.getGovernmentIdStatus() == VerificationStatus.PENDING
+                        && check != null && check.getStartedAt() != null);
                 profile.setGovernmentIdStatus(decision.status());
                 profile.setGovernmentIdResubmitted(false);
                 profile.setGovernmentIdRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);

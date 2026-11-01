@@ -28,7 +28,15 @@ public class DriverVerificationOpsService {
 
     /** A null tab is "All". Longest-waiting driver first. */
     public PagedResponse<VerificationQueueItem> queue(VerificationQueueTab tab, String search, Pageable pageable) {
-        ProfileServiceClient.QueuePage page = profileServiceClient.queue(tab, search, pageable.getPageNumber(), pageable.getPageSize());
+        return queue(tab, search, pageable, null, null);
+    }
+
+    /** sort is a column header - longest-waiting first when left out. */
+    public PagedResponse<VerificationQueueItem> queue(VerificationQueueTab tab, String search, Pageable pageable,
+                                                      org.coryd.common.enums.VerificationQueueSort sort,
+                                                      org.springframework.data.domain.Sort.Direction direction) {
+        ProfileServiceClient.QueuePage page = profileServiceClient.queue(tab, search, pageable.getPageNumber(), pageable.getPageSize(),
+                sort, direction);
         Map<String, IdentityServiceClient.Contact> phones = identityServiceClient.contacts(
                 page.content().stream().map(ProfileServiceClient.QueueRow::driverId).toList());
         List<VerificationQueueItem> items = page.content().stream().map(row -> {
@@ -44,15 +52,63 @@ public class DriverVerificationOpsService {
         return profileServiceClient.queueCounts(search);
     }
 
+    /** The review screen: the four items with their files, plus the reviewer's marks. */
     public VerificationStatusResponse driver(String driverId) {
-        return withContact(driverId, profileServiceClient.verificationStatus(driverId));
+        return withReview(driverId, withContact(driverId, profileServiceClient.verificationStatus(driverId)));
+    }
+
+    /** Verified, or Flagged with the reason the driver will see - then the review screen as it now stands. */
+    public VerificationStatusResponse mark(String driverId, org.coryd.common.enums.ReviewableItem item,
+                                           org.coryd.ops.dto.ReviewMarkRequest request, CoRydUserDetails admin) {
+        org.coryd.ops.dto.VerificationReview review = profileServiceClient.markVerificationItem(driverId, item, request.mark(),
+                request.note(), reviewer(admin));
+        return withContact(driverId, profileServiceClient.verificationStatus(driverId)).withReview(review);
+    }
+
+    /** "Reset to Default". */
+    public VerificationStatusResponse reset(String driverId, org.coryd.common.enums.ReviewableItem item) {
+        org.coryd.ops.dto.VerificationReview review = profileServiceClient.resetVerificationItem(driverId, item);
+        return withContact(driverId, profileServiceClient.verificationStatus(driverId)).withReview(review);
+    }
+
+    public VerificationStatusResponse approve(String driverId, org.coryd.ops.dto.ApproveDriverRequest request, CoRydUserDetails admin) {
+        VerificationStatusResponse status = profileServiceClient.approveVerification(driverId, request == null ? null : request.note(), reviewer(admin));
+        return withReview(driverId, withContact(driverId, status));
+    }
+
+    public VerificationStatusResponse reject(String driverId, CoRydUserDetails admin) {
+        VerificationStatusResponse status = profileServiceClient.rejectVerification(driverId, reviewer(admin));
+        return withReview(driverId, withContact(driverId, status));
+    }
+
+    public com.fasterxml.jackson.databind.JsonNode licence(String driverId) {
+        return profileServiceClient.licenceReview(driverId);
+    }
+
+    public List<org.coryd.ops.dto.VerificationDecisionHistoryItem> history(String driverId) {
+        return profileServiceClient.verificationHistory(driverId);
+    }
+
+    /** The marks are extra - if they can't be loaded, the rest of the screen still shows. */
+    private VerificationStatusResponse withReview(String driverId, VerificationStatusResponse status) {
+        if (status == null) {
+            return null;
+        }
+        try {
+            return status.withReview(profileServiceClient.verificationReview(driverId));
+        } catch (Exception e) {
+            return status;
+        }
+    }
+
+    private static String reviewer(CoRydUserDetails admin) {
+        String name = admin.getFullName();
+        return name == null || name.isBlank() ? admin.getUserId() : name;
     }
 
     /** reviewedBy is always the signed-in admin, so the audit trail can't be written in someone else's name. */
     public VerificationStatusResponse decide(String driverId, VerificationDecisionRequest request, CoRydUserDetails admin) {
-        String name = admin.getFullName();
-        return withContact(driverId, profileServiceClient.decideVerification(driverId, request.decisions(),
-                name == null || name.isBlank() ? admin.getUserId() : name));
+        return withReview(driverId, withContact(driverId, profileServiceClient.decideVerification(driverId, request.decisions(), reviewer(admin))));
     }
 
     private VerificationStatusResponse withContact(String driverId, VerificationStatusResponse status) {

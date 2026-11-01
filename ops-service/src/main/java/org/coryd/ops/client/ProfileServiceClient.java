@@ -38,9 +38,20 @@ public class ProfileServiceClient {
     }
 
     public QueuePage queue(VerificationQueueTab tab, String search, int page, int size) {
+        return queue(tab, search, page, size, null, null);
+    }
+
+    public QueuePage queue(VerificationQueueTab tab, String search, int page, int size,
+                           org.coryd.common.enums.VerificationQueueSort sort, org.springframework.data.domain.Sort.Direction direction) {
         return DownstreamCalls.data(SERVICE, objectMapper, QueuePage.class, () -> restClient.get()
                 .uri(b -> {
                     b.path("/drivers/verification/queue").queryParam("page", page).queryParam("size", size);
+                    if (sort != null) {
+                        b.queryParam("sort", sort);
+                    }
+                    if (direction != null) {
+                        b.queryParam("direction", direction);
+                    }
                     if (tab != null) {
                         b.queryParam("tab", tab);
                     }
@@ -80,6 +91,66 @@ public class ProfileServiceClient {
                 .body(new DecisionBatch(decisions, reviewedBy))
                 .retrieve()
                 .body(JsonNode.class));
+    }
+
+    /** The reviewer's marks on a driver's items - profile-service checks the forwarded token is OPS_ADMIN. */
+    public org.coryd.ops.dto.VerificationReview verificationReview(String driverId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, org.coryd.ops.dto.VerificationReview.class, () -> restClient.get()
+                .uri("/drivers/{driverId}/verification/review", driverId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public org.coryd.ops.dto.VerificationReview markVerificationItem(String driverId, org.coryd.common.enums.ReviewableItem item,
+                                                                    org.coryd.common.enums.ReviewMark mark, String note, String markedBy) {
+        return DownstreamCalls.data(SERVICE, objectMapper, org.coryd.ops.dto.VerificationReview.class, () -> restClient.put()
+                .uri("/drivers/{driverId}/verification/items/{item}/review", driverId, item)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new MarkBody(mark, note, markedBy))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public org.coryd.ops.dto.VerificationReview resetVerificationItem(String driverId, org.coryd.common.enums.ReviewableItem item) {
+        return DownstreamCalls.data(SERVICE, objectMapper, org.coryd.ops.dto.VerificationReview.class, () -> restClient.delete()
+                .uri("/drivers/{driverId}/verification/items/{item}/review", driverId, item)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public VerificationStatusResponse approveVerification(String driverId, String note, String reviewedBy) {
+        return DownstreamCalls.data(SERVICE, objectMapper, VerificationStatusResponse.class, () -> restClient.post()
+                .uri("/drivers/{driverId}/verification/approve", driverId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new ReviewBody(note, reviewedBy))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public VerificationStatusResponse rejectVerification(String driverId, String reviewedBy) {
+        return DownstreamCalls.data(SERVICE, objectMapper, VerificationStatusResponse.class, () -> restClient.post()
+                .uri("/drivers/{driverId}/verification/reject", driverId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new ReviewBody(null, reviewedBy))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** The licence as Smile ID saw it - passed through as profile-service shapes it. */
+    public JsonNode licenceReview(String driverId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/drivers/{driverId}/verification/licence", driverId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public List<org.coryd.ops.dto.VerificationDecisionHistoryItem> verificationHistory(String driverId) {
+        org.coryd.ops.dto.VerificationDecisionHistoryItem[] items = DownstreamCalls.data(SERVICE, objectMapper,
+                org.coryd.ops.dto.VerificationDecisionHistoryItem[].class, () -> restClient.get()
+                        .uri("/drivers/{driverId}/verification/history", driverId)
+                        .retrieve()
+                        .body(JsonNode.class));
+        return items == null ? List.of() : java.util.Arrays.asList(items);
     }
 
     /** People whose identity check waits on ops - profile-service checks the forwarded token is OPS_ADMIN. */
@@ -149,6 +220,12 @@ public class ProfileServiceClient {
     }
 
     private record DecisionBatch(List<ItemDecision> decisions, String reviewedBy) {
+    }
+
+    private record MarkBody(org.coryd.common.enums.ReviewMark mark, String note, String markedBy) {
+    }
+
+    private record ReviewBody(String note, String reviewedBy) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

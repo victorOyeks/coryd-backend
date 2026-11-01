@@ -1,0 +1,224 @@
+package org.coryd.profile.service;
+
+import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.ReviewMark;
+import org.coryd.common.enums.ReviewableItem;
+import org.coryd.common.enums.UserRole;
+import org.coryd.common.enums.VerificationStatus;
+import org.coryd.common.exception.BadRequestException;
+import org.coryd.common.exception.UnauthorizedException;
+import org.coryd.profile.dto.ItemDecision;
+import org.coryd.profile.dto.ReviewDecisionRequest;
+import org.coryd.profile.dto.ReviewMarkRequest;
+import org.coryd.profile.dto.VerificationDecisionBatchRequest;
+import org.coryd.profile.dto.VerificationDecisionHistoryItem;
+import org.coryd.profile.dto.VerificationQueueItem;
+import org.coryd.profile.dto.VerificationReviewResponse;
+import org.coryd.profile.dto.VerificationStatusResponse;
+import org.coryd.profile.entity.VerificationReviewMark;
+import org.coryd.profile.repository.VerificationDecisionLogRepository;
+import org.coryd.profile.repository.VerificationReviewMarkRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
+/**
+ * The ops review screen: a reviewer opens each document and marks it Verified or Flagged (a flag needs the reason
+ * the driver will see), can reset a mark, then presses Approve Driver or Reject. The marks are kept until then, so
+ * closing the screen or a second reviewer loses nothing. A mark only counts for the upload it was made on.
+ */
+@Service
+@RequiredArgsConstructor
+public class VerificationReviewService {
+
+    /** A flag's note is the rejection reason the driver sees, which is capped at this. */
+    static final int REASON_MAX = 255;
+
+    private final VerificationAggregationService verificationAggregationService;
+    private final VerificationReviewMarkRepository markRepository;
+    private final VerificationDecisionLogRepository decisionLogRepository;
+
+    @Transactional(readOnly = true)
+    public VerificationReviewResponse review(String driverId, UserRole callerRole) {
+        requireOps(callerRole);
+        return build(driverId);
+    }
+
+    @Transactional
+    public VerificationReviewResponse mark(String driverId, ReviewableItem item, ReviewMarkRequest request, String fallbackReviewer, UserRole callerRole) {
+        requireOps(callerRole);
+        VerificationQueueItem.Entry current = entry(driverId, item);
+        if (!current.awaitingOps()) {
+            throw new BadRequestException("The " + item.label().toLowerCase(Locale.ROOT) + " isn't waiting for review - it's "
+                    + current.status().name().toLowerCase(Locale.ROOT).replace('_', ' '));
+        }
+        String note = blankToNull(request.note());
+        if (request.mark() == ReviewMark.FLAGGED) {
+            if (note == null) {
+                throw new BadRequestException("Add a note to flag the " + item.label().toLowerCase(Locale.ROOT) + " - it's the reason the driver will see");
+            }
+            if (note.length() > REASON_MAX) {
+                throw new BadRequestException("Keep the note to " + REASON_MAX + " characters - the driver sees it as the reason");
+            }
+        }
+        VerificationReviewMark mark = markRepository.findByDriverIdAndItem(driverId, item)
+                .orElseGet(() -> VerificationReviewMark.builder().driverId(driverId).item(item).build());
+        mark.setMark(request.mark());
+        mark.setNote(note);
+        mark.setMarkedBy(reviewer(request.markedBy(), fallbackReviewer));
+        mark.setItemSubmittedAt(current.submittedAt());
+        markRepository.save(mark);
+        return build(driverId);
+    }
+
+    /** "Reset to Default" - back to Unreviewed. */
+    @Transactional
+    public VerificationReviewResponse reset(String driverId, ReviewableItem item, UserRole callerRole) {
+        requireOps(callerRole);
+        markRepository.findByDriverIdAndItem(driverId, item).ifPresent(markRepository::delete);
+        return build(driverId);
+    }
+
+    /** Approve Driver: every item is already approved or marked Verified on its current upload, and nothing is flagged. */
+    @Transactional
+    public VerificationStatusResponse approve(String driverId, ReviewDecisionRequest request, String fallbackReviewer, UserRole callerRole) {
+        requireOps(callerRole);
+        List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
+        Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
+        String blocked = approveBlockedReason(items, marks);
+        if (blocked != null) {
+            throw new BadRequestException(blocked);
+        }
+        String note = blankToNull(request == null ? null : request.note());
+        List<ItemDecision> decisions = items.stream()
+                .filter(VerificationQueueItem.Entry::awaitingOps)
+                .map(e -> new ItemDecision(e.item(), VerificationStatus.APPROVED, null, firstNonNull(marks.get(e.item()).getNote(), note)))
+                .toList();
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole);
+    }
+
+    /**
+     * Reject: needs at least one flagged item. Flagged items are rejected with their notes as the reasons; items marked
+     * Verified are approved at the same time; anything not yet looked at stays waiting.
+     */
+    @Transactional
+    public VerificationStatusResponse reject(String driverId, ReviewDecisionRequest request, String fallbackReviewer, UserRole callerRole) {
+        requireOps(callerRole);
+        List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
+        Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
+        if (marks.values().stream().noneMatch(m -> m.getMark() == ReviewMark.FLAGGED)) {
+            throw new BadRequestException("Flag at least one document, with the reason, to reject");
+        }
+        List<ItemDecision> decisions = new ArrayList<>();
+        for (VerificationQueueItem.Entry e : items) {
+            VerificationReviewMark mark = marks.get(e.item());
+            if (mark == null) {
+                continue;
+            }
+            decisions.add(mark.getMark() == ReviewMark.FLAGGED
+                    ? new ItemDecision(e.item(), VerificationStatus.REJECTED, mark.getNote(), null)
+                    : new ItemDecision(e.item(), VerificationStatus.APPROVED, null, mark.getNote()));
+        }
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole);
+    }
+
+    @Transactional(readOnly = true)
+    public List<VerificationDecisionHistoryItem> history(String driverId, UserRole callerRole) {
+        requireOps(callerRole);
+        return decisionLogRepository.findByDriverIdOrderByCreatedAtDesc(driverId).stream()
+                .map(l -> new VerificationDecisionHistoryItem(l.getItem(), l.getItem().label(), l.getStatus(), l.getNote(),
+                        l.getDecidedBy(), l.getCreatedAt()))
+                .toList();
+    }
+
+    private VerificationStatusResponse decide(String driverId, List<ItemDecision> decisions, String reviewer, UserRole callerRole) {
+        VerificationStatusResponse status = verificationAggregationService.decide(driverId, callerRole,
+                new VerificationDecisionBatchRequest(decisions, reviewer));
+        markRepository.deleteByDriverIdAndItemIn(driverId, decisions.stream().map(ItemDecision::item).toList());
+        return status;
+    }
+
+    private VerificationReviewResponse build(String driverId) {
+        List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
+        Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
+        List<VerificationReviewResponse.ItemReview> reviews = items.stream().map(e -> {
+            VerificationReviewMark m = marks.get(e.item());
+            return new VerificationReviewResponse.ItemReview(e.item(), e.item().label(), e.status(), e.submittedAt(), e.resubmitted(),
+                    m == null ? null : m.getMark(), m == null ? null : m.getNote(), m == null ? null : m.getMarkedBy(),
+                    m == null ? null : m.getUpdatedAt(), e.awaitingProvider());
+        }).toList();
+        String blocked = approveBlockedReason(items, marks);
+        boolean canReject = marks.values().stream().anyMatch(m -> m.getMark() == ReviewMark.FLAGGED);
+        return new VerificationReviewResponse(reviews, blocked == null, blocked, canReject);
+    }
+
+    /** Marks still on the upload they were made on, for items still waiting - the rest no longer apply. */
+    private Map<ReviewableItem, VerificationReviewMark> currentMarks(String driverId, List<VerificationQueueItem.Entry> items) {
+        Map<ReviewableItem, VerificationQueueItem.Entry> byItem = items.stream()
+                .collect(Collectors.toMap(VerificationQueueItem.Entry::item, e -> e));
+        return markRepository.findByDriverId(driverId).stream()
+                .filter(m -> {
+                    VerificationQueueItem.Entry e = byItem.get(m.getItem());
+                    return e != null && e.awaitingOps() && Objects.equals(e.submittedAt(), m.getItemSubmittedAt());
+                })
+                .collect(Collectors.toMap(VerificationReviewMark::getItem, m -> m));
+    }
+
+    /** Null when Approve Driver can be pressed; otherwise what's in the way, in the order to fix it. */
+    static String approveBlockedReason(List<VerificationQueueItem.Entry> items, Map<ReviewableItem, VerificationReviewMark> marks) {
+        List<String> missing = labels(items.stream().filter(e -> e.status() == VerificationStatus.PENDING && !e.awaitingProvider()).toList());
+        if (!missing.isEmpty()) {
+            return "Not uploaded yet: " + String.join(", ", missing);
+        }
+        List<String> rejected = labels(items.stream().filter(e -> e.status() == VerificationStatus.REJECTED).toList());
+        if (!rejected.isEmpty()) {
+            return "Waiting for the driver to re-upload: " + String.join(", ", rejected);
+        }
+        List<String> flagged = labels(items.stream().filter(e -> marks.containsKey(e.item()) && marks.get(e.item()).getMark() == ReviewMark.FLAGGED).toList());
+        if (!flagged.isEmpty()) {
+            return "Flagged: " + String.join(", ", flagged) + " - reject, or reset the flag";
+        }
+        List<String> unreviewed = labels(items.stream().filter(e -> e.awaitingOps() && !marks.containsKey(e.item())).toList());
+        if (!unreviewed.isEmpty()) {
+            return "Not reviewed yet: " + String.join(", ", unreviewed);
+        }
+        if (items.stream().noneMatch(VerificationQueueItem.Entry::awaitingOps)) {
+            return "Nothing is waiting for review";
+        }
+        return null;
+    }
+
+    private VerificationQueueItem.Entry entry(String driverId, ReviewableItem item) {
+        return verificationAggregationService.currentItems(driverId).stream().filter(e -> e.item() == item).findFirst()
+                .orElseThrow(() -> new BadRequestException("Unknown item " + item));
+    }
+
+    private static List<String> labels(List<VerificationQueueItem.Entry> entries) {
+        return entries.stream().map(e -> e.item().label()).toList();
+    }
+
+    private static String reviewer(String given, String fallback) {
+        String name = blankToNull(given);
+        return name != null ? name : fallback == null || fallback.isBlank() ? "ops" : fallback;
+    }
+
+    private static String firstNonNull(String a, String b) {
+        return a != null ? a : b;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static void requireOps(UserRole callerRole) {
+        if (callerRole != UserRole.OPS_ADMIN) {
+            throw new UnauthorizedException("Only an ops admin can review driver verification");
+        }
+    }
+}

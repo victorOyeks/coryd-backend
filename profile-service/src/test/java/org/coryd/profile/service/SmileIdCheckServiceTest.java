@@ -452,6 +452,89 @@ class SmileIdCheckServiceTest {
             verify(aggregation, never()).autoApproveGovernmentId(anyString(), anyString());
         }
 
+        // ---- ops decided while Smile ID's result was still out: the result overrides --------------
+
+        private void opsDecidedWhileOut(VerificationStatus decision, VerificationStatus overallBefore) {
+            DriverProfile driver = drivers.get("driver-1");
+            driver.setGovernmentIdStatus(decision);
+            driver.setGovernmentIdDecidedDuringCheck(true);
+            when(aggregation.overallStatus("driver-1")).thenReturn(overallBefore);
+        }
+
+        @Test
+        void anOpsApprovalIsOverriddenWhenSmileIdSendsTheLicenceForReview() throws Exception {
+            opsDecidedWhileOut(VerificationStatus.APPROVED, VerificationStatus.APPROVED);
+
+            service.handle(result(job, "clear", null, licence("ADA", "OBI", "ABC12345DE67", "2030-01-01")));
+
+            DriverProfile driver = drivers.get("driver-1");
+            assertThat(driver.getGovernmentIdStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
+            assertThat(driver.isGovernmentIdDecidedDuringCheck()).isFalse();
+            verify(aggregation).recordProviderOutcome(org.mockito.ArgumentMatchers.eq("driver-1"), org.mockito.ArgumentMatchers.eq(VerificationStatus.IN_REVIEW),
+                    org.mockito.ArgumentMatchers.contains("after ops decided"), org.mockito.ArgumentMatchers.eq(LicenceCheck.DECIDED_BY));
+            verify(aggregation).publishOverride("driver-1", VerificationStatus.APPROVED, false, LicenceCheck.DECIDED_BY);
+            assertThat(last().getOutcome()).as("the result is recorded as usual").isEqualTo(VerificationCheckOutcome.NAME_MISMATCH);
+        }
+
+        @Test
+        void anOpsRejectionIsOverriddenWhenSmileIdApproves() throws Exception {
+            opsDecidedWhileOut(VerificationStatus.REJECTED, VerificationStatus.REJECTED);
+            drivers.get("driver-1").setVerifiedSince(Instant.now().minus(30, ChronoUnit.DAYS));
+
+            service.handle(result(job, "clear", null, licence("TUNDE", "BAKARE", "abc-12345-de67", "2030-01-01")));
+
+            verify(aggregation).autoApproveGovernmentId("driver-1", LicenceCheck.DECIDED_BY);
+            verify(aggregation).publishOverride("driver-1", VerificationStatus.REJECTED, true, LicenceCheck.DECIDED_BY);
+            assertThat(drivers.get("driver-1").isGovernmentIdDecidedDuringCheck()).isFalse();
+        }
+
+        @Test
+        void anOpsApprovalIsOverriddenWhenSmileIdAsksTheDriverToTryAgain() throws Exception {
+            opsDecidedWhileOut(VerificationStatus.APPROVED, VerificationStatus.APPROVED);
+
+            service.handle(result(job, "block", "face_verification_failed", null));
+
+            DriverProfile driver = drivers.get("driver-1");
+            assertThat(driver.getGovernmentIdStatus()).isEqualTo(VerificationStatus.PENDING);
+            assertThat(licenceResponse().licenceRetryReason()).isEqualTo(SmileIdRetryReason.FACE_MISMATCH);
+            verify(aggregation).recordProviderOutcome(org.mockito.ArgumentMatchers.eq("driver-1"), org.mockito.ArgumentMatchers.eq(VerificationStatus.PENDING),
+                    org.mockito.ArgumentMatchers.contains("verify their licence again"), org.mockito.ArgumentMatchers.eq(LicenceCheck.DECIDED_BY));
+            verify(aggregation).publishOverride("driver-1", VerificationStatus.APPROVED, false, LicenceCheck.DECIDED_BY);
+        }
+
+        @Test
+        void aResultIsStillIgnoredWhenOpsDecidedAfterItCameIn() throws Exception {
+            DriverProfile driver = drivers.get("driver-1");
+            driver.setGovernmentIdStatus(VerificationStatus.APPROVED);
+            driver.setGovernmentIdDecidedDuringCheck(false);
+
+            service.handle(result(job, "clear", null, licence("ADA", "OBI", "ABC12345DE67", "2030-01-01")));
+
+            assertThat(driver.getGovernmentIdStatus()).isEqualTo(VerificationStatus.APPROVED);
+            verify(aggregation, never()).publishOverride(anyString(), any(), org.mockito.ArgumentMatchers.anyBoolean(), anyString());
+            assertThat(recorded).isEmpty();
+        }
+
+        @Test
+        void aNormalResultWithNoOpsDecisionOverridesNothing() throws Exception {
+            service.handle(result(job, "clear", null, licence("TUNDE", "BAKARE", "abc-12345-de67", "2030-01-01")));
+
+            verify(aggregation, never()).publishOverride(anyString(), any(), org.mockito.ArgumentMatchers.anyBoolean(), anyString());
+            verify(aggregation, never()).recordProviderOutcome(anyString(), any(), anyString(), anyString());
+        }
+
+        @Test
+        void aNewCheckLeavesNothingForAnOldResultToOverride() {
+            DriverProfile driver = drivers.get("driver-1");
+            driver.setGovernmentIdStatus(VerificationStatus.REJECTED);
+            driver.setGovernmentIdDecidedDuringCheck(true);
+
+            service.start("driver-1", UserRole.DRIVER, SmileIdCheckType.DRIVERS_LICENCE, null);
+
+            assertThat(driver.isGovernmentIdDecidedDuringCheck()).isFalse();
+            assertThat(driver.getGovernmentIdStatus()).isEqualTo(VerificationStatus.PENDING);
+        }
+
         @Test
         void aLicenceOpsRejectedCanBeCheckedAgain() {
             drivers.get("driver-1").setGovernmentIdStatus(VerificationStatus.REJECTED);

@@ -34,9 +34,11 @@ public class DriverVerificationController {
     public ApiResponse<PagedResponse<VerificationQueueItem>> queue(@RequestParam(required = false) VerificationQueueTab tab,
                                                                    @RequestParam(required = false) String search,
                                                                    @RequestParam(defaultValue = "0") int page,
-                                                                   @RequestParam(defaultValue = "20") int size) {
+                                                                   @RequestParam(defaultValue = "20") int size,
+                                                                   @RequestParam(required = false) org.coryd.common.enums.VerificationQueueSort sort,
+                                                                   @RequestParam(required = false) org.springframework.data.domain.Sort.Direction direction) {
         Pageable pageable = PageRequest.of(page, Math.min(size, 50));
-        return ApiResponse.ok(driverVerificationOpsService.queue(tab, search, pageable));
+        return ApiResponse.ok(driverVerificationOpsService.queue(tab, search, pageable, sort, direction));
     }
 
     /** The tab badges - they follow the same search as the list. */
@@ -49,6 +51,48 @@ public class DriverVerificationController {
     @GetMapping("/{driverId}/verification")
     public ApiResponse<VerificationStatusResponse> driver(@PathVariable String driverId) {
         return ApiResponse.ok(driverVerificationOpsService.driver(driverId));
+    }
+
+    /** Mark one item Verified, or Flagged with the reason the driver will see. Returns the review screen. */
+    @org.springframework.web.bind.annotation.PutMapping("/{driverId}/verification/items/{item}/review")
+    public ApiResponse<VerificationStatusResponse> mark(@AuthenticationPrincipal CoRydUserDetails admin,
+                                                        @PathVariable String driverId,
+                                                        @PathVariable org.coryd.common.enums.ReviewableItem item,
+                                                        @Valid @RequestBody org.coryd.ops.dto.ReviewMarkRequest request) {
+        return ApiResponse.ok(driverVerificationOpsService.mark(driverId, item, request, admin));
+    }
+
+    /** "Reset to Default" - the item goes back to Unreviewed. */
+    @org.springframework.web.bind.annotation.DeleteMapping("/{driverId}/verification/items/{item}/review")
+    public ApiResponse<VerificationStatusResponse> reset(@PathVariable String driverId,
+                                                         @PathVariable org.coryd.common.enums.ReviewableItem item) {
+        return ApiResponse.ok(driverVerificationOpsService.reset(driverId, item));
+    }
+
+    /** Approve Driver - every item approved or marked Verified, nothing flagged. */
+    @PostMapping("/{driverId}/verification/approve")
+    public ApiResponse<VerificationStatusResponse> approve(@AuthenticationPrincipal CoRydUserDetails admin,
+                                                           @PathVariable String driverId,
+                                                           @Valid @RequestBody(required = false) org.coryd.ops.dto.ApproveDriverRequest request) {
+        return ApiResponse.ok("Driver approved", driverVerificationOpsService.approve(driverId, request, admin));
+    }
+
+    /** Reject - flagged items are rejected with their notes, items marked Verified are approved, the rest keep waiting. */
+    @PostMapping("/{driverId}/verification/reject")
+    public ApiResponse<VerificationStatusResponse> reject(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String driverId) {
+        return ApiResponse.ok("Driver rejected", driverVerificationOpsService.reject(driverId, admin));
+    }
+
+    /** The Driver's Licence screen: what Smile ID read off the licence, and fresh links to the images it captured. */
+    @GetMapping("/{driverId}/verification/licence")
+    public ApiResponse<com.fasterxml.jackson.databind.JsonNode> licence(@PathVariable String driverId) {
+        return ApiResponse.ok(driverVerificationOpsService.licence(driverId));
+    }
+
+    /** The audit log - every decision on this driver's items, newest first. */
+    @GetMapping("/{driverId}/verification/history")
+    public ApiResponse<java.util.List<org.coryd.ops.dto.VerificationDecisionHistoryItem>> history(@PathVariable String driverId) {
+        return ApiResponse.ok(driverVerificationOpsService.history(driverId));
     }
 
     @PostMapping("/{driverId}/verification/decisions")

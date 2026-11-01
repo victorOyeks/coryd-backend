@@ -54,6 +54,11 @@ services:
 # Smile ID: the NIN + live selfie check (everyone) and the driver's licence check. Without a partner ID
 # and API key, both checks answer "unavailable". Live by default (production); dev sets sandbox=true with a
 # sandbox key, and every check is then sent as the test identity below so it always succeeds.
+# Ops verification queue: a licence still out with Smile ID joins it after this many minutes, and ops can decide it -
+# Smile ID's result overrides that decision when it arrives.
+verification:
+  provider-pending-queue-after-minutes: ${VERIFICATION_PROVIDER_PENDING_QUEUE_AFTER_MINUTES:10}
+
 smile-id:
   partner-id: ${SMILE_ID_PARTNER_ID:}
   api-key: ${SMILE_ID_API_KEY:}

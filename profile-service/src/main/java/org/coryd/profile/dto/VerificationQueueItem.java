@@ -18,6 +18,33 @@ public record VerificationQueueItem(
         Instant waitingSince,
         List<Entry> items
 ) {
-    public record Entry(ReviewableItem item, VerificationStatus status, Instant submittedAt, boolean resubmitted) {
+    /** The earliest submission among the items - the "Submitted" column. */
+    @com.fasterxml.jackson.annotation.JsonProperty("submittedAt")
+    public Instant submittedAt() {
+        return items == null ? null : items.stream().map(Entry::submittedAt).filter(java.util.Objects::nonNull)
+                .min(java.util.Comparator.naturalOrder()).orElse(null);
+    }
+
+    /**
+     * awaitingProvider: the licence is with Smile ID and its result hasn't come yet (status reads PENDING). Ops can
+     * still decide it - Smile ID's result overrides that when it arrives. submittedAt is then when the check started.
+     */
+    public record Entry(ReviewableItem item, VerificationStatus status, Instant submittedAt, boolean resubmitted, boolean awaitingProvider) {
+
+        public Entry(ReviewableItem item, VerificationStatus status, Instant submittedAt, boolean resubmitted) {
+            this(item, status, submittedAt, resubmitted, false);
+        }
+
+        /** Ops's turn: sent for review, or still out with Smile ID. */
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean awaitingOps() {
+            return status == VerificationStatus.IN_REVIEW || awaitingProvider;
+        }
+
+        /** "Driver's licence", "Vehicle registration"... - the document chip. */
+        @com.fasterxml.jackson.annotation.JsonProperty("label")
+        public String label() {
+            return item == null ? null : item.label();
+        }
     }
 }

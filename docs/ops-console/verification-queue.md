@@ -1,62 +1,120 @@
-# Ops Console: Driver Verification API
+# Ops Console: Verification Queue
 
-Base URL: `https://api-dev.coryd.ng/ops`. Every endpoint needs an **`OPS_ADMIN`** token (`Authorization: Bearer …`).
-Responses use the standard envelope `{ responseId, timestamp, success, message, data }`. Errors return `success: false`
-with a `message` you can show as-is.
+Sidebar: **Drivers → Verification Queue**.
 
-A driver goes live once ops approves all four items:
+Everything the **Drivers → Verification Queue** screens need:
+- the queue table,
+- the review summary,
+- each document's screen,
+- **Verify / Flag / Reset to Default**,
+- **Approve Driver / Reject**,
+- the audit log,
+- licences still waiting for Smile ID.
 
-| Item (`item` value) | Shown as | What ops looks at |
-|---|---|---|
-| `GOVERNMENT_ID` | Driver's licence | Licence photo, licence number, date of birth |
-| `VEHICLE` | Vehicle registration | Make, model, year, colour, plate, exterior and interior photos, AC |
-| `INSURANCE` | Insurance | Certificate image, expiry date |
-| `ROADWORTHINESS_CERT` | Roadworthiness | Certificate image, expiry date |
-
-National ID, Live Selfie and Car Ownership are gone from the flow. Insurance takes Car Ownership's place.
-
-**The licence is checked by Smile ID** (Document Verification): a genuine licence in the driver's name, with the number
-they entered, not expired, and their live face on it, is approved automatically and never reaches this queue. Anything
-doubtful lands here as `IN_REVIEW`:
-- a name, number or expiry mismatch;
-- a forgery, photocopy or spoof flag;
-- a risk flag.
-
-The `DRIVERS_LICENCE` provider check explains why. Its summary ends with the Smile ID job ID, and the licence and selfie
-images are in the Smile ID portal under that job. `governmentId.url` is only set when the driver used the older photo upload.
-The vehicle, insurance and roadworthiness have no automatic check. (The NIN + live selfie check every driver also does is
-a separate queue, also run by Smile ID.)
+**Basics:**
+- **Base URL:** `https://api-dev.coryd.ng/ops`.
+- **Auth:** every call needs an **`OPS_ADMIN`** token: `Authorization: Bearer …`. Without a token you get `401`; with another role, `403`.
+- **Envelope:** `{ responseId, timestamp, success, message, data }`. Errors come back with `success: false` and a `message` you can show as-is.
+- **Who's recorded:** the reviewer on every action is the signed-in admin. You never send it.
 
 ---
 
-## 1. Queue list: `GET /ops/drivers/verification/queue`
+## 0. What a driver submits
+
+A driver goes live once all four items are approved:
+
+| `item` | `label` (show this) | What ops checks | Automatic check |
+|---|---|---|---|
+| `GOVERNMENT_ID` | Driver's licence | Licence images, name, number, date of birth, expiry | **Smile ID** (Document Verification + live selfie) |
+| `VEHICLE` | Vehicle registration | Make, model, year, colour, plate, exterior and interior photos, AC | none |
+| `INSURANCE` | Insurance certificate | Certificate file, expiry date | none |
+| `ROADWORTHINESS_CERT` | Roadworthiness certificate | Certificate file, expiry date | none |
+
+**The licence and Smile ID:**
+- A licence that Smile ID finds genuine, in the driver's name, with their number and their face, is approved automatically and never reaches this queue.
+- Anything doubtful lands here: a name, number or expiry mismatch, or a forgery, photocopy, spoof or risk flag.
+- A licence can also be **still waiting for Smile ID**. Ops can decide it anyway; see section 7.
+
+**Not in this queue:** National ID, Live Selfie and Car Ownership. The NIN + live selfie check is a separate Smile ID check with its own identity queue. Insurance replaced Car Ownership.
+
+---
+
+## 1. Which call feeds which screen
+
+| Screen / control | Call |
+|---|---|
+| Tabs **All / Pending / In Review / Resubmitted** and their counts | `GET /drivers/verification/queue/counts` |
+| Queue table: search, sorting, paging ("Show 10 entries", "Showing 1–10 of N") | `GET /drivers/verification/queue` |
+| **View**: the review summary and the "Submitted Document" list with ✓ / ✗ | `GET /drivers/{driverId}/verification` |
+| Driver's Licence screen | the review page, plus `GET /drivers/{driverId}/verification/licence` |
+| Vehicle Registration, Insurance Certificate and Roadworthiness screens | the review page |
+| **Verify** / **Flag** on a document | `PUT /drivers/{driverId}/verification/items/{item}/review` |
+| **Reset to Default** | `DELETE /drivers/{driverId}/verification/items/{item}/review` |
+| **Approve Driver** | `POST /drivers/{driverId}/verification/approve` |
+| **Reject** | `POST /drivers/{driverId}/verification/reject` |
+| Audit log | `GET /drivers/{driverId}/verification/history` |
+
+**Every action returns the whole review page**, so the screen refreshes from the response with no second call. The actions are mark, reset, approve and reject.
+
+---
+
+## 2. The flow
+
+1. **Queue.** Ops picks a tab, searches or sorts, then taps **View** on a row.
+2. **Review summary.** It shows name, phone, submitted time, time in queue and status, then the four documents, each with its mark:
+   - ✓ Verified,
+   - ✗ Flagged,
+   - nothing for Unreviewed.
+3. **A document screen.** Ops looks at the file or images, then:
+   - **Verify**, which marks it ✓; or
+   - **Flag**, which needs a note (the reason the driver will see) and marks it ✗.
+
+   **Reset to Default** clears the mark.
+4. **Back on the summary:**
+   - **Approve Driver** is enabled once every document is Verified or already approved, and none is flagged.
+   - **Reject** is enabled once at least one document is flagged.
+5. **After a decision:**
+   - The driver gets a push for each document.
+   - Rejected documents show the flag's note as the reason in the driver app.
+   - The driver re-uploads and comes back under **Resubmitted**.
+   - Once all four documents are approved, the driver can post trips.
+
+Marks are **saved on the server** as they're made. Closing the screen loses nothing, and a second reviewer sees the same marks.
+
+---
+
+## 3. Queue
+
+### `GET /drivers/verification/queue`
 
 | Param | Default | Values |
 |---|---|---|
-| `tab` | none (All) | `RESUBMITTED` · `IN_REVIEW` · `PENDING`. **Leave it out for the All tab.** |
-| `search` | none | Driver name, or the driver ref (`D-4F2A91`, the `D-` is optional) |
+| `tab` | none = **All** | `PENDING` · `IN_REVIEW` · `RESUBMITTED`. Leave it out for All. |
+| `search` | none | Driver name, or the driver ref (`D-4F2A91`; the `D-` is optional) |
+| `sort` | `WAITING_SINCE` | `WAITING_SINCE` (In queue) · `SUBMITTED_AT` · `NAME` · `DRIVER_REF` |
+| `direction` | `ASC` | `ASC` · `DESC` |
 | `page` | `0` | 0-based |
 | `size` | `20` | max `50` |
 
-Shows every driver who has at least one item waiting for a decision. **The longest-waiting driver comes first.**
-
-Each driver appears under exactly one tab, the first rule that matches:
-- **Resubmitted:** they re-uploaded something ops had rejected.
-- **In review:** some items are decided and others are still waiting.
-- **Pending:** they submitted and nothing has been decided yet.
+With no sort, the longest-waiting driver comes first. An unknown `tab` or `sort` gets a `400`.
 
 ```json
 {
   "content": [
     {
-      "driver": { "id": "4f2a91c0-…", "ref": "D-4F2A91", "name": "Tunde Bakare", "phone": "08011112222", "photoUrl": "…" },
+      "driver": { "id": "4f2a91c0-…", "ref": "D-4F2A91", "name": "Emeka Okafor", "phone": "08053636321", "photoUrl": "…" },
       "tab": "RESUBMITTED",
       "waitingSince": "2026-10-03T08:00:00Z",
+      "submittedAt": "2026-10-02T17:10:00Z",
       "items": [
-        { "item": "GOVERNMENT_ID", "status": "APPROVED", "submittedAt": "2026-10-02T17:10:00Z", "resubmitted": false },
-        { "item": "VEHICLE", "status": "IN_REVIEW", "submittedAt": "2026-10-03T08:00:00Z", "resubmitted": true },
-        { "item": "INSURANCE", "status": "IN_REVIEW", "submittedAt": "2026-10-02T17:12:00Z", "resubmitted": false },
-        { "item": "ROADWORTHINESS_CERT", "status": "PENDING", "submittedAt": null, "resubmitted": false }
+        { "item": "GOVERNMENT_ID", "label": "Driver's licence", "status": "APPROVED",
+          "submittedAt": "2026-10-02T17:10:00Z", "resubmitted": false, "awaitingProvider": false },
+        { "item": "VEHICLE", "label": "Vehicle registration", "status": "IN_REVIEW",
+          "submittedAt": "2026-10-03T08:00:00Z", "resubmitted": true, "awaitingProvider": false },
+        { "item": "INSURANCE", "label": "Insurance certificate", "status": "IN_REVIEW",
+          "submittedAt": "2026-10-02T17:12:00Z", "resubmitted": false, "awaitingProvider": false },
+        { "item": "ROADWORTHINESS_CERT", "label": "Roadworthiness certificate", "status": "PENDING",
+          "submittedAt": null, "resubmitted": false, "awaitingProvider": false }
       ]
     }
   ],
@@ -64,97 +122,403 @@ Each driver appears under exactly one tab, the first rule that matches:
 }
 ```
 
-How the design maps to the response:
-- **Driver ID, name, phone:** `driver.ref`, `driver.name`, `driver.phone`.
-- **Submitted:** the earliest `submittedAt` among the items.
-- **In queue for:** time since `waitingSince`, which is when the oldest still-waiting item came in.
-- **Documents column:** `items`. `PENDING` means not uploaded yet, `IN_REVIEW` means waiting for ops.
-- **Actions:** **View** only. It opens the review page (section 2).
+| Column | From |
+|---|---|
+| Action | **View** opens the review page for `driver.id` |
+| Driver ID | `driver.ref` |
+| Name, and the phone under it | `driver.name`, `driver.phone`. The phone is `null` if it couldn't be loaded; show a dash. |
+| Submitted date & time | `submittedAt`: the earliest submission among the items |
+| Documents | One chip per entry in `items`, using `label`. Grey out `PENDING` chips that aren't `awaitingProvider`, since they haven't been uploaded. A chip with `awaitingProvider: true` reads **"Awaiting Smile ID"**. |
+| In queue | Time since `waitingSince`: when the oldest still-waiting item came in |
+| Footer | `totalElements`, `page`, `size` |
 
-If a phone number can't be loaded, `driver.phone` comes back `null` and the row still shows. Render a dash.
+**Which tab a driver is under:** each driver is in exactly one tab, the first that matches.
+1. **Resubmitted:** they re-uploaded something ops had rejected.
+2. **In Review:** some items are decided and others are still waiting.
+3. **Pending:** nothing has been decided yet.
 
-### Tab counts: `GET /ops/drivers/verification/queue/counts?search=`
+### `GET /drivers/verification/queue/counts?search=`
 
 ```json
 { "all": 9, "pending": 4, "inReview": 3, "resubmitted": 2 }
 ```
 
-Pass the same `search` as the list so the badges match what's listed.
+Send the same `search` as the list, so the badges match what's listed.
 
 ---
 
-## 2. Review page: `GET /ops/drivers/{driverId}/verification`
+## 4. Review page: `GET /drivers/{driverId}/verification`
 
 ```json
 {
-  "driver": {
-    "id": "4f2a91c0-…", "ref": "D-4F2A91", "firstName": "Tunde", "lastName": "Bakare",
-    "phone": "08011112222", "photoUrl": "…", "licenceNumber": "LAG12345678", "dateOfBirth": "1990-01-01"
-  },
+  "driver": { "id": "4f2a91c0-…", "ref": "D-4F2A91", "firstName": "Emeka", "lastName": "Okafor",
+              "phone": "08053636321", "photoUrl": "…", "licenceNumber": "LAG12345678", "dateOfBirth": "1990-01-01" },
+  "submittedAt": "2026-10-02T17:10:00Z",
   "waitingSince": "2026-10-03T08:00:00Z",
-  "governmentId": { "status": "IN_REVIEW", "rejectionReason": null, "url": "https://…/licence.jpg",
-                    "submittedAt": "2026-10-02T17:10:00Z", "resubmitted": false },
-  "vehicleRegistration": {
-    "status": "IN_REVIEW", "rejectionReason": null, "submittedAt": "2026-10-03T08:00:00Z", "resubmitted": true,
-    "vehicle": { "make": "Toyota", "model": "Corolla", "year": 2019, "color": "Black", "plateNumber": "LND-441-AA",
-                 "exteriorPhotoUrl": "…", "interiorPhotoUrl": "…", "hasAC": true, "acConfirmedWorking": true }
-  },
-  "documents": [
-    { "type": "INSURANCE", "status": "IN_REVIEW", "rejectionReason": null, "expiresOn": "2027-06-30",
-      "documentUrl": "…", "submittedAt": "2026-10-02T17:12:00Z", "resubmitted": false }
-  ],
   "overallStatus": "IN_REVIEW",
   "verifiedSince": null,
+
+  "governmentId": {
+    "status": "IN_REVIEW", "rejectionReason": null, "submittedAt": "2026-10-02T17:10:00Z",
+    "resubmitted": false, "awaitingProvider": false,
+    "url": null, "file": null
+  },
+
+  "vehicleRegistration": {
+    "status": "IN_REVIEW", "rejectionReason": null, "submittedAt": "2026-10-03T08:00:00Z", "resubmitted": true,
+    "vehicle": {
+      "make": "Toyota", "model": "Corolla", "year": 2025, "color": "Black", "plateNumber": "AGL-354-RF",
+      "hasAC": true, "acConfirmedWorking": true,
+      "exteriorPhotoUrl": "…", "interiorPhotoUrl": "…",
+      "exteriorPhoto": { "url": "…", "downloadUrl": "…", "fileType": "IMAGE" },
+      "interiorPhoto": { "url": "…", "downloadUrl": "…", "fileType": "IMAGE" }
+    }
+  },
+  "insuranceExpiresOn": "2026-12-09",
+
+  "documents": [
+    { "type": "INSURANCE", "status": "IN_REVIEW", "rejectionReason": null, "expiresOn": "2026-12-09",
+      "submittedAt": "2026-10-02T17:12:00Z", "resubmitted": false,
+      "documentUrl": "…", "file": { "url": "…", "downloadUrl": "…", "fileType": "PDF" } },
+    { "type": "ROADWORTHINESS_CERT", "status": "IN_REVIEW", "rejectionReason": null, "expiresOn": "2027-03-01",
+      "submittedAt": "2026-10-02T17:13:00Z", "resubmitted": false,
+      "documentUrl": "…", "file": { "url": "…", "downloadUrl": "…", "fileType": "IMAGE" } }
+  ],
+
   "providerChecks": [
-    { "type": "DRIVERS_LICENCE", "outcome": "MATCH", "nameMatchScore": 0.96,
-      "summary": "FRSC record found; name matches", "checkedAt": "…" },
-    { "type": "VEHICLE_PLATE", "outcome": "DETAILS_MISMATCH", "nameMatchScore": null,
-      "summary": "Plate registered as a silver Toyota", "checkedAt": "…" }
-  ]
+    { "type": "DRIVERS_LICENCE", "outcome": "NAME_MISMATCH", "nameMatchScore": 0.62,
+      "summary": "Licence is in the name of EMEKA OKAFOR-BELLO, profile says Emeka Okafor - Smile ID job job-9",
+      "checkedAt": "…", "providerReference": "job-9" }
+  ],
+
+  "review": {
+    "items": [
+      { "item": "GOVERNMENT_ID", "label": "Driver's licence", "status": "IN_REVIEW", "submittedAt": "…", "resubmitted": false,
+        "awaitingProvider": false, "mark": "VERIFIED", "note": null, "markedBy": "Ada Ops", "markedAt": "…" },
+      { "item": "VEHICLE", "label": "Vehicle registration", "status": "IN_REVIEW", "submittedAt": "…", "resubmitted": true,
+        "awaitingProvider": false, "mark": "FLAGGED", "note": "Blurry document", "markedBy": "Ada Ops", "markedAt": "…" },
+      { "item": "INSURANCE", "label": "Insurance certificate", "status": "IN_REVIEW", "submittedAt": "…", "resubmitted": false,
+        "awaitingProvider": false, "mark": null, "note": null, "markedBy": null, "markedAt": null },
+      { "item": "ROADWORTHINESS_CERT", "label": "Roadworthiness certificate", "status": "IN_REVIEW", "submittedAt": "…",
+        "resubmitted": false, "awaitingProvider": false, "mark": null, "note": null, "markedBy": null, "markedAt": null }
+    ],
+    "canApprove": false,
+    "approveBlockedReason": "Flagged: Vehicle registration - reject, or reset the flag",
+    "canReject": true
+  }
 }
 ```
 
-How the review page maps to the response:
-- **Driver's licence card:** `governmentId` for the status and image, plus `driver.licenceNumber` and `driver.dateOfBirth`. Show the latest `DRIVERS_LICENCE` provider check beside it: Smile ID's finding, or Prembly's for drivers checked before. With no `url`, link ops to the Smile ID portal using the job ID in the summary.
-- **Vehicle registration card:** `vehicleRegistration.vehicle`. If `providerChecks` has a `VEHICLE_PLATE` entry (older drivers only), show it beside the card.
-- **Insurance and Roadworthiness cards:** the matching entry in `documents`. An item missing from the list hasn't been uploaded yet.
-- **"Resubmitted" tag on a card:** `resubmitted: true`.
+### Review summary box
 
-`providerChecks` outcomes, to use as badge colours. `DRIVERS_LICENCE` entries come from Smile ID (or Prembly, for older drivers), `NIN_FACE` from the identity check, and `VEHICLE_PLATE` only from older Prembly checks:
+| Shown | From |
+|---|---|
+| Header "Emeka Okafor (D-4F2A91)" | `driver.firstName` + `driver.lastName`, `driver.ref` |
+| Name, Phone | `driver.*` |
+| Submitted | `submittedAt` |
+| In queue for | Time since `waitingSince` |
+| Status badge | `overallStatus`; see section 9 for the labels |
 
-| `outcome` | Meaning | Suggested badge |
-|---|---|---|
-| `MATCH` | Record found and details agree | green |
-| `NAME_MISMATCH` | Licence found, but the name differs from what the driver entered | amber |
-| `DETAILS_MISMATCH` | Plate found, but the make or colour differs | amber |
-| `NOT_FOUND` | No such licence or plate | red |
-| `PROVIDER_ERROR` | The provider couldn't be reached or couldn't finish. This is not the driver's fault. | grey: "Check unavailable" |
+### "Submitted Document" list
+- Use `review.items`, which comes in this order: licence, vehicle, insurance, roadworthiness. Show `label` for each.
+- The icon next to each is ✓ for `VERIFIED`, ✗ for `FLAGGED`, and nothing for `null` (Unreviewed).
+- An item that's already **approved** or **rejected** (`status`) has no mark. Show its decided state instead.
+- **Approve Driver** is enabled when `review.canApprove`. When it's disabled, show `review.approveBlockedReason` near the button.
+- **Reject** is enabled when `review.canReject`.
+- If `review` is missing, the marks couldn't be loaded. The rest of the page still works; offer a retry.
 
-Checks are advisory. Ops always makes the final call. `providerChecks` is empty when no check has run.
+### Files (every document)
+Each file comes as `{ url, downloadUrl, fileType }`:
+- **Preview:** `url`.
+- **PDF / image badge:** `fileType` is `PDF` or `IMAGE`.
+- **Download button:** `downloadUrl`.
+- `file` is `null` when there's no file. **Files are deleted once an item is approved**, so an approved document has no file to show.
 
 ---
 
-## 3. Approve or reject: `POST /ops/drivers/{driverId}/verification/decisions`
+## 5. Document screens
 
-Each card has **Approve** and **Reject**. Reject opens a dialog that asks for the reason for **that item**. There's no shared rejection box on the page. The page keeps its marks locally and sends them in one call when the reviewer submits:
+All four screens share:
+- the header "Document name / Driver name (ref)",
+- the back and close buttons,
+- a status badge: **Unreviewed / Verified / Flagged** from `review.items[].mark`,
+- a review note box,
+- **Flag** and **Verify**, or **Reset to Default** once marked.
+
+### Driver's Licence
+**Licence details:**
+- **Number and date of birth:** `driver.licenceNumber` and `driver.dateOfBirth` on the review page.
+- **What Smile ID found:** the latest `providerChecks` entry with `type: DRIVERS_LICENCE`. Show its `outcome` badge and `summary`.
+
+**Images: `GET /drivers/{driverId}/verification/licence`**
 
 ```json
 {
-  "decisions": [
-    { "item": "GOVERNMENT_ID", "status": "APPROVED" },
-    { "item": "VEHICLE", "status": "REJECTED", "rejectionReason": "Plate in the photo doesn't match LND-441-AA" },
-    { "item": "INSURANCE", "status": "REJECTED", "rejectionReason": "Certificate expired in August" }
-  ]
+  "smileJobId": "job-9", "checkedAt": "…", "outcome": "NAME_MISMATCH",
+  "summary": "Licence is in the name of … - Smile ID job job-9",
+  "licence": { "fullName": "EMEKA OKAFOR", "licenceNumber": "LAG12345678",
+               "dateOfBirth": "1990-01-01", "expirationDate": "2029-05-01" },
+  "images": [
+    { "kind": "LICENCE_FRONT", "name": "id_card_image", "url": "https://…" },
+    { "kind": "LICENCE_BACK",  "name": "id_card_back",  "url": "https://…" },
+    { "kind": "SELFIE",        "name": "selfie_image",  "url": "https://…" }
+  ],
+  "imagesUnavailableReason": null
 }
 ```
 
-Rules:
-- `status` is `APPROVED` or `REJECTED`.
-- Each rejected item needs its own `rejectionReason`, up to 255 characters. The driver sees it in the app against that item.
-- An item can appear only once per call. Items you leave out keep their current status.
-- If any rule fails, **nothing is saved**, and you get a `400` such as `Give a reason for rejecting the vehicle registration`.
-- The reviewer is recorded as the signed-in admin automatically.
+- `licence` is what Smile ID read off the card. Show it next to what the driver entered.
+- `images` come sorted front, back, selfie.
+- **The links are fetched fresh from Smile ID and expire within hours.** Call this endpoint each time the screen opens, and never store the links.
+- If `images` is empty, show `imagesUnavailableReason` and the Smile ID job (`smileJobId`) so ops can open it in the Smile ID portal.
+- `404` means there's no licence check yet. If the driver used the older photo upload instead, use `governmentId.file`.
+- The button label is **Verify Licence**.
 
-The response has the same shape as section 2, so the page can refresh from it. The driver gets a push for every decision, and goes live once all four items are approved.
+### Vehicle Registration
+| Shown | From |
+|---|---|
+| Make, Model, Year, Color, Plate Number | `vehicleRegistration.vehicle.*` |
+| Insurance Expiry date | `insuranceExpiresOn` |
+| Exterior Photo / Interior Photo | `vehicle.exteriorPhoto` / `vehicle.interiorPhoto`: their `url`, `downloadUrl` and `fileType` |
+| Air Conditioning "Active" | `vehicle.hasAC && vehicle.acConfirmedWorking` |
 
-When a driver re-uploads a rejected item, it goes back to `IN_REVIEW` with `resubmitted: true`, and the driver moves to the **Resubmitted** tab.
+### Insurance Certificate
+- From the entry in `documents` with `type: INSURANCE`: `file` and `expiresOn`.
+- The button label is **Approve Insurance**.
+
+### Roadworthiness
+- From the entry in `documents` with `type: ROADWORTHINESS_CERT`: `file` and `expiresOn`.
+
+**A document that isn't in `documents`** hasn't been uploaded yet.
+
+---
+
+## 6. Actions
+
+`{item}` is one of `GOVERNMENT_ID` · `VEHICLE` · `INSURANCE` · `ROADWORTHINESS_CERT`.
+
+### Verify / Flag: `PUT /drivers/{driverId}/verification/items/{item}/review`
+
+```json
+{ "mark": "VERIFIED" }
+{ "mark": "VERIFIED", "note": "Matches the insurer's records" }
+{ "mark": "FLAGGED",  "note": "Blurry document" }
+```
+
+**Rules:**
+- **A flag needs a note.** It becomes the rejection reason the driver sees, so it's at most **255** characters.
+- A note on Verified is optional (up to 500 characters) and goes into the audit log.
+- Only an item that's **waiting for ops** can be marked: `status: IN_REVIEW`, or `awaitingProvider: true`.
+- Marking again replaces the old mark.
+- If the driver re-uploads, the old mark stops counting and the item shows as Unreviewed.
+
+**Returns** the review page.
+
+### Reset to Default: `DELETE /drivers/{driverId}/verification/items/{item}/review`
+Back to Unreviewed. Resetting an item with no mark is fine. **Returns** the review page.
+
+### Approve Driver: `POST /drivers/{driverId}/verification/approve`
+
+```json
+{ "note": "All clear" }
+```
+
+**Rules:**
+- The body is optional.
+- The note is saved with each approval in the audit log, unless that document has its own note from Verify.
+- **Allowed only when** every item is either already approved, or waiting for ops **and** marked Verified, and nothing is flagged.
+
+**Result:**
+- All waiting items are approved.
+- The marks are cleared.
+- The driver gets a push for each document.
+- With all four approved, the driver can post.
+
+**Returns** the review page with `overallStatus: "APPROVED"`.
+
+**Errors** (`400`, the same text as `approveBlockedReason`), checked in this order:
+
+| Message | Meaning |
+|---|---|
+| `Not uploaded yet: Vehicle registration, …` | The driver hasn't submitted it |
+| `Waiting for the driver to re-upload: Insurance certificate` | It was rejected, and the driver hasn't sent a new one |
+| `Flagged: Vehicle registration - reject, or reset the flag` | Something is flagged |
+| `Not reviewed yet: Roadworthiness certificate` | A waiting item has no mark |
+| `Nothing is waiting for review` | Everything is already decided |
+
+### Reject: `POST /drivers/{driverId}/verification/reject`
+No body. It needs **at least one flagged** document.
+
+| Mark | Becomes |
+|---|---|
+| Flagged | **Rejected.** The note is the reason shown to the driver. |
+| Verified | **Approved**, at the same time |
+| Unmarked | Unchanged: still waiting |
+
+The driver gets a push per document, re-uploads, and returns under **Resubmitted**. **Returns** the review page.
+
+**Error:** `400 Flag at least one document, with the reason, to reject`.
+
+### Older: `POST /drivers/{driverId}/verification/decisions`
+The original all-in-one call still works, if you'd rather keep marks in the page:
+
+```json
+{ "decisions": [
+    { "item": "GOVERNMENT_ID", "status": "APPROVED", "note": "optional, for the audit log" },
+    { "item": "VEHICLE", "status": "REJECTED", "rejectionReason": "Plate in the photo doesn't match" } ] }
+```
+
+- Each rejection needs its own `rejectionReason` (up to 255 characters).
+- An item appears at most once per call.
+- If any rule fails, nothing is saved.
+
+**Returns** the review page.
+
+---
+
+## 7. A licence still with Smile ID
+
+Smile ID usually answers within minutes, but some results take hours. Ops can decide in the meantime.
+
+**How it appears:**
+- The licence has `status: "PENDING"` with **`awaitingProvider: true`**. This is on the queue row's `items`, on `governmentId`, and on `review.items`. Show **"Awaiting Smile ID"**.
+- `submittedAt` is when the check started.
+- The driver joins the queue after **10 minutes** of waiting. Ops can change this with `VERIFICATION_PROVIDER_PENDING_QUEUE_AFTER_MINUTES`.
+
+**What ops can do:**
+- Verify or Flag it, then **Approve Driver** or **Reject**, like any other document.
+- There's **no image yet**, because Smile ID's job only exists once its result is in. The licence screen's call returns `404` or no images; decide from what the driver sent through support.
+- A driver who opened the licence check and quit also shows as awaiting, because that can't be told apart until a result arrives.
+
+**Smile ID's result overrides the ops decision when it arrives:**
+
+| Smile ID says | Licence becomes |
+|---|---|
+| Genuine, details match | **Approved**, even if ops rejected it |
+| Needs a human look (name or number mismatch, forgery or risk flag…) | **In review** again, with Smile ID's finding in `providerChecks` |
+| The driver must try again (face mismatch, wrong document…) | **Pending**, waiting for the driver's next check |
+
+**After an override:**
+- It's recorded in the audit log with `decidedBy: "SMILE_ID"` and a note.
+- Whether the driver can post follows the override automatically.
+
+**When there's no override:**
+- If ops decides **after** Smile ID has already answered, a later result can't override it.
+- If the driver starts a new check, the old result has nothing left to override.
+
+---
+
+## 8. Audit log: `GET /drivers/{driverId}/verification/history`
+
+Newest first. It includes every decision:
+- from the review screen and the older `decisions` call: `decidedBy` is the admin's name;
+- Smile ID's automatic licence approvals and overrides: `decidedBy` is `"SMILE_ID"`.
+
+```json
+[
+  { "item": "GOVERNMENT_ID", "label": "Driver's licence", "status": "IN_REVIEW",
+    "note": "Smile ID's result came in after ops decided - back for review: …", "decidedBy": "SMILE_ID", "decidedAt": "…" },
+  { "item": "VEHICLE", "label": "Vehicle registration", "status": "REJECTED",
+    "note": "Blurry document", "decidedBy": "Ada Ops", "decidedAt": "2026-10-03T09:00:00Z" }
+]
+```
+
+`note` is the rejection reason the driver saw, or the note left with an approval.
+
+---
+
+## 9. Values and badges
+
+**Item `status`**
+
+| Value | Meaning | Badge |
+|---|---|---|
+| `PENDING` | Not uploaded. With `awaitingProvider: true`, it's waiting for Smile ID instead. | grey: "Not uploaded" / "Awaiting Smile ID" |
+| `IN_REVIEW` | Waiting for ops | amber: "In review" |
+| `APPROVED` | Approved | green |
+| `REJECTED` | Rejected; the driver must re-upload | red |
+| `EXPIRED` | Insurance or roadworthiness passed its expiry date; the driver must upload a new one. The car can't be used to post trips until then. | red: "Expired" |
+
+**Review `mark`**
+
+| Value | Shown as |
+|---|---|
+| `null` | **Unreviewed** |
+| `VERIFIED` | **Verified** ✓ |
+| `FLAGGED` | **Flagged** ✗, with its note |
+
+**`overallStatus`**
+
+| Value | Shown as |
+|---|---|
+| `PENDING` | Not submitted |
+| `IN_REVIEW` | In review |
+| `APPROVED` | Verified |
+| `REJECTED` | Rejected |
+
+**Queue `tab`**: `PENDING`, `IN_REVIEW` or `RESUBMITTED`; see section 3.
+
+**`providerChecks[].outcome`.** These are advisory; ops always makes the final call.
+
+| Value | Meaning | Badge |
+|---|---|---|
+| `MATCH` | Genuine; details agree | green |
+| `PARTIAL_NAME_MATCH` | Approved on a partial name match; worth a look | amber |
+| `NAME_MISMATCH` | The name on the licence differs from the profile | amber |
+| `DETAILS_MISMATCH` | Number or expiry differs, or the licence has expired (older drivers: plate details) | amber |
+| `NOT_FOUND` | Not a licence, or no record | red |
+| `PROVIDER_ERROR` | Smile ID couldn't finish; not the driver's fault | grey: "Check unavailable" |
+
+**`file.fileType`**: `IMAGE` or `PDF`.
+
+**Licence image `kind`**: `LICENCE_FRONT`, `LICENCE_BACK`, `SELFIE` or `OTHER`.
+
+---
+
+## 10. Errors
+
+| Status | When | What to show |
+|---|---|---|
+| `400` | A rule isn't met: a flag with no note, approving with something unreviewed, an unknown `item` / `tab` / `sort`, a note that's too long | `message` as-is |
+| `401` / `403` | Not signed in / not an ops admin | Send them to sign in |
+| `404` | Unknown driver, or no licence check yet | `message` |
+| `502` / `503` | A backing service is down | "Couldn't load, try again" |
+
+---
+
+## 11. Where the mock-ups differ from the app
+
+- **Documents column chips:** the mock-ups show *National ID, Live Selfie, Car Ownership*. Use the four item labels instead: Driver's licence, Vehicle registration, Insurance certificate, Roadworthiness certificate.
+- **Driver's Licence screen:** the button says *Verify NIN*; it should say **Verify Licence**. Add Smile ID's finding and job beside the image.
+- **Insurance Certificate screen:** it shows a vehicle ownership certificate and an *Approve Car Ownership* button. Both should be insurance.
+- **"PDF" badge:** use `file.fileType`, since documents can be photos or PDFs.
+- **Status in the summary box:** use `overallStatus`. Show `IN_REVIEW` as "In review", not "PENDING".
+- **Driver ID:** it's `D-` plus the first six characters of the driver's id (`D-4F2A91`), not a running number (`D-001`).
+- **"Awaiting Smile ID":** this state isn't in the mock-ups. Add it for licence chips and the licence document row.
+
+---
+
+## 12. Checklist
+
+**Queue**
+- [ ] Tabs with counts (`/queue/counts`), using the same `search` as the list.
+- [ ] Search, column sorting (`sort` + `direction`), page size and paging.
+- [ ] Rows: ref, name, phone, `submittedAt`, document chips from `items[].label`, "In queue" from `waitingSince`.
+- [ ] "Awaiting Smile ID" chips for `awaitingProvider`.
+
+**Review summary**
+- [ ] Name, phone, submitted, in queue, `overallStatus` badge.
+- [ ] The four documents from `review.items`, with ✓ / ✗ / none.
+- [ ] **Approve Driver** follows `canApprove`, showing `approveBlockedReason` when disabled; **Reject** follows `canReject`.
+- [ ] Refresh the page from each action's response.
+
+**Document screens**
+- [ ] Licence: details, the Smile ID finding, and images from `/verification/licence`, loaded each time and never stored.
+- [ ] Vehicle: details, `insuranceExpiresOn`, exterior and interior photos, AC.
+- [ ] Insurance and Roadworthiness: file and expiry.
+- [ ] Preview from `file.url`, badge from `file.fileType`, **Download** from `file.downloadUrl`.
+- [ ] **Verify**, **Flag** (note required, max 255 characters) and **Reset to Default**.
+
+**Other**
+- [ ] Audit log tab or drawer (`/verification/history`).
+- [ ] Show every `400` `message` as-is.

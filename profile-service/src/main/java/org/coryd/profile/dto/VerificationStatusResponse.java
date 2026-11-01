@@ -22,16 +22,18 @@ public record VerificationStatusResponse(
 ) {
     /** What an identity provider said about this driver, and when. Empty when the provider is off
      * or has not been asked yet. Advisory only: ops still decides, this is the evidence. */
+    /** providerReference: the provider's own id for the check - for a Smile ID check, the job ID to open in its portal. */
     public record ProviderCheck(VerificationCheckType type, VerificationCheckOutcome outcome,
-                                Double nameMatchScore, String summary, Instant checkedAt) {
+                                Double nameMatchScore, String summary, Instant checkedAt, String providerReference) {
     }
 
     /** Who is being reviewed - licenceNumber is the driver's licence number, the one checked against FRSC. */
     public record DriverDetails(String firstName, String lastName, String photoUrl, String licenceNumber, LocalDate dateOfBirth) {
     }
 
+    /** awaitingProvider: the licence is with Smile ID and its result hasn't come - ops may still decide it; the result overrides. */
     public record ItemStatus(VerificationStatus status, String rejectionReason, String url,
-                             Instant submittedAt, boolean resubmitted) {
+                             Instant submittedAt, boolean resubmitted, boolean awaitingProvider) {
     }
 
     public record VehicleRegistrationStatus(VerificationStatus status, String rejectionReason, VehicleFields vehicle,

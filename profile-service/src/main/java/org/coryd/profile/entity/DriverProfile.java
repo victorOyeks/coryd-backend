@@ -74,6 +74,11 @@ public class DriverProfile extends BaseEntity {
     @Column(nullable = false)
     private boolean governmentIdResubmitted = false;
 
+    /** Ops decided the licence while Smile ID's result was still out - when it comes, it overrides that decision. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean governmentIdDecidedDuringCheck = false;
+
     /** Set once, the first time this driver ever reaches overallStatus APPROVED - never moves
      * after that, even if a later rejection + re-approval cycle happens. "Verified Since" on the
      * Verification Status screen. */

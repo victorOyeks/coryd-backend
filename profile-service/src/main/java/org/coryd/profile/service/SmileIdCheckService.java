@@ -138,6 +138,7 @@ public class SmileIdCheckService {
             return;
         }
 
+        SmileIdCheckHandler.OpsOverride override = handler.startOverride(userId);
         SmileIdDecision decision = decide(handler, userId, result);
         String summary = decision.kind() == SmileIdDecision.Kind.RETRY
                 ? decision.summary() : decision.summary() + SmileIdResults.fraudNote(result) + handler.resultNote(userId);
@@ -167,6 +168,10 @@ public class SmileIdCheckService {
             case RETRY -> { }
         }
         handler.afterResult(userId, decision);
+        if (override != null) {
+            handler.finishOverride(userId, decision, override);
+            log.info("Smile ID result for {}'s {} overrode the ops decision made while it was out: {}", userId, handler.noun(), decision.kind());
+        }
     }
 
     private SmileIdDecision decide(SmileIdCheckHandler handler, String userId, SmileIdResult result) {
