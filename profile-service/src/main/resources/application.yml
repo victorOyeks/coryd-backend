@@ -54,6 +54,10 @@ services:
 # Smile ID: the NIN + live selfie check (everyone) and the driver's licence check. Without a partner ID
 # and API key, both checks answer "unavailable". Live by default (production); dev sets sandbox=true with a
 # sandbox key, and every check is then sent as the test identity below so it always succeeds.
+# The Ops Console's driver index (Drivers Directory, Verification Queue) - every row rebuilt nightly.
+driver-index:
+  rebuild-cron: ${DRIVER_INDEX_REBUILD_CRON:0 20 2 * * *}
+
 # Ops verification queue: a licence still out with Smile ID joins it after this many minutes, and ops can decide it -
 # Smile ID's result overrides that decision when it arrives.
 verification:

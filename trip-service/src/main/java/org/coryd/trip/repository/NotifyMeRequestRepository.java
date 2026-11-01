@@ -12,8 +12,6 @@ import java.util.List;
 
 public interface NotifyMeRequestRepository extends JpaRepository<NotifyMeRequest, String> {
 
-    List<NotifyMeRequest> findByCreatedAtAfterAndDesiredDepartureTimeIsNotNull(Instant since);
-
     /** One-off requests still waiting, starting inside a box and wanting to leave between from and to - the caller checks the exact distance. */
     @Query("""
             select n from NotifyMeRequest n

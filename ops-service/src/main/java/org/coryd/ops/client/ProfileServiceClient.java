@@ -3,22 +3,18 @@ package org.coryd.ops.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.coryd.common.enums.VerificationQueueTab;
+import org.coryd.common.enums.*;
 import org.coryd.common.security.JwtUtil;
-import org.coryd.ops.dto.ItemDecision;
-import org.coryd.ops.dto.VerificationQueueCountsResponse;
-import org.coryd.ops.dto.VerificationQueueItem;
-import org.coryd.ops.dto.VerificationStatusResponse;
+import org.coryd.ops.dto.*;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /** Driver verification and people/vehicle details live in profile-service. Calls carry the ops admin's own
  * token, so profile-service's OPS_ADMIN checks still decide who may approve - this service adds no second gate. */
@@ -101,8 +97,8 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
-    public org.coryd.ops.dto.VerificationReview markVerificationItem(String driverId, org.coryd.common.enums.ReviewableItem item,
-                                                                    org.coryd.common.enums.ReviewMark mark, String note, String markedBy) {
+    public org.coryd.ops.dto.VerificationReview markVerificationItem(String driverId, ReviewableItem item,
+                                                                    ReviewMark mark, String note, String markedBy) {
         return DownstreamCalls.data(SERVICE, objectMapper, org.coryd.ops.dto.VerificationReview.class, () -> restClient.put()
                 .uri("/drivers/{driverId}/verification/items/{item}/review", driverId, item)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -111,7 +107,7 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
-    public org.coryd.ops.dto.VerificationReview resetVerificationItem(String driverId, org.coryd.common.enums.ReviewableItem item) {
+    public org.coryd.ops.dto.VerificationReview resetVerificationItem(String driverId, ReviewableItem item) {
         return DownstreamCalls.data(SERVICE, objectMapper, org.coryd.ops.dto.VerificationReview.class, () -> restClient.delete()
                 .uri("/drivers/{driverId}/verification/items/{item}/review", driverId, item)
                 .retrieve()
@@ -123,6 +119,15 @@ public class ProfileServiceClient {
                 .uri("/drivers/{driverId}/verification/approve", driverId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(new ReviewBody(note, reviewedBy))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public VerificationStatusResponse saveVerification(String driverId, String reviewedBy) {
+        return DownstreamCalls.data(SERVICE, objectMapper, VerificationStatusResponse.class, () -> restClient.post()
+                .uri("/drivers/{driverId}/verification/save", driverId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new ReviewBody(null, reviewedBy))
                 .retrieve()
                 .body(JsonNode.class));
     }
@@ -144,9 +149,9 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
-    public List<org.coryd.ops.dto.VerificationDecisionHistoryItem> verificationHistory(String driverId) {
-        org.coryd.ops.dto.VerificationDecisionHistoryItem[] items = DownstreamCalls.data(SERVICE, objectMapper,
-                org.coryd.ops.dto.VerificationDecisionHistoryItem[].class, () -> restClient.get()
+    public List<VerificationDecisionHistoryItem> verificationHistory(String driverId) {
+        VerificationDecisionHistoryItem[] items = DownstreamCalls.data(SERVICE, objectMapper,
+                VerificationDecisionHistoryItem[].class, () -> restClient.get()
                         .uri("/drivers/{driverId}/verification/history", driverId)
                         .retrieve()
                         .body(JsonNode.class));
@@ -210,6 +215,63 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** The Drivers Directory - filtered, sorted and paged by profile-service's driver index. */
+    public IndexPage driverIndex(DriverDirectoryStatus status, String search, DriverDirectorySort sort,
+                                 Sort.Direction direction, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, IndexPage.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/drivers/index").queryParam("page", page).queryParam("size", size);
+                    if (status != null) {
+                        b.queryParam("status", status);
+                    }
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    if (sort != null) {
+                        b.queryParam("sort", sort);
+                    }
+                    if (direction != null) {
+                        b.queryParam("direction", direction);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public DriverDirectoryCounts driverIndexCounts(String search) {
+        return DownstreamCalls.data(SERVICE, objectMapper, DriverDirectoryCounts.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/drivers/index/counts");
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public IndexedDriver indexedDriver(String driverId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, IndexedDriver.class, () -> restClient.get()
+                .uri("/internal/drivers/index/{driverId}", driverId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record IndexPage(List<IndexedDriver> content, int page, int size, long totalElements, int totalPages, boolean last) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record IndexedDriver(String driverId, String firstName, String lastName, String phone, String photoUrl, Instant joinedAt,
+                                DriverDirectoryStatus status, VerificationStatus verificationStatus,
+                                Instant suspendedAt, String suspensionReason,
+                                String vehicleMake, String vehicleModel, Integer vehicleYear, String vehicleColor, String plateNumber,
+                                Long trips, Double ratingAvg, Long ratingCount, Integer reliabilityPercent, Long reportsFiled,
+                                BigDecimal earningsNet, BigDecimal earningsGross) {
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record QueuePage(List<QueueRow> content, int page, int size, long totalElements, int totalPages, boolean last) {
     }
@@ -222,7 +284,7 @@ public class ProfileServiceClient {
     private record DecisionBatch(List<ItemDecision> decisions, String reviewedBy) {
     }
 
-    private record MarkBody(org.coryd.common.enums.ReviewMark mark, String note, String markedBy) {
+    private record MarkBody(ReviewMark mark, String note, String markedBy) {
     }
 
     private record ReviewBody(String note, String reviewedBy) {

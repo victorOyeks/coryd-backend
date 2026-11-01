@@ -18,6 +18,7 @@ import org.coryd.common.enums.VerificationStatus;
 import java.time.Instant;
 
 @Entity
+@jakarta.persistence.EntityListeners(DriverIndexListener.class)
 @Table(name = "vehicles", schema = "profile")
 @Getter
 @Setter

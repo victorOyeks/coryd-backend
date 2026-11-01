@@ -41,8 +41,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({EmergencyContactService.class, RiderProfileService.class, DriverProfileService.class})
+@Import({EmergencyContactService.class, RiderProfileService.class, DriverProfileService.class, ReplacedFiles.class})
 class EmergencyContactIntegrationTest {
+
+    @org.springframework.boot.test.mock.mockito.MockBean CloudinaryService cloudinaryService;
 
     @Container
     @ServiceConnection

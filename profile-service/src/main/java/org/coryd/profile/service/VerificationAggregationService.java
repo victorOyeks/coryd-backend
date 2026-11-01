@@ -11,15 +11,9 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverRejectedEvent;
 import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
-import org.coryd.profile.dto.DriverOnboardingStatusResponse;
-import org.coryd.profile.dto.ItemDecision;
+import org.coryd.profile.dto.*;
 import org.coryd.common.enums.ReviewableItem;
-import org.coryd.profile.dto.VerificationDecisionBatchRequest;
-import org.coryd.profile.dto.DriverPrerequisiteStatus;
-import org.coryd.profile.dto.VerificationStatusResponse;
-import org.coryd.profile.entity.DriverDocument;
-import org.coryd.profile.entity.DriverProfile;
-import org.coryd.profile.entity.Vehicle;
+import org.coryd.profile.entity.*;
 import org.coryd.profile.repository.DriverDocumentRepository;
 import org.coryd.profile.repository.DriverProfileRepository;
 import org.coryd.profile.repository.VehicleRepository;
@@ -27,8 +21,6 @@ import org.coryd.profile.repository.VerificationCheckRepository;
 import org.coryd.common.enums.VerificationQueueTab;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.response.PagedResponse;
-import org.coryd.profile.dto.VerificationQueueCountsResponse;
-import org.coryd.profile.dto.VerificationQueueItem;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -61,12 +53,12 @@ public class VerificationAggregationService {
     private final DriverProfileRepository driverProfileRepository;
     private final VehicleRepository vehicleRepository;
     private final DriverDocumentRepository driverDocumentRepository;
-    private final CloudinaryService cloudinaryService;
     private final VerificationCheckRepository verificationCheckRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final DriverIdentity driverIdentity;
     private final org.coryd.profile.repository.VerificationDecisionLogRepository decisionLogRepository;
     private final org.coryd.profile.repository.SmileIdCheckRepository smileIdCheckRepository;
+    private final org.coryd.profile.repository.DriverIndexRepository driverIndexRepository;
 
     /** A licence still out with Smile ID joins the ops queue once it has waited this long - most results land within minutes. */
     @org.springframework.beans.factory.annotation.Value("${verification.provider-pending-queue-after-minutes:10}")
@@ -236,54 +228,65 @@ public class VerificationAggregationService {
         return queue(callerRole, tab, search, pageable, null, null);
     }
 
-    /** sort: a column header - longest-waiting first when left out. direction: ASC unless DESC. Ties keep the longest-waiting first. */
+    /**
+     * One indexed query on driver_index - filter, sort and page in the database - then the four items are built for
+     * just the drivers on this page. sort: a column header, longest-waiting first when left out; ties by driver ref.
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public PagedResponse<VerificationQueueItem> queue(UserRole callerRole, VerificationQueueTab tab, String search, Pageable pageable,
                                                       org.coryd.common.enums.VerificationQueueSort sort, org.springframework.data.domain.Sort.Direction direction) {
         requireOps(callerRole);
-        List<VerificationQueueItem> rows = waiting(search).stream().filter(row -> tab == null || row.tab() == tab)
-                .sorted(order(sort, direction)).toList();
-        int from = (int) Math.min(pageable.getOffset(), rows.size());
-        int to = Math.min(from + pageable.getPageSize(), rows.size());
-        return PagedResponse.from(new PageImpl<>(rows.subList(from, to), pageable, rows.size()));
+        org.springframework.data.jpa.domain.Specification<org.coryd.profile.entity.DriverIndex> spec =
+                DriverIndexSpecs.inQueue(providerCutoff()).and(DriverIndexSpecs.queueTab(tab)).and(DriverIndexSpecs.nameOrRef(search))
+                        .and(DriverIndexSpecs.queueSort(sort, direction));
+        org.springframework.data.domain.Page<org.coryd.profile.entity.DriverIndex> page = driverIndexRepository.findAll(spec,
+                org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()));
+        List<String> ids = page.getContent().stream().map(org.coryd.profile.entity.DriverIndex::getDriverId).toList();
+        Map<String, VerificationQueueItem> rows = queueRows(ids).stream()
+                .collect(Collectors.toMap(VerificationQueueItem::driverId, r -> r));
+        List<VerificationQueueItem> ordered = ids.stream().map(rows::get).filter(Objects::nonNull).toList();
+        return PagedResponse.from(new PageImpl<>(ordered, pageable, page.getTotalElements()));
     }
 
-    private static Comparator<VerificationQueueItem> order(org.coryd.common.enums.VerificationQueueSort sort,
-                                                           org.springframework.data.domain.Sort.Direction direction) {
-        Comparator<VerificationQueueItem> byColumn = switch (sort == null ? org.coryd.common.enums.VerificationQueueSort.WAITING_SINCE : sort) {
-            case WAITING_SINCE -> Comparator.comparing(VerificationQueueItem::waitingSince, Comparator.nullsLast(Comparator.naturalOrder()));
-            case SUBMITTED_AT -> Comparator.comparing(VerificationQueueItem::submittedAt, Comparator.nullsLast(Comparator.naturalOrder()));
-            case NAME -> Comparator.comparing(row -> (Objects.toString(row.firstName(), "") + " " + Objects.toString(row.lastName(), ""))
-                    .trim().toLowerCase(Locale.ROOT));
-            case DRIVER_REF -> Comparator.comparing(row -> row.driverId().replace("-", "").toLowerCase(Locale.ROOT));
-        };
-        if (direction == org.springframework.data.domain.Sort.Direction.DESC) {
-            byColumn = byColumn.reversed();
-        }
-        return byColumn.thenComparing(VerificationQueueItem::waitingSince, Comparator.nullsLast(Comparator.naturalOrder()));
-    }
-
-    /** The queue's tab badges - they follow the same search as the list. */
+    /** The queue's tab badges - they follow the same search as the list. Four counts, each an indexed query. */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public VerificationQueueCountsResponse queueCounts(UserRole callerRole, String search) {
         requireOps(callerRole);
-        List<VerificationQueueItem> rows = waiting(search);
-        Map<VerificationQueueTab, Long> byTab = rows.stream().collect(Collectors.groupingBy(VerificationQueueItem::tab, Collectors.counting()));
-        return new VerificationQueueCountsResponse(rows.size(), byTab.getOrDefault(VerificationQueueTab.PENDING, 0L),
-                byTab.getOrDefault(VerificationQueueTab.IN_REVIEW, 0L), byTab.getOrDefault(VerificationQueueTab.RESUBMITTED, 0L));
+        org.springframework.data.jpa.domain.Specification<org.coryd.profile.entity.DriverIndex> base =
+                DriverIndexSpecs.inQueue(providerCutoff()).and(DriverIndexSpecs.nameOrRef(search));
+        return new VerificationQueueCountsResponse(driverIndexRepository.count(base),
+                driverIndexRepository.count(base.and(DriverIndexSpecs.queueTab(VerificationQueueTab.PENDING))),
+                driverIndexRepository.count(base.and(DriverIndexSpecs.queueTab(VerificationQueueTab.IN_REVIEW))),
+                driverIndexRepository.count(base.and(DriverIndexSpecs.queueTab(VerificationQueueTab.RESUBMITTED))));
     }
 
-    private List<VerificationQueueItem> waiting(String search) {
-        Set<String> driverIds = new LinkedHashSet<>();
-        driverProfileRepository.findByGovernmentIdStatus(VerificationStatus.IN_REVIEW).forEach(p -> driverIds.add(p.getUserId()));
-        vehicleRepository.findByVerificationStatus(VerificationStatus.IN_REVIEW).forEach(v -> driverIds.add(v.getDriverId()));
-        driverDocumentRepository.findByStatus(VerificationStatus.IN_REVIEW).forEach(d -> driverIds.add(d.getDriverId()));
-        Instant providerCutoff = Instant.now().minus(java.time.Duration.ofMinutes(providerPendingQueueAfterMinutes));
-        smileIdCheckRepository.findByCheckTypeAndStartedAtIsNotNull(org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE).stream()
-                .filter(c -> !c.getStartedAt().isAfter(providerCutoff))
-                .forEach(c -> driverIds.add(c.getUserId()));
-        if (driverIds.isEmpty()) {
+    /** A licence still with Smile ID joins the queue once it started before this. */
+    Instant providerCutoff() {
+        return Instant.now().minus(java.time.Duration.ofMinutes(providerPendingQueueAfterMinutes));
+    }
+
+    /** What driver_index keeps about one driver from the records here - null when they have no driver profile. */
+    public IndexFacts indexFacts(String driverId) {
+        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
+        if (profile == null) {
+            return null;
+        }
+        Vehicle vehicle = primaryVehicle(driverId);
+        List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
+        List<VerificationQueueItem.Entry> entries = entries(profile, vehicle, documents, licenceCheck(driverId));
+        return new IndexFacts(profile, vehicle, computeOverallStatus(profile, vehicle, documents), entries,
+                tabOf(entries), waitingSince(entries));
+    }
+
+    public record IndexFacts(DriverProfile profile, Vehicle vehicle, VerificationStatus overallStatus,
+                             List<VerificationQueueItem.Entry> entries, VerificationQueueTab queueTab, Instant waitingSince) {
+    }
+
+    /** Queue rows for these drivers only - the page being shown. */
+    private List<VerificationQueueItem> queueRows(List<String> ids) {
+        if (ids.isEmpty()) {
             return List.of();
         }
-        List<String> ids = new ArrayList<>(driverIds);
         Map<String, DriverProfile> profiles = driverProfileRepository.findByUserIdIn(ids).stream()
                 .collect(Collectors.toMap(DriverProfile::getUserId, p -> p));
         Map<String, List<Vehicle>> vehicles = vehicleRepository.findByDriverIdIn(ids).stream()
@@ -293,23 +296,14 @@ public class VerificationAggregationService {
         Map<String, org.coryd.profile.entity.SmileIdCheck> licenceChecks = smileIdCheckRepository
                 .findByCheckTypeAndUserIdIn(org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE, ids).stream()
                 .collect(Collectors.toMap(org.coryd.profile.entity.SmileIdCheck::getUserId, c -> c, (a, b) -> a));
-        String term = search == null || search.isBlank() ? null : search.trim().toLowerCase(Locale.ROOT);
-
-        return ids.stream()
-                .map(id -> {
-                    DriverProfile profile = profiles.get(id);
-                    List<VerificationQueueItem.Entry> entries = entries(profile, primary(vehicles.getOrDefault(id, List.of())),
-                            documents.getOrDefault(id, List.of()), licenceChecks.get(id));
-                    return new VerificationQueueItem(id, profile == null ? null : profile.getFirstName(),
-                            profile == null ? null : profile.getLastName(), profile == null ? null : profile.getPhotoUrl(),
-                            tabOf(entries), waitingSince(entries), entries);
-                })
-                // A licence still with Smile ID only counts once it has waited past the cutoff.
-                .filter(row -> row.items().stream().anyMatch(e -> e.status() == VerificationStatus.IN_REVIEW
-                        || e.awaitingProvider() && e.submittedAt() != null && !e.submittedAt().isAfter(providerCutoff)))
-                .filter(row -> term == null || matches(row, term))
-                .sorted(Comparator.comparing(VerificationQueueItem::waitingSince, Comparator.nullsLast(Comparator.naturalOrder())))
-                .toList();
+        return ids.stream().map(id -> {
+            DriverProfile profile = profiles.get(id);
+            List<VerificationQueueItem.Entry> entries = entries(profile, primary(vehicles.getOrDefault(id, List.of())),
+                    documents.getOrDefault(id, List.of()), licenceChecks.get(id));
+            return new VerificationQueueItem(id, profile == null ? null : profile.getFirstName(),
+                    profile == null ? null : profile.getLastName(), profile == null ? null : profile.getPhotoUrl(),
+                    tabOf(entries), waitingSince(entries), entries);
+        }).toList();
     }
 
     /** The four items in review order - an item never submitted reads PENDING. */
@@ -351,14 +345,6 @@ public class VerificationAggregationService {
                 .map(VerificationQueueItem.Entry::submittedAt)
                 .min(Comparator.naturalOrder())
                 .orElse(null);
-    }
-
-    /** By name, or by driver id / the console's "D-" reference. */
-    private static boolean matches(VerificationQueueItem row, String term) {
-        String name = ((row.firstName() == null ? "" : row.firstName()) + " " + (row.lastName() == null ? "" : row.lastName()))
-                .toLowerCase(Locale.ROOT);
-        String id = term.startsWith("d-") ? term.substring(2) : term;
-        return name.contains(term) || row.driverId().replace("-", "").toLowerCase(Locale.ROOT).startsWith(id.replace("-", ""));
     }
 
     private static void requireOps(UserRole callerRole) {
@@ -407,9 +393,6 @@ public class VerificationAggregationService {
                 profile.setGovernmentIdStatus(decision.status());
                 profile.setGovernmentIdResubmitted(false);
                 profile.setGovernmentIdRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
-                if (decision.status() == VerificationStatus.APPROVED) {
-                    purgeGovernmentId(profile);
-                }
                 driverProfileRepository.save(profile);
                 if (decision.status() == VerificationStatus.APPROVED) {
                     driverIdentity.completeIfReady(driverId);
@@ -423,16 +406,6 @@ public class VerificationAggregationService {
                 vehicle.setVerificationStatus(decision.status());
                 vehicle.setResubmitted(false);
                 vehicle.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
-                if (decision.status() == VerificationStatus.APPROVED) {
-                    deleteFromCloudinary(vehicle.getExteriorPhotoPublicId(),
-                            CloudinaryService.resourceTypeFromUrl(vehicle.getExteriorPhotoUrl()));
-                    deleteFromCloudinary(vehicle.getInteriorPhotoPublicId(),
-                            CloudinaryService.resourceTypeFromUrl(vehicle.getInteriorPhotoUrl()));
-                    vehicle.setExteriorPhotoUrl(null);
-                    vehicle.setExteriorPhotoPublicId(null);
-                    vehicle.setInteriorPhotoUrl(null);
-                    vehicle.setInteriorPhotoPublicId(null);
-                }
                 vehicleRepository.save(vehicle);
             }
             case INSURANCE, ROADWORTHINESS_CERT -> {
@@ -442,33 +415,8 @@ public class VerificationAggregationService {
                 document.setStatus(decision.status());
                 document.setResubmitted(false);
                 document.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
-                if (decision.status() == VerificationStatus.APPROVED) {
-                    deleteFromCloudinary(document.getDocumentPublicId(),
-                            CloudinaryService.resourceTypeFromUrl(document.getDocumentUrl()));
-                    document.setDocumentUrl(null);
-                    document.setDocumentPublicId(null);
-                }
                 driverDocumentRepository.save(document);
             }
-        }
-    }
-
-    /** An approved licence image is never shown again. */
-    void purgeGovernmentId(DriverProfile profile) {
-        deleteFromCloudinary(profile.getGovernmentIdPublicId(),
-                CloudinaryService.resourceTypeFromUrl(profile.getGovernmentIdUrl()));
-        profile.setGovernmentIdUrl(null);
-        profile.setGovernmentIdPublicId(null);
-    }
-
-    private void deleteFromCloudinary(String publicId, String resourceType) {
-        if (publicId == null) {
-            return;
-        }
-        try {
-            cloudinaryService.delete(publicId, resourceType);
-        } catch (Exception e) {
-            log.warn("Could not delete verification asset {} from Cloudinary, leaving it orphaned: {}", publicId, e.getMessage());
         }
     }
 

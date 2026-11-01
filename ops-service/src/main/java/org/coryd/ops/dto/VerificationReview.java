@@ -17,7 +17,9 @@ public record VerificationReview(
         List<ItemReview> items,
         boolean canApprove,
         String approveBlockedReason,
-        boolean canReject
+        boolean canReject,
+        /** Save Changes (Drivers Directory) would change something: a flag, or Verified on a document waiting for ops. */
+        boolean canSave
 ) {
     @JsonIgnoreProperties(ignoreUnknown = true)
     /** awaitingProvider: still out with Smile ID - it can be decided now, and Smile ID's result overrides that when it comes. */

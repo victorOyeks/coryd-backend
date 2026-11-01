@@ -6,10 +6,7 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.enums.VerificationQueueTab;
 import org.coryd.common.response.PagedResponse;
-import org.coryd.ops.dto.VerificationQueueCountsResponse;
-import org.coryd.ops.dto.VerificationQueueItem;
-import org.coryd.ops.dto.VerificationDecisionRequest;
-import org.coryd.ops.dto.VerificationStatusResponse;
+import org.coryd.ops.dto.*;
 import org.coryd.ops.service.DriverVerificationOpsService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/drivers")
@@ -73,7 +72,7 @@ public class DriverVerificationController {
     @PostMapping("/{driverId}/verification/approve")
     public ApiResponse<VerificationStatusResponse> approve(@AuthenticationPrincipal CoRydUserDetails admin,
                                                            @PathVariable String driverId,
-                                                           @Valid @RequestBody(required = false) org.coryd.ops.dto.ApproveDriverRequest request) {
+                                                           @Valid @RequestBody(required = false) ApproveDriverRequest request) {
         return ApiResponse.ok("Driver approved", driverVerificationOpsService.approve(driverId, request, admin));
     }
 
@@ -81,6 +80,12 @@ public class DriverVerificationController {
     @PostMapping("/{driverId}/verification/reject")
     public ApiResponse<VerificationStatusResponse> reject(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String driverId) {
         return ApiResponse.ok("Driver rejected", driverVerificationOpsService.reject(driverId, admin));
+    }
+
+    /** Save Changes (Drivers Directory): flagged documents rejected - approved ones lose their approval - verified ones approved. */
+    @PostMapping("/{driverId}/verification/save")
+    public ApiResponse<VerificationStatusResponse> save(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String driverId) {
+        return ApiResponse.ok("Changes saved", driverVerificationOpsService.save(driverId, admin));
     }
 
     /** The Driver's Licence screen: what Smile ID read off the licence, and fresh links to the images it captured. */
@@ -91,7 +96,7 @@ public class DriverVerificationController {
 
     /** The audit log - every decision on this driver's items, newest first. */
     @GetMapping("/{driverId}/verification/history")
-    public ApiResponse<java.util.List<org.coryd.ops.dto.VerificationDecisionHistoryItem>> history(@PathVariable String driverId) {
+    public ApiResponse<List<VerificationDecisionHistoryItem>> history(@PathVariable String driverId) {
         return ApiResponse.ok(driverVerificationOpsService.history(driverId));
     }
 

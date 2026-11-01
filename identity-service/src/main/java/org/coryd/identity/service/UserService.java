@@ -32,7 +32,8 @@ public class UserService {
     public List<UserContactResponse> getContacts(List<String> userIds) {
         return userRepository.findAllById(userIds).stream()
                 .map(user -> new UserContactResponse(user.getId(), Names.join(user.getFirstName(), user.getLastName()),
-                        user.getFirstName(), user.getLastName(), user.getPhone()))
+                        user.getFirstName(), user.getLastName(), user.getPhone(),
+                        user.getSuspendedAt(), user.getSuspensionReason(), user.getCreatedAt()))
                 .toList();
     }
 

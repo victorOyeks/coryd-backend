@@ -76,6 +76,12 @@ public class DriverVerificationOpsService {
         return withReview(driverId, withContact(driverId, status));
     }
 
+    /** Save Changes: the marks as they stand - flagged rejected (an approved document loses its approval), verified approved. */
+    public VerificationStatusResponse save(String driverId, CoRydUserDetails admin) {
+        VerificationStatusResponse status = profileServiceClient.saveVerification(driverId, reviewer(admin));
+        return withReview(driverId, withContact(driverId, status));
+    }
+
     public VerificationStatusResponse reject(String driverId, CoRydUserDetails admin) {
         VerificationStatusResponse status = profileServiceClient.rejectVerification(driverId, reviewer(admin));
         return withReview(driverId, withContact(driverId, status));

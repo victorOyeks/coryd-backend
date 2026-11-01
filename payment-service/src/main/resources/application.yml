@@ -52,6 +52,11 @@ payment:
   account-deletion-allow-owing: ${ACCOUNT_DELETION_ALLOW_OWING:NEVER}
   settlement-sync:
     cron: ${PAYMENT_SETTLEMENT_SYNC_CRON:0 15 */6 * * *}
+  # The Ops Console's driver index (profile-service) gets each driver's takings when they change, and every driver
+  # again nightly. on-startup fills it on a fresh deploy.
+  earnings-sync:
+    cron: ${DRIVER_EARNINGS_SYNC_CRON:0 40 2 * * *}
+    on-startup: ${DRIVER_EARNINGS_SYNC_ON_STARTUP:true}
 
 paystack:
   secret-key: ${PAYSTACK_SECRET_KEY:sk_test_placeholder}

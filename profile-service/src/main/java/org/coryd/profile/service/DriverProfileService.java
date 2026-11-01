@@ -27,6 +27,7 @@ import java.util.Locale;
 public class DriverProfileService {
 
     private final DriverProfileRepository driverProfileRepository;
+    private final ReplacedFiles replacedFiles;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final IdentityServiceClient identityServiceClient;
     private final EmergencyContactService emergencyContactService;
@@ -94,6 +95,7 @@ public class DriverProfileService {
                 profile.setGovernmentIdSubmittedAt(Instant.now());
                 profile.setGovernmentIdResubmitted(before == VerificationStatus.REJECTED);
             }
+            replacedFiles.replaced(profile.getGovernmentIdPublicId(), profile.getGovernmentIdUrl(), request.governmentIdPublicId());
             profile.setGovernmentIdUrl(request.governmentIdUrl());
             profile.setGovernmentIdPublicId(request.governmentIdPublicId());
             profile.setGovernmentIdStatus(VerificationStatus.IN_REVIEW);

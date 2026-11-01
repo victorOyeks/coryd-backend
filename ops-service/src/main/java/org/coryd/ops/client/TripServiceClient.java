@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /** Trip data lives in trip-service, served to this service alone under /internal/ops/trips. */
 @Component

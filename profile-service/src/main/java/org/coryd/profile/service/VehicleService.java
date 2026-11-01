@@ -20,6 +20,7 @@ import java.util.List;
 public class VehicleService {
 
     private final VehicleRepository vehicleRepository;
+    private final ReplacedFiles replacedFiles;
 
     @Transactional
     public Vehicle register(String driverId, String callerId, VehicleRegistrationRequest request) {
@@ -64,6 +65,8 @@ public class VehicleService {
         vehicle.setColor(request.color());
         vehicle.setPlateNumber(request.plateNumber());
         vehicle.setSeatCapacity(request.seatCapacity());
+        replacedFiles.replaced(vehicle.getExteriorPhotoPublicId(), vehicle.getExteriorPhotoUrl(), request.exteriorPhotoPublicId());
+        replacedFiles.replaced(vehicle.getInteriorPhotoPublicId(), vehicle.getInteriorPhotoUrl(), request.interiorPhotoPublicId());
         vehicle.setExteriorPhotoUrl(request.exteriorPhotoUrl());
         vehicle.setExteriorPhotoPublicId(request.exteriorPhotoPublicId());
         vehicle.setInteriorPhotoUrl(request.interiorPhotoUrl());

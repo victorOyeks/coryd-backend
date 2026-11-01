@@ -102,7 +102,7 @@ import static org.mockito.Mockito.when;
         OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class, DemandService.class,
         DemandProperties.class, TimeChangeProperties.class, RouteTimeChangeService.class, SavingsProperties.class,
         SavedPlaceService.class, RecentDestinationService.class, NearbyDemandService.class, NearbyAlertService.class,
-        NearbyAlertProperties.class, RouteDepartureReminderJob.class, PilotMetricsService.class})
+        NearbyAlertProperties.class, RouteDepartureReminderJob.class, PilotMetricsService.class, OpsDriverStatsService.class, DriverStatsPublisher.class})
 class LeavingNowIntegrationTest {
 
     @Container
@@ -648,6 +648,49 @@ class LeavingNowIntegrationTest {
         assertThat(leavingNow.unmetAreas()).singleElement().satisfies(a -> {
             assertThat(a.destinationLabel()).isEqualTo("ajah");
             assertThat(a.riders()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void pilotMetricsWorkOutSearchesBookingsFillRepeatRidersAndTopRoutesInTheDatabase() {
+        demandService.recordSearch(RIDER, new SearchRequest(CHURCH[0], CHURCH[1], AJAH[0], AJAH[1], Instant.now(), "Church X", "Ajah"), 1);
+        demandService.recordSearch(RIDER, new SearchRequest(CHURCH[0], CHURCH[1], AJAH[0], AJAH[1], Instant.now(), " church x ", "AJAH"), 0);
+        demandService.recordSearch(RIDER_2, new SearchRequest(CHURCH[0], CHURCH[1], LEKKI[0], LEKKI[1], Instant.now(), "Church X", "Lekki"), 0);
+        RoutePost ran = routePostRepository.save(route(CHURCH, AJAH).build());
+        confirmed(ran, RIDER);
+        confirmed(ran, RIDER_3);
+        RoutePost moved = routePostRepository.findById(ran.getId()).orElseThrow();
+        moved.setDepartureTime(Instant.now().minus(2, ChronoUnit.DAYS));
+        moved.setStatus(RouteStatus.COMPLETED);
+        routePostRepository.save(moved);
+        jdbcTemplate.update("update trip.bookings set status = 'COMPLETED' where route_post_id = ?", ran.getId());
+        RoutePost lastWeek = routePostRepository.save(route(CHURCH, AJAH).departureTime(Instant.now().minus(10, ChronoUnit.DAYS))
+                .status(RouteStatus.COMPLETED).build());
+        jdbcTemplate.update("insert into trip.bookings (id, route_post_id, rider_id, seat_count, fare_total, status, hold_expires_at, "
+                + "pickup_code_attempts, departure_shift_minutes, created_at, updated_at) "
+                + "select 'b-last-1', ?, ?, 1, 1200, 'COMPLETED', created_at, 0, 0, created_at, created_at from trip.route_posts where id = ?",
+                lastWeek.getId(), RIDER, lastWeek.getId());
+        jdbcTemplate.update("insert into trip.bookings (id, route_post_id, rider_id, seat_count, fare_total, status, hold_expires_at, "
+                + "pickup_code_attempts, departure_shift_minutes, created_at, updated_at) "
+                + "select 'b-last-2', ?, ?, 1, 1200, 'COMPLETED', created_at, 0, 0, created_at, created_at from trip.route_posts where id = ?",
+                lastWeek.getId(), RIDER_2, lastWeek.getId());
+
+        var metrics = pilotMetricsService.metrics(7);
+
+        assertThat(metrics.totals().searches()).isEqualTo(3);
+        assertThat(metrics.totals().searchesWithResults()).isEqualTo(1);
+        assertThat(metrics.totals().ridersSearching()).isEqualTo(2);
+        assertThat(metrics.totals().ridersBooked()).as("rider-3 booked without searching").isEqualTo(1);
+        assertThat(metrics.totals().routesPosted()).isEqualTo(1);
+        assertThat(metrics.totals().seatsOffered()).isEqualTo(4);
+        assertThat(metrics.totals().seatsBooked()).isEqualTo(2);
+        assertThat(metrics.totals().fillRate()).isEqualTo(0.5);
+        assertThat(metrics.weekTwoRepeatRate()).as("rider-1 came back, rider-2 didn't").isEqualTo(0.5);
+        assertThat(metrics.topSearchedRoutes()).hasSize(2);
+        assertThat(metrics.topSearchedRoutes().get(0)).satisfies(r -> {
+            assertThat(r.searches()).as("the same place typed two ways").isEqualTo(2);
+            assertThat(r.riders()).isEqualTo(1);
+            assertThat(r.searchesWithNoResults()).isEqualTo(1);
         });
     }
 

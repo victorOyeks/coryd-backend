@@ -46,6 +46,16 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic driverStatsChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_STATS_CHANGED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic driverEarningsChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.DRIVER_EARNINGS_CHANGED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic seatReservedTopic() {
         return TopicBuilder.name(KafkaTopics.SEAT_RESERVED).partitions(3).replicas(1).build();
     }

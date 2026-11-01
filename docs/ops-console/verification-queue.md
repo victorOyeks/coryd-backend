@@ -52,6 +52,7 @@ A driver goes live once all four items are approved:
 | **Reset to Default** | `DELETE /drivers/{driverId}/verification/items/{item}/review` |
 | **Approve Driver** | `POST /drivers/{driverId}/verification/approve` |
 | **Reject** | `POST /drivers/{driverId}/verification/reject` |
+| **Save Changes** (used by the [Drivers Directory](drivers-directory.md)) | `POST /drivers/{driverId}/verification/save` |
 | Audit log | `GET /drivers/{driverId}/verification/history` |
 
 **Every action returns the whole review page**, so the screen refreshes from the response with no second call. The actions are mark, reset, approve and reject.
@@ -204,7 +205,8 @@ Send the same `search` as the list, so the badges match what's listed.
     ],
     "canApprove": false,
     "approveBlockedReason": "Flagged: Vehicle registration - reject, or reset the flag",
-    "canReject": true
+    "canReject": true,
+    "canSave": true
   }
 }
 ```
@@ -225,6 +227,7 @@ Send the same `search` as the list, so the badges match what's listed.
 - An item that's already **approved** or **rejected** (`status`) has no mark. Show its decided state instead.
 - **Approve Driver** is enabled when `review.canApprove`. When it's disabled, show `review.approveBlockedReason` near the button.
 - **Reject** is enabled when `review.canReject`.
+- `review.canSave` says whether **Save Changes** would change anything. It's used on the Drivers Directory's Documents list.
 - If `review` is missing, the marks couldn't be loaded. The rest of the page still works; offer a retry.
 
 ### Files (every document)
@@ -232,7 +235,9 @@ Each file comes as `{ url, downloadUrl, fileType }`:
 - **Preview:** `url`.
 - **PDF / image badge:** `fileType` is `PDF` or `IMAGE`.
 - **Download button:** `downloadUrl`.
-- `file` is `null` when there's no file. **Files are deleted once an item is approved**, so an approved document has no file to show.
+- `file` is `null` only when nothing was uploaded.
+- **Files are kept once approved**, so ops can always look at a driver's documents.
+- When the driver uploads a replacement, the old file is removed.
 
 ---
 
@@ -308,7 +313,10 @@ All four screens share:
 **Rules:**
 - **A flag needs a note.** It becomes the rejection reason the driver sees, so it's at most **255** characters.
 - A note on Verified is optional (up to 500 characters) and goes into the audit log.
-- Only an item that's **waiting for ops** can be marked: `status: IN_REVIEW`, or `awaitingProvider: true`.
+- These items can be marked:
+  - anything **waiting for ops**: `status: IN_REVIEW`, or `awaitingProvider: true`;
+  - a document that's already **approved** (or `EXPIRED`). Flagging one and pressing **Reject** or **Save Changes** takes the approval back; the driver must re-upload it.
+- A `REJECTED` item (waiting for the driver) and a `PENDING` one (never uploaded) can't be marked.
 - Marking again replaces the old mark.
 - If the driver re-uploads, the old mark stops counting and the item shows as Unreviewed.
 
@@ -358,6 +366,20 @@ No body. It needs **at least one flagged** document.
 The driver gets a push per document, re-uploads, and returns under **Resubmitted**. **Returns** the review page.
 
 **Error:** `400 Flag at least one document, with the reason, to reject`.
+
+### Save Changes: `POST /drivers/{driverId}/verification/save`
+This is the [Drivers Directory](drivers-directory.md)'s button. It applies the marks as they stand, with none of Approve's all-or-nothing rules. No body.
+
+| Mark | Becomes |
+|---|---|
+| Flagged | **Rejected**, with the note as the reason. An approved document loses its approval. |
+| Verified, on a document waiting for ops | **Approved** |
+| Verified, on a document already approved | Unchanged |
+| Unmarked | Unchanged |
+
+Every mark is cleared afterwards. **Returns** the review page.
+
+**Error:** `400 Nothing to save - verify or flag a document first`. `review.canSave` tells you in advance.
 
 ### Older: `POST /drivers/{driverId}/verification/decisions`
 The original all-in-one call still works, if you'd rather keep marks in the page:

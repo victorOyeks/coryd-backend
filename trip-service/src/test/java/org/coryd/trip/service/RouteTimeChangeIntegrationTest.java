@@ -71,7 +71,7 @@ import static org.mockito.Mockito.when;
         RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class,
         OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class, DemandService.class,
         org.coryd.trip.config.DemandProperties.class, TimeChangeProperties.class, RouteTimeChangeService.class,
-        RouteDepartureReminderJob.class, RouteExpiryJob.class, org.coryd.trip.config.SavingsProperties.class, NearbyDemandService.class})
+        RouteDepartureReminderJob.class, RouteExpiryJob.class, org.coryd.trip.config.SavingsProperties.class, NearbyDemandService.class, OpsDriverStatsService.class, DriverStatsPublisher.class})
 class RouteTimeChangeIntegrationTest {
 
     @Container

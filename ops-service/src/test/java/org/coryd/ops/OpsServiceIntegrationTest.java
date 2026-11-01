@@ -70,6 +70,7 @@ class OpsServiceIntegrationTest {
         registry.add("services.profile.url", () -> base + "/profile");
         registry.add("services.trip.url", () -> base + "/trip");
         registry.add("services.identity.url", () -> base + "/identity");
+        registry.add("services.payment.url", () -> base + "/payment");
     }
 
     @Autowired MockMvc mockMvc;
@@ -346,6 +347,27 @@ class OpsServiceIntegrationTest {
     }
 
     @Test
+    void saveChangesGoesOutSignedByTheAdminAndReturnsTheScreen() throws Exception {
+        replies.put("/profile/drivers/d-1/verification/save", new Reply(200, "{\"success\":true,\"data\":{\"overallStatus\":\"REJECTED\"}}"));
+        replies.put("/profile/drivers/d-1/verification/review", new Reply(200, REVIEW_JSON.replace("\"canReject\":true", "\"canReject\":true,\"canSave\":true")));
+
+        mockMvc.perform(post("/drivers/d-1/verification/save").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Changes saved"))
+                .andExpect(jsonPath("$.data.overallStatus").value("REJECTED"))
+                .andExpect(jsonPath("$.data.review.canSave").value(true));
+
+        Request sent = requests.stream().filter(r -> r.path().equals("/profile/drivers/d-1/verification/save")).findFirst().orElseThrow();
+        assertThat(objectMapper.readTree(sent.body()).get("reviewedBy").asText()).isEqualTo("Ada Ops");
+
+        replies.put("/profile/drivers/d-1/verification/save", new Reply(400,
+                "{\"success\":false,\"message\":\"Nothing to save - verify or flag a document first\"}"));
+        mockMvc.perform(post("/drivers/d-1/verification/save").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Nothing to save - verify or flag a document first"));
+    }
+
+    @Test
     void rejectAndProfileServicesRefusalsComeBackAsIs() throws Exception {
         replies.put("/profile/drivers/d-1/verification/reject", new Reply(400,
                 "{\"success\":false,\"message\":\"Flag at least one document, with the reason, to reject\"}"));
@@ -394,6 +416,119 @@ class OpsServiceIntegrationTest {
                 .andExpect(jsonPath("$.data[0].decidedBy").value("Ada Ops"));
         mockMvc.perform(get("/drivers/d-1/verification/history").header("Authorization", bearer(UserRole.DRIVER)))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- drivers directory ------------------------------------------------------------------------
+
+    private static final String INDEXED_EMEKA = "{\"driverId\":\"aaaa1111-1\",\"firstName\":\"Emeka\",\"lastName\":\"Okafor\","
+            + "\"phone\":\"08053636321\",\"joinedAt\":\"2026-01-12T09:00:00Z\",\"status\":\"VERIFIED\",\"verificationStatus\":\"APPROVED\","
+            + "\"vehicleMake\":\"Toyota\",\"vehicleModel\":\"Camry\",\"vehicleYear\":2019,\"vehicleColor\":\"Black\",\"plateNumber\":\"LND-441-AA\","
+            + "\"trips\":213,\"ratingAvg\":4.88,\"ratingCount\":40,\"reliabilityPercent\":91,\"reportsFiled\":0,"
+            + "\"earningsNet\":1847200.00,\"earningsGross\":1944421.05}";
+    private static final String INDEXED_KINGSLEY = "{\"driverId\":\"cccc3333-3\",\"firstName\":\"Kingsley\",\"lastName\":\"Nwosu\","
+            + "\"joinedAt\":\"2026-05-01T09:00:00Z\",\"status\":\"PENDING\",\"verificationStatus\":\"PENDING\"}";
+
+    @Test
+    void theDirectoryIsFilteredSortedAndPagedByProfileServiceAndShapedHere() throws Exception {
+        replies.put("/profile/internal/drivers/index", new Reply(200, "{\"data\":{\"content\":[" + INDEXED_KINGSLEY + "," + INDEXED_EMEKA
+                + "],\"page\":1,\"size\":2,\"totalElements\":6,\"totalPages\":3,\"last\":false}}"));
+
+        mockMvc.perform(get("/drivers?status=VERIFIED&search=oka&sort=EARNINGS&direction=DESC&page=1&size=2")
+                        .header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(6))
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.content[0].driver.name").value("Kingsley Nwosu"))
+                .andExpect(jsonPath("$.data.content[0].vehicle").doesNotExist())
+                .andExpect(jsonPath("$.data.content[0].earnings").doesNotExist())
+                .andExpect(jsonPath("$.data.content[1].driver.ref").value("D-AAAA11"))
+                .andExpect(jsonPath("$.data.content[1].driver.phone").value("08053636321"))
+                .andExpect(jsonPath("$.data.content[1].vehicle.plateNumber").value("LND-441-AA"))
+                .andExpect(jsonPath("$.data.content[1].trips").value(213))
+                .andExpect(jsonPath("$.data.content[1].rating").value(4.88))
+                .andExpect(jsonPath("$.data.content[1].earnings").value(1847200.00))
+                .andExpect(jsonPath("$.data.content[1].reliabilityPercent").value(91))
+                .andExpect(jsonPath("$.data.content[1].status").value("VERIFIED"))
+                .andExpect(jsonPath("$.data.content[1].verificationStatus").value("APPROVED"));
+
+        assertThat(paths).anyMatch(p -> p.startsWith("/profile/internal/drivers/index?") && p.contains("status=VERIFIED")
+                && p.contains("search=oka") && p.contains("sort=EARNINGS") && p.contains("direction=DESC") && p.contains("page=1") && p.contains("size=2"));
+    }
+
+    @Test
+    void pageSizeIsCappedAndBadFiltersAreRefusedBeforeReachingProfileService() throws Exception {
+        replies.put("/profile/internal/drivers/index", new Reply(200, "{\"data\":{\"content\":[],\"page\":0,\"size\":50,"
+                + "\"totalElements\":0,\"totalPages\":0,\"last\":true}}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/drivers?size=500").header("Authorization", token)).andExpect(status().isOk());
+        assertThat(paths).anyMatch(p -> p.startsWith("/profile/internal/drivers/index?") && p.contains("size=50"));
+        paths.clear();
+        mockMvc.perform(get("/drivers?status=GONE").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/drivers?sort=COLOUR").header("Authorization", token)).andExpect(status().isBadRequest());
+        assertThat(paths).isEmpty();
+    }
+
+    @Test
+    void tabCountsFollowTheSearch() throws Exception {
+        replies.put("/profile/internal/drivers/index/counts", new Reply(200,
+                "{\"data\":{\"all\":21,\"verified\":12,\"pending\":5,\"resubmitted\":2,\"suspended\":2}}"));
+
+        mockMvc.perform(get("/drivers/counts?search=okafor").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(jsonPath("$.data.all").value(21))
+                .andExpect(jsonPath("$.data.verified").value(12))
+                .andExpect(jsonPath("$.data.pending").value(5))
+                .andExpect(jsonPath("$.data.resubmitted").value(2))
+                .andExpect(jsonPath("$.data.suspended").value(2));
+        assertThat(paths).anyMatch(p -> p.startsWith("/profile/internal/drivers/index/counts?") && p.contains("search=okafor"));
+    }
+
+    @Test
+    void aDriversProfileHasTheirCarPerformanceAccountAndSuspension() throws Exception {
+        replies.put("/profile/internal/drivers/index/dddd4444-4", new Reply(200, "{\"data\":{\"driverId\":\"dddd4444-4\","
+                + "\"firstName\":\"Aisha\",\"lastName\":\"Lawal\",\"phone\":\"08055556666\",\"joinedAt\":\"2026-02-01T09:00:00Z\","
+                + "\"status\":\"SUSPENDED\",\"verificationStatus\":\"APPROVED\",\"suspendedAt\":\"2026-10-01T10:00:00Z\","
+                + "\"suspensionReason\":\"Threatened a rider\",\"vehicleMake\":\"Kia\",\"vehicleModel\":\"Rio\",\"vehicleYear\":2020,"
+                + "\"plateNumber\":\"EKY-9-ZZ\",\"trips\":321,\"ratingAvg\":4.9,\"ratingCount\":50,\"reliabilityPercent\":97,"
+                + "\"reportsFiled\":1,\"earningsNet\":190000.00,\"earningsGross\":200000.00}}"));
+
+        mockMvc.perform(get("/drivers/dddd4444-4").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.driver.ref").value("D-DDDD44"))
+                .andExpect(jsonPath("$.data.driver.phone").value("08055556666"))
+                .andExpect(jsonPath("$.data.status").value("SUSPENDED"))
+                .andExpect(jsonPath("$.data.verificationStatus").value("APPROVED"))
+                .andExpect(jsonPath("$.data.suspension.reason").value("Threatened a rider"))
+                .andExpect(jsonPath("$.data.vehicle.model").value("Rio"))
+                .andExpect(jsonPath("$.data.performance.totalTrips").value(321))
+                .andExpect(jsonPath("$.data.performance.rating").value(4.9))
+                .andExpect(jsonPath("$.data.performance.ratingCount").value(50))
+                .andExpect(jsonPath("$.data.performance.totalEarnings").value(190000.00))
+                .andExpect(jsonPath("$.data.performance.reliabilityPercent").value(97))
+                .andExpect(jsonPath("$.data.performance.reportsFiled").value(1))
+                .andExpect(jsonPath("$.data.account.ref").value("D-DDDD44"))
+                .andExpect(jsonPath("$.data.account.joinedAt").value("2026-02-01T09:00:00Z"));
+    }
+
+    @Test
+    void anUnknownDriverIsA404AndTheVerificationQueueStillAnswersAtItsOwnPath() throws Exception {
+        replies.put("/profile/internal/drivers/index/nobody", new Reply(404, "{\"success\":false,\"message\":\"Driver not found\"}"));
+        mockMvc.perform(get("/drivers/nobody").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Driver not found"));
+
+        replies.put("/profile/drivers/verification/queue/counts",
+                new Reply(200, "{\"data\":{\"all\":1,\"pending\":1,\"inReview\":0,\"resubmitted\":0}}"));
+        mockMvc.perform(get("/drivers/verification/queue/counts").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(jsonPath("$.data.pending").value(1));
+        mockMvc.perform(get("/drivers").header("Authorization", bearer(UserRole.RIDER))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void whenProfileServiceIsDownTheDirectorySaysSo() throws Exception {
+        replies.put("/profile/internal/drivers/index", new Reply(503, "{\"success\":false,\"message\":\"Unavailable\"}"));
+        mockMvc.perform(get("/drivers").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isServiceUnavailable());
     }
 
     // ---- trips ------------------------------------------------------------------------------------

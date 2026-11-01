@@ -54,7 +54,7 @@ public class VerificationReviewService {
     public VerificationReviewResponse mark(String driverId, ReviewableItem item, ReviewMarkRequest request, String fallbackReviewer, UserRole callerRole) {
         requireOps(callerRole);
         VerificationQueueItem.Entry current = entry(driverId, item);
-        if (!current.awaitingOps()) {
+        if (!reviewable(current)) {
             throw new BadRequestException("The " + item.label().toLowerCase(Locale.ROOT) + " isn't waiting for review - it's "
                     + current.status().name().toLowerCase(Locale.ROOT).replace('_', ' '));
         }
@@ -100,7 +100,7 @@ public class VerificationReviewService {
                 .filter(VerificationQueueItem.Entry::awaitingOps)
                 .map(e -> new ItemDecision(e.item(), VerificationStatus.APPROVED, null, firstNonNull(marks.get(e.item()).getNote(), note)))
                 .toList();
-        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole);
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole, marks.keySet());
     }
 
     /**
@@ -121,11 +121,41 @@ public class VerificationReviewService {
             if (mark == null) {
                 continue;
             }
-            decisions.add(mark.getMark() == ReviewMark.FLAGGED
-                    ? new ItemDecision(e.item(), VerificationStatus.REJECTED, mark.getNote(), null)
-                    : new ItemDecision(e.item(), VerificationStatus.APPROVED, null, mark.getNote()));
+            ItemDecision decision = toDecision(e, mark);
+            if (decision != null) {
+                decisions.add(decision);
+            }
         }
-        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole);
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole, marks.keySet());
+    }
+
+    /**
+     * Save Changes (the Drivers Directory's documents): applies whatever is marked, with no all-or-nothing rule.
+     * Flagged items are rejected - an approved one loses its approval and the driver must re-upload it; items waiting for
+     * ops that are marked Verified are approved. Unmarked items, and approved ones marked Verified, stay as they are.
+     */
+    @Transactional
+    public VerificationStatusResponse save(String driverId, ReviewDecisionRequest request, String fallbackReviewer, UserRole callerRole) {
+        requireOps(callerRole);
+        List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
+        Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
+        List<ItemDecision> decisions = items.stream()
+                .filter(e -> marks.containsKey(e.item()))
+                .map(e -> toDecision(e, marks.get(e.item())))
+                .filter(Objects::nonNull)
+                .toList();
+        if (decisions.isEmpty()) {
+            throw new BadRequestException("Nothing to save - verify or flag a document first");
+        }
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole, marks.keySet());
+    }
+
+    /** A flag rejects; Verified approves only what isn't approved already. */
+    private static ItemDecision toDecision(VerificationQueueItem.Entry e, VerificationReviewMark mark) {
+        if (mark.getMark() == ReviewMark.FLAGGED) {
+            return new ItemDecision(e.item(), VerificationStatus.REJECTED, mark.getNote(), null);
+        }
+        return e.status() == VerificationStatus.APPROVED ? null : new ItemDecision(e.item(), VerificationStatus.APPROVED, null, mark.getNote());
     }
 
     @Transactional(readOnly = true)
@@ -137,10 +167,16 @@ public class VerificationReviewService {
                 .toList();
     }
 
-    private VerificationStatusResponse decide(String driverId, List<ItemDecision> decisions, String reviewer, UserRole callerRole) {
-        VerificationStatusResponse status = verificationAggregationService.decide(driverId, callerRole,
-                new VerificationDecisionBatchRequest(decisions, reviewer));
-        markRepository.deleteByDriverIdAndItemIn(driverId, decisions.stream().map(ItemDecision::item).toList());
+    /** Every mark that was in play is cleared once the decision lands - including Verified on items left as they were. */
+    private VerificationStatusResponse decide(String driverId, List<ItemDecision> decisions, String reviewer, UserRole callerRole,
+                                              java.util.Collection<ReviewableItem> markedItems) {
+        VerificationStatusResponse status = decisions.isEmpty() ? verificationAggregationService.getStatus(driverId)
+                : verificationAggregationService.decide(driverId, callerRole, new VerificationDecisionBatchRequest(decisions, reviewer));
+        java.util.Set<ReviewableItem> clear = new java.util.HashSet<>(markedItems);
+        decisions.forEach(d -> clear.add(d.item()));
+        if (!clear.isEmpty()) {
+            markRepository.deleteByDriverIdAndItemIn(driverId, clear);
+        }
         return status;
     }
 
@@ -155,17 +191,26 @@ public class VerificationReviewService {
         }).toList();
         String blocked = approveBlockedReason(items, marks);
         boolean canReject = marks.values().stream().anyMatch(m -> m.getMark() == ReviewMark.FLAGGED);
-        return new VerificationReviewResponse(reviews, blocked == null, blocked, canReject);
+        boolean canSave = items.stream().anyMatch(e -> marks.containsKey(e.item()) && toDecision(e, marks.get(e.item())) != null);
+        return new VerificationReviewResponse(reviews, blocked == null, blocked, canReject, canSave);
     }
 
-    /** Marks still on the upload they were made on, for items still waiting - the rest no longer apply. */
+    /**
+     * What a reviewer can mark: anything waiting for ops, and a document already approved (or expired) - flagging one of
+     * those and saving takes the approval back. A rejected or never-uploaded item waits for the driver instead.
+     */
+    static boolean reviewable(VerificationQueueItem.Entry e) {
+        return e.awaitingOps() || e.status() == VerificationStatus.APPROVED || e.status() == VerificationStatus.EXPIRED;
+    }
+
+    /** Marks still on the upload they were made on, for items that can still be marked - the rest no longer apply. */
     private Map<ReviewableItem, VerificationReviewMark> currentMarks(String driverId, List<VerificationQueueItem.Entry> items) {
         Map<ReviewableItem, VerificationQueueItem.Entry> byItem = items.stream()
                 .collect(Collectors.toMap(VerificationQueueItem.Entry::item, e -> e));
         return markRepository.findByDriverId(driverId).stream()
                 .filter(m -> {
                     VerificationQueueItem.Entry e = byItem.get(m.getItem());
-                    return e != null && e.awaitingOps() && Objects.equals(e.submittedAt(), m.getItemSubmittedAt());
+                    return e != null && reviewable(e) && Objects.equals(e.submittedAt(), m.getItemSubmittedAt());
                 })
                 .collect(Collectors.toMap(VerificationReviewMark::getItem, m -> m));
     }

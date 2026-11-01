@@ -118,6 +118,7 @@ public class BookingService {
     private final CancellationPolicy cancellationPolicy;
     private final org.coryd.trip.config.TimeChangeProperties timeChangeProperties;
     private final org.coryd.trip.config.SavingsProperties savingsProperties;
+    private final DriverStatsPublisher driverStatsPublisher;
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
      * DriverSummary.verificationStatus, which is identity-only and would
@@ -1171,6 +1172,7 @@ public class BookingService {
             return false;
         }
         recordHistory(booking.getId(), BookingStatus.COMPLETED, "Trip completed");
+        driverStatsPublisher.changed(route.getDriverId());
 
         kafkaTemplate.send(KafkaTopics.TRIP_COMPLETED, TripCompletedEvent.builder()
                 .bookingId(booking.getId())
@@ -1214,7 +1216,9 @@ public class BookingService {
                 .stars(request.stars())
                 .comment(request.comment())
                 .build();
-        return ratingRepository.save(rating);
+        Rating saved = ratingRepository.save(rating);
+        driverStatsPublisher.changed(rateeId);
+        return saved;
     }
 
     private void verifyPickupCode(Booking booking, String pickupCode) {
@@ -1438,7 +1442,9 @@ public class BookingService {
     public IssueReport reportIssue(IssueReportRequest request, String callerId) {
         if (request.bookingId() != null) {
             Booking booking = getOrThrow(request.bookingId());
-            requireParticipant(booking, routeOf(booking), callerId);
+            RoutePost route = routeOf(booking);
+            requireParticipant(booking, route, callerId);
+            driverStatsPublisher.changed(route.getDriverId());
         }
         String referenceNumber = "ISS-" + String.format("%08d", RANDOM.nextInt(100_000_000));
         IssueReport issue = issueReportRepository.save(IssueReport.builder()

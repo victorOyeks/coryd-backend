@@ -134,6 +134,11 @@ trip:
   max-days-ahead: ${TRIP_MAX_DAYS_AHEAD:3}
   # A driver running late moves their trip instead of cancelling. Once riders have booked: later only, at most
   # max-minutes past what they booked and max-count times; a rider moved more than free-cancel-minutes cancels free.
+  # The Ops Console's driver index (profile-service) gets each driver's trips, rating, reliability and reports when they
+  # change, and every driver again nightly. sync-on-startup fills it on a fresh deploy.
+  driver-stats:
+    sync-cron: ${DRIVER_STATS_SYNC_CRON:0 30 2 * * *}
+    sync-on-startup: ${DRIVER_STATS_SYNC_ON_STARTUP:true}
   # "You saved about N compared with a solo cab" on a rider's booking: base + per road km, roughly a solo ride-hailing fare.
   savings:
     enabled: ${SAVINGS_ENABLED:true}

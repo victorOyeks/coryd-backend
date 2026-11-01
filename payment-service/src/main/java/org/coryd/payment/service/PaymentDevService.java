@@ -36,6 +36,7 @@ public class PaymentDevService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final EarningsTransactionRepository earningsTransactionRepository;
     private final DriverEarningsAccountRepository driverEarningsAccountRepository;
+    private final EarningsPublisher earningsPublisher;
 
     @Transactional
     public PurgeBookingsResult purge(List<String> bookingIds) {
@@ -70,6 +71,7 @@ public class PaymentDevService {
             account.setLifetimeGross(floorAtZero(account.getLifetimeGross().subtract(transaction.getGrossFare())));
             account.setLifetimeCommission(floorAtZero(account.getLifetimeCommission().subtract(transaction.getCommissionAmount())));
             driverEarningsAccountRepository.save(account);
+            earningsPublisher.changed(transaction.getDriverId());
             adjusted.add(transaction.getDriverId());
         }
         return adjusted.size();

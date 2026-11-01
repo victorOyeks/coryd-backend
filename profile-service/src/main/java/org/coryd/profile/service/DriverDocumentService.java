@@ -16,6 +16,7 @@ import java.util.List;
 public class DriverDocumentService {
 
     private final DriverDocumentRepository driverDocumentRepository;
+    private final ReplacedFiles replacedFiles;
 
     /** Upsert: one row per driver+documentType - resubmitting after a rejection updates the existing row and resets it to PENDING rather than growing a history. */
     @Transactional
@@ -24,6 +25,7 @@ public class DriverDocumentService {
                 .orElseGet(() -> DriverDocument.builder().driverId(driverId).documentType(request.documentType()).build());
 
         document.setVehicleId(request.vehicleId());
+        replacedFiles.replaced(document.getDocumentPublicId(), document.getDocumentUrl(), request.publicId());
         document.setDocumentUrl(request.url());
         document.setDocumentPublicId(request.publicId());
         document.setExpiresOn(request.expiresOn());

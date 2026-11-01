@@ -16,6 +16,10 @@ import java.util.List;
 
 public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
+    /** Every driver who has posted a trip - for the nightly driver stats pass. */
+    @Query("select distinct r.driverId from RoutePost r order by r.driverId")
+    org.springframework.data.domain.Slice<String> findDistinctDriverIds(org.springframework.data.domain.Pageable pageable);
+
     List<RoutePost> findTop50ByDriverIdAndStatusNotOrderByCreatedAtDesc(String driverId, RouteStatus status);
 
     Page<RoutePost> findByDriverIdOrderByCreatedAtDesc(String driverId, Pageable pageable);

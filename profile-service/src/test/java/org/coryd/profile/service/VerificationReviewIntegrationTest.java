@@ -68,7 +68,8 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @Import({VerificationAggregationService.class, VerificationReviewService.class, DriverProfileService.class, VehicleService.class,
-        DriverDocumentService.class, EmergencyContactService.class, RiderProfileService.class})
+        DriverDocumentService.class, EmergencyContactService.class, RiderProfileService.class, ReplacedFiles.class,
+        DriverIndexService.class, DriverIndexer.class})
 class VerificationReviewIntegrationTest {
 
     @Container
@@ -83,6 +84,8 @@ class VerificationReviewIntegrationTest {
     @Autowired VehicleService vehicleService;
     @Autowired DriverDocumentService driverDocumentService;
     @Autowired DriverProfileRepository driverProfileRepository;
+    @Autowired DriverIndexService driverIndexService;
+    @Autowired org.coryd.profile.repository.DriverIndexRepository driverIndexRepository;
     @Autowired VehicleRepository vehicleRepository;
     @Autowired DriverDocumentRepository driverDocumentRepository;
     @Autowired EmergencyContactRepository emergencyContactRepository;
@@ -114,6 +117,7 @@ class VerificationReviewIntegrationTest {
         vehicleRepository.deleteAll();
         emergencyContactRepository.deleteAll();
         driverProfileRepository.deleteAll();
+        driverIndexRepository.deleteAll();
         when(kafkaTemplate.send(anyString(), any())).thenReturn(new CompletableFuture<>());
     }
 
@@ -169,14 +173,18 @@ class VerificationReviewIntegrationTest {
     }
 
     @Test
-    void onlyAnItemWaitingForReviewCanBeMarked() {
+    void anItemWaitingOrApprovedCanBeMarkedButNotOneRejectedOrNeverUploaded() {
         submitAll("d-1", "Emeka", "Okafor");
-        decide("d-1", new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null));
+        decide("d-1", new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null),
+                new ItemDecision(ReviewableItem.INSURANCE, VerificationStatus.REJECTED, "Expired"));
         driverProfileService.updateMine("d-2", new UpdateDriverProfileRequest("Fatima", "Bello", null, null, LocalDate.of(1990, 1, 1),
                 "https://img/licence-d-2.jpg", "licence-d-2", "LAG12345678", null, null));
 
-        assertThatThrownBy(() -> review.mark("d-1", ReviewableItem.GOVERNMENT_ID, new ReviewMarkRequest(ReviewMark.VERIFIED, null, OPS), null, UserRole.OPS_ADMIN))
-                .isInstanceOf(BadRequestException.class).hasMessageContaining("approved");
+        VerificationReviewResponse approved = review.mark("d-1", ReviewableItem.GOVERNMENT_ID,
+                new ReviewMarkRequest(ReviewMark.FLAGGED, "Not the driver in the photo", OPS), null, UserRole.OPS_ADMIN);
+        assertThat(item(approved, ReviewableItem.GOVERNMENT_ID).mark()).as("an approval can be taken back").isEqualTo(ReviewMark.FLAGGED);
+        assertThatThrownBy(() -> review.mark("d-1", ReviewableItem.INSURANCE, new ReviewMarkRequest(ReviewMark.VERIFIED, null, OPS), null, UserRole.OPS_ADMIN))
+                .as("waiting for the driver to re-upload").isInstanceOf(BadRequestException.class).hasMessageContaining("rejected");
         assertThatThrownBy(() -> review.mark("d-2", ReviewableItem.VEHICLE, new ReviewMarkRequest(ReviewMark.VERIFIED, null, OPS), null, UserRole.OPS_ADMIN))
                 .as("never uploaded").isInstanceOf(BadRequestException.class).hasMessageContaining("pending");
     }
@@ -324,6 +332,7 @@ class VerificationReviewIntegrationTest {
         jdbcTemplate.update("update profile.vehicles set submitted_at = submitted_at - interval '3 hours' where driver_id = 'cccc-1'");
         jdbcTemplate.update("update profile.vehicles set submitted_at = submitted_at - interval '2 hours' where driver_id = 'aaaa-1'");
         jdbcTemplate.update("update profile.vehicles set submitted_at = submitted_at - interval '1 hours' where driver_id = 'bbbb-1'");
+        driverIndexService.refreshAll(List.of("aaaa-1", "bbbb-1", "cccc-1")); // raw SQL skips the save hooks
 
         assertThat(order(null, null)).as("longest waiting first, as before").containsExactly("cccc-1", "aaaa-1", "bbbb-1");
         assertThat(order(VerificationQueueSort.WAITING_SINCE, Sort.Direction.DESC)).containsExactly("bbbb-1", "aaaa-1", "cccc-1");
@@ -454,6 +463,92 @@ class VerificationReviewIntegrationTest {
         smileIdCheckRepository.save(org.coryd.profile.entity.SmileIdCheck.builder().userId(driverId)
                 .checkType(org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE).checkId("coryd-dl-" + driverId).startedAt(java.time.Instant.now()).build());
         jdbcTemplate.update("update profile.smile_id_checks set started_at = started_at - make_interval(mins => ?) where user_id = ?", startedMinutesAgo, driverId);
+        driverIndexService.refresh(driverId); // raw SQL skips the save hooks
+    }
+
+    // ---- Save Changes, and files kept once approved -------------------------------------------------
+
+    @Test
+    void saveChangesTakesBackAnApprovalTheDriverMustReuploadAndLeavesTheRestAlone() {
+        submitAll("d-1", "Emeka", "Okafor");
+        approveAll("d-1");
+        review.mark("d-1", ReviewableItem.INSURANCE, new ReviewMarkRequest(ReviewMark.FLAGGED, "Certificate isn't genuine", OPS), null, UserRole.OPS_ADMIN);
+        review.mark("d-1", ReviewableItem.VEHICLE, new ReviewMarkRequest(ReviewMark.VERIFIED, null, OPS), null, UserRole.OPS_ADMIN);
+        assertThat(review.review("d-1", UserRole.OPS_ADMIN).canSave()).isTrue();
+
+        var status = review.save("d-1", null, OPS, UserRole.OPS_ADMIN);
+
+        assertThat(status.documents()).filteredOn(d -> d.type() == DocumentType.INSURANCE).singleElement().satisfies(d -> {
+            assertThat(d.status()).isEqualTo(VerificationStatus.REJECTED);
+            assertThat(d.rejectionReason()).isEqualTo("Certificate isn't genuine");
+        });
+        assertThat(status.vehicleRegistration().status()).as("verified again changes nothing").isEqualTo(VerificationStatus.APPROVED);
+        assertThat(status.overallStatus()).isEqualTo(VerificationStatus.REJECTED);
+        assertThat(markRepository.findByDriverId("d-1")).as("every mark cleared").isEmpty();
+        assertThat(review.history("d-1", UserRole.OPS_ADMIN)).filteredOn(h -> h.status() == VerificationStatus.REJECTED)
+                .singleElement().satisfies(h -> assertThat(h.item()).isEqualTo(ReviewableItem.INSURANCE));
+        org.mockito.Mockito.verify(kafkaTemplate).send(org.mockito.ArgumentMatchers.eq(org.coryd.common.kafka.KafkaTopics.DRIVER_REJECTED), any());
+    }
+
+    @Test
+    void saveChangesApprovesWhatsMarkedVerifiedWithoutNeedingEveryDocument() {
+        submitAll("d-1", "Emeka", "Okafor");
+        review.mark("d-1", ReviewableItem.VEHICLE, new ReviewMarkRequest(ReviewMark.VERIFIED, null, OPS), null, UserRole.OPS_ADMIN);
+
+        var status = review.save("d-1", null, OPS, UserRole.OPS_ADMIN);
+
+        assertThat(status.vehicleRegistration().status()).isEqualTo(VerificationStatus.APPROVED);
+        assertThat(status.governmentId().status()).isEqualTo(VerificationStatus.IN_REVIEW);
+    }
+
+    @Test
+    void saveChangesWithNothingToChangeIsRefused() {
+        submitAll("d-1", "Emeka", "Okafor");
+        approveAll("d-1");
+        assertThatThrownBy(() -> review.save("d-1", null, OPS, UserRole.OPS_ADMIN)).isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Nothing to save");
+        review.mark("d-1", ReviewableItem.VEHICLE, new ReviewMarkRequest(ReviewMark.VERIFIED, null, OPS), null, UserRole.OPS_ADMIN);
+        assertThat(review.review("d-1", UserRole.OPS_ADMIN).canSave()).as("verifying an approved document changes nothing").isFalse();
+        assertThatThrownBy(() -> review.save("d-1", null, OPS, UserRole.OPS_ADMIN)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> review.save("d-1", null, OPS, UserRole.DRIVER)).isInstanceOf(UnauthorizedException.class);
+    }
+
+    @Test
+    void approvedDocumentsKeepTheirFilesSoOpsCanStillViewThem() {
+        submitAll("d-1", "Emeka", "Okafor");
+        approveAll("d-1");
+
+        var status = verification.getStatus("d-1");
+
+        assertThat(status.governmentId().url()).isEqualTo("https://img/licence-d-1.jpg");
+        assertThat(status.vehicleRegistration().vehicle().exteriorPhotoUrl()).isEqualTo("https://img/ext.jpg");
+        assertThat(status.vehicleRegistration().vehicle().interiorPhotoUrl()).isEqualTo("https://img/int.jpg");
+        assertThat(status.documents()).allSatisfy(d -> assertThat(d.documentUrl()).isNotNull());
+        org.mockito.Mockito.verify(cloudinaryService, org.mockito.Mockito.never()).delete(anyString(), any());
+    }
+
+    @Test
+    void aReplacedFileIsRemovedButTheSameFileSentAgainIsNot() {
+        submitAll("d-1", "Emeka", "Okafor");
+        driverDocumentService.create("d-1", new CreateDriverDocumentRequest(DocumentType.INSURANCE, "https://img/new.pdf", "doc-new",
+                LocalDate.now().plusYears(1), null));
+        vehicleService.update(vehicleRepository.findByDriverId("d-1").get(0).getId(), "d-1",
+                new VehicleRegistrationRequest("Toyota", "Corolla", 2019, "Black", "P-d-1", 4,
+                        "https://img/ext2.jpg", "ext-2", "https://img/int.jpg", "int-1", true, true));
+        driverProfileService.updateMine("d-1", new UpdateDriverProfileRequest("Emeka", "Okafor", null, null, LocalDate.of(1990, 1, 1),
+                "https://img/licence-2.jpg", "licence-2", "LAG12345678", null, null));
+
+        org.mockito.Mockito.verify(cloudinaryService).delete(org.mockito.ArgumentMatchers.eq("doc-INSURANCE"), any());
+        org.mockito.Mockito.verify(cloudinaryService).delete(org.mockito.ArgumentMatchers.eq("ext-1"), any());
+        org.mockito.Mockito.verify(cloudinaryService).delete(org.mockito.ArgumentMatchers.eq("licence-d-1"), any());
+        org.mockito.Mockito.verify(cloudinaryService, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.eq("int-1"), any());
+    }
+
+    private void approveAll(String driverId) {
+        decide(driverId, new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null),
+                new ItemDecision(ReviewableItem.VEHICLE, VerificationStatus.APPROVED, null),
+                new ItemDecision(ReviewableItem.INSURANCE, VerificationStatus.APPROVED, null),
+                new ItemDecision(ReviewableItem.ROADWORTHINESS_CERT, VerificationStatus.APPROVED, null));
     }
 
     // ---- only ops ----------------------------------------------------------------------------------

@@ -102,6 +102,40 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
             """, nativeQuery = true)
     DriverTripCounts countLifetimeTripsForDriver(@Param("driverId") String driverId);
 
+    /** countLifetimeTripsForDriver for many drivers at once - drivers with no bookings are left out. */
+    @Query(value = """
+            select r.driver_id as driverId,
+                count(*) filter (where b.status = 'COMPLETED') as completed,
+                count(*) filter (where b.status = 'CANCELLED_DRIVER' and b.confirmed_at is not null) as cancelledDriver
+            from trip.bookings b
+            join trip.route_posts r on b.route_post_id = r.id
+            where r.driver_id in (:driverIds)
+            group by r.driver_id
+            """, nativeQuery = true)
+    List<DriverTripCountsById> countLifetimeTripsForDrivers(@Param("driverIds") Collection<String> driverIds);
+
+    interface DriverTripCountsById {
+        String getDriverId();
+        Long getCompleted();
+        Long getCancelledDriver();
+    }
+
+    /** Problems riders reported on trips these drivers drove - not the drivers' own reports. */
+    @Query(value = """
+            select r.driver_id as driverId, count(*) as reports
+            from trip.issue_reports i
+            join trip.bookings b on b.id = i.booking_id
+            join trip.route_posts r on r.id = b.route_post_id
+            where r.driver_id in (:driverIds) and i.reported_by <> r.driver_id
+            group by r.driver_id
+            """, nativeQuery = true)
+    List<DriverReportCount> countReportsAgainstDrivers(@Param("driverIds") Collection<String> driverIds);
+
+    interface DriverReportCount {
+        String getDriverId();
+        Long getReports();
+    }
+
     interface DriverTripCounts {
         Long getCompleted();
         Long getCancelledDriver();

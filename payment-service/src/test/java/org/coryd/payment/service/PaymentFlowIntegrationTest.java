@@ -77,6 +77,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.when;
 
 /**
@@ -90,7 +92,7 @@ import static org.mockito.Mockito.when;
 @Testcontainers
 @Import({PaymentService.class, EarningsService.class, SavedCardService.class, SettlementSyncService.class,
         CommissionProperties.class, org.coryd.payment.gateway.PaystackProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class,
-        PaymentHistoryService.class, org.coryd.payment.repository.PaymentHistoryRepository.class})
+        PaymentHistoryService.class, org.coryd.payment.repository.PaymentHistoryRepository.class, EarningsPublisher.class})
 class PaymentFlowIntegrationTest {
 
     @Container
@@ -105,6 +107,7 @@ class PaymentFlowIntegrationTest {
 
     @Autowired PaymentService paymentService;
     @Autowired EarningsService earningsService;
+    @Autowired EarningsPublisher earningsPublisher;
     @Autowired SavedCardService savedCardService;
     @Autowired SettlementSyncService settlementSyncService;
     @Autowired SubaccountBackfill subaccountBackfill;
@@ -401,6 +404,24 @@ class PaymentFlowIntegrationTest {
                 .isEqualByComparingTo("0.00");
         verify(gatewayClient, times(3)).refund(eq(reference), eq(FARE), anyString());
         verify(kafkaTemplate, times(1)).send(eq(KafkaTopics.REFUND_ISSUED), any());
+    }
+
+    @Test
+    void aCreditedFareSendsTheDriversNewTotalsAndTheNightlyPassSendsEveryDriver() {
+        String booking = heldBooking();
+        paidBooking(booking);
+        clearInvocations(kafkaTemplate);
+
+        earningsService.onTripCompleted(tripCompleted(booking));
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_EARNINGS_CHANGED), eq(DRIVER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.DriverEarningsChangedEvent d
+                        && d.getLifetimeGross().compareTo(FARE) == 0
+                        && d.getLifetimeNet().compareTo(new BigDecimal("1140.00")) == 0));
+
+        clearInvocations(kafkaTemplate);
+        assertThat(earningsPublisher.syncAll()).isEqualTo((int) earningsAccountRepository.count());
+        verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaTopics.DRIVER_EARNINGS_CHANGED), eq(DRIVER), any());
     }
 
     @Test

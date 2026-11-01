@@ -108,6 +108,7 @@ public class RouteService {
     private final FareReportRepository fareReportRepository;
     private final SuggestedFareRangeRepository suggestedFareRangeRepository;
     private final NotifyMeService notifyMeService;
+    private final DriverStatsPublisher driverStatsPublisher;
     private final DemandService demandService;
     private final BookingRepository bookingRepository;
     private final DriverVerificationCacheRepository driverVerificationCacheRepository;
@@ -968,6 +969,7 @@ public class RouteService {
 
         route.setStatus(RouteStatus.CANCELLED);
         routePostRepository.save(route);
+        driverStatsPublisher.changed(route.getDriverId());
 
         List<String> refundedIds = new ArrayList<>();
         for (Booking booking : bookingRepository.findByRoutePostId(routePostId)) {

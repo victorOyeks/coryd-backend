@@ -66,6 +66,31 @@ public class IdentityServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    /** Phone, suspension and sign-up date for many users at once - empty if identity-service can't be reached. */
+    public java.util.List<Contact> contacts(java.util.Collection<String> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return java.util.List.of();
+        }
+        try {
+            ContactsView view = restClient.get()
+                    .uri(b -> b.path("/internal/users/contacts").queryParam("userIds", userIds).build())
+                    .retrieve()
+                    .body(ContactsView.class);
+            return view == null || view.data() == null ? java.util.List.of() : view.data();
+        } catch (Exception e) {
+            log.warn("Could not fetch contacts for {} user(s): {}", userIds.size(), e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Contact(String userId, String phone, java.time.Instant suspendedAt, String suspensionReason, java.time.Instant joinedAt) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record ContactsView(java.util.List<Contact> data) {
+    }
+
     private record UserContactView(Data data) {
         @JsonIgnoreProperties(ignoreUnknown = true)
         private record Data(String phone) {

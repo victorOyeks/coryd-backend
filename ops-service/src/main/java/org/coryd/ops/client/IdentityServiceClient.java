@@ -102,6 +102,12 @@ public class IdentityServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Contact(String userId, String fullName, String phone) {
+    /** suspendedAt / suspensionReason are set while the account is suspended; joinedAt is when they signed up. */
+    public record Contact(String userId, String fullName, String phone, Instant suspendedAt, String suspensionReason,
+                          Instant joinedAt) {
+
+        public Contact(String userId, String fullName, String phone) {
+            this(userId, fullName, phone, null, null, null);
+        }
     }
 }

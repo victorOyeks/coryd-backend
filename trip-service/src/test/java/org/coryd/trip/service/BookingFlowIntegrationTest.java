@@ -51,6 +51,7 @@ import java.util.concurrent.Future;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
@@ -70,7 +71,7 @@ import static org.mockito.Mockito.verify;
 // The identity (NIN) gate is on by default; these tests cover everything else, and the gate's own tests switch it on.
 @org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
 @Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
-        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class})
+        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class, OpsDriverStatsService.class, DriverStatsPublisher.class})
 class BookingFlowIntegrationTest {
 
     @Container
@@ -93,6 +94,8 @@ class BookingFlowIntegrationTest {
     @Autowired org.coryd.trip.repository.DriverVerificationCacheRepository driverVerificationCacheRepository;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired OpsTripQueryService opsTripQueryService;
+    @Autowired OpsDriverStatsService opsDriverStatsService;
+    @Autowired DriverStatsPublisher driverStatsPublisher;
     @Autowired org.coryd.trip.repository.SuspendedUserRepository suspendedUserRepository;
     @Autowired org.coryd.trip.repository.UserBlockRepository userBlockRepository;
     @Autowired UserBlockService userBlockService;
@@ -587,6 +590,79 @@ class BookingFlowIntegrationTest {
         assertThatThrownBy(() -> bookingService.getHistory(RIDER, OTHER_RIDER, null, null,
                 org.springframework.data.domain.PageRequest.of(0, 20))).isInstanceOf(UnauthorizedException.class);
         assertThatThrownBy(() -> bookingService.markPickedUp(booking.getId(), OTHER_RIDER, "0000")).isInstanceOf(UnauthorizedException.class);
+    }
+
+    @Test
+    void theDriversDirectoryGetsEachDriversTripsRatingReliabilityAndReportsAgainstThem() {
+        RoutePost done = route(4);
+        Booking ridden = book(done, RIDER, 1);
+        confirm(ridden);
+        start(done);
+        pickUp(ridden);
+        bookingService.completeTrip(ridden.getId(), DRIVER);
+        bookingService.completeRoute(done.getId(), DRIVER);
+        bookingService.rate(ridden.getId(), RIDER, new RateRequest(null, null, null, 4, null));
+        bookingService.reportIssue(new org.coryd.trip.dto.IssueReportRequest(ridden.getId(), null,
+                org.coryd.common.enums.IssueCategory.DRIVER_CONDUCT, "Rude"), RIDER);
+        bookingService.reportIssue(new org.coryd.trip.dto.IssueReportRequest(ridden.getId(), null,
+                org.coryd.common.enums.IssueCategory.RIDER_CONDUCT, "Late"), DRIVER);
+
+        RoutePost dropped = route(4);
+        confirm(book(dropped, OTHER_RIDER, 1));
+        routeService.cancel(dropped.getId(), DRIVER);
+        book(route(4), "rider-3", 1);
+
+        var stats = opsDriverStatsService.stats(List.of(DRIVER, "driver-nobody", DRIVER));
+
+        assertThat(stats).hasSize(2);
+        assertThat(stats.get(0)).satisfies(s -> {
+            assertThat(s.driverId()).isEqualTo(DRIVER);
+            assertThat(s.trips()).isEqualTo(1);
+            assertThat(s.ratingAvg()).isEqualTo(4.0);
+            assertThat(s.ratingCount()).isEqualTo(1);
+            assertThat(s.reliabilityPercent()).as("1 completed, 1 paid seat the driver cancelled; the unpaid hold doesn't count").isEqualTo(50);
+            assertThat(s.reportsFiled()).as("the rider's report, not the driver's own").isEqualTo(1);
+        });
+        assertThat(stats.get(1)).isEqualTo(new org.coryd.trip.dto.OpsDriverStats("driver-nobody", 0, null, 0, null, 0));
+        assertThat(opsDriverStatsService.stats(List.of())).isEmpty();
+    }
+
+    @Test
+    void aDriversNumbersAreSentOnceTheirTripsRatingsOrReportsChangeAndForEveryDriverNightly() {
+        RoutePost done = route(4);
+        Booking ridden = book(done, RIDER, 1);
+        confirm(ridden);
+        start(done);
+        pickUp(ridden);
+        clearInvocations(kafkaTemplate);
+
+        bookingService.completeTrip(ridden.getId(), DRIVER);
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_STATS_CHANGED), eq(DRIVER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.DriverStatsChangedEvent s && s.getTrips() == 1 && s.getComputedAt() != null));
+
+        clearInvocations(kafkaTemplate);
+        bookingService.completeRoute(done.getId(), DRIVER);
+        bookingService.rate(ridden.getId(), RIDER, new RateRequest(null, null, null, 5, null));
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_STATS_CHANGED), eq(DRIVER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.DriverStatsChangedEvent s && s.getRatingCount() == 1));
+
+        clearInvocations(kafkaTemplate);
+        RoutePost other = routePostRepository.save(routeBuilder(4).driverId("driver-2").build());
+        assertThat(other.getId()).isNotNull();
+        assertThat(driverStatsPublisher.syncAll()).isEqualTo(2);
+        verify(kafkaTemplate, times(2)).send(eq(KafkaTopics.DRIVER_STATS_CHANGED), anyString(), any());
+    }
+
+    @Test
+    void aDriverCancellingTheirTripSendsTheirNewReliability() {
+        RoutePost route = route(4);
+        confirm(book(route, RIDER, 1));
+        clearInvocations(kafkaTemplate);
+
+        routeService.cancel(route.getId(), DRIVER);
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_STATS_CHANGED), eq(DRIVER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.DriverStatsChangedEvent s && Integer.valueOf(0).equals(s.getReliabilityPercent())));
     }
 
     @Test

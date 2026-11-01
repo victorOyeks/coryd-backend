@@ -4,29 +4,22 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.trip.dto.PilotMetricsResponse;
-import org.coryd.trip.entity.Booking;
-import org.coryd.trip.entity.RoutePost;
-import org.coryd.trip.entity.RouteSearch;
-import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.NotifyMeRequestRepository;
-import org.coryd.trip.repository.RoutePostRepository;
-import org.coryd.trip.repository.RouteSearchRepository;
+import org.coryd.trip.repository.PilotMetricsRepository;
+import org.coryd.trip.repository.RouteTimeChangeRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Pilot health for the Ops Console: do searches find rides, do riders who search go on to book, do
- * seats fill, do riders come back, does notify-me turn into bookings.
- * Worked out in memory from the window's rows, which is fine at pilot volume.
+ * seats fill, do riders come back, does notify-me turn into bookings, and how leaving now is doing.
+ * Every number is an aggregate query - the window's rows never leave the database.
  */
 @Service
 @RequiredArgsConstructor
@@ -38,99 +31,41 @@ public class PilotMetricsService {
     private static final Set<BookingStatus> TOOK_A_SEAT = EnumSet.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP,
             BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS, BookingStatus.COMPLETED, BookingStatus.NO_SHOW);
 
-    private final RouteSearchRepository routeSearchRepository;
-    private final RoutePostRepository routePostRepository;
-    private final BookingRepository bookingRepository;
+    private final PilotMetricsRepository pilotMetricsRepository;
     private final NotifyMeRequestRepository notifyMeRequestRepository;
-    private final org.coryd.trip.repository.RouteTimeChangeRepository routeTimeChangeRepository;
+    private final RouteTimeChangeRepository routeTimeChangeRepository;
 
     public PilotMetricsResponse metrics(int days) {
         Instant to = Instant.now();
         Instant from = to.minus(Duration.ofDays(days));
+        List<String> routeStatuses = OFFERED.stream().map(Enum::name).toList();
+        List<String> seatStatuses = TOOK_A_SEAT.stream().map(Enum::name).toList();
 
-        List<RouteSearch> searches = routeSearchRepository.findByCreatedAtAfter(from);
-        List<RoutePost> routes = routePostRepository.findByStatusInAndDepartureTimeBetween(OFFERED, from, to);
-        List<Booking> seats = routes.isEmpty() ? List.of() : bookingRepository.findByRoutePostIdIn(routes.stream().map(RoutePost::getId).toList())
-                .stream().filter(b -> TOOK_A_SEAT.contains(b.getStatus())).toList();
+        PilotMetricsRepository.SearchTotals searches = pilotMetricsRepository.searchTotals(from);
+        PilotMetricsRepository.OfferedTotals offered = pilotMetricsRepository.offeredTotals(from, to, routeStatuses, seatStatuses);
+        long booked = pilotMetricsRepository.ridersWhoSearchedAndBooked(from, to, routeStatuses, seatStatuses);
+        PilotMetricsResponse.Totals totals = new PilotMetricsResponse.Totals(searches.getSearches(), searches.getWithResults(),
+                rate(searches.getWithResults(), searches.getSearches()), searches.getRiders(), booked, rate(booked, searches.getRiders()),
+                offered.getRoutes(), offered.getSeatsOffered(), offered.getSeatsBooked(), rate(offered.getSeatsBooked(), offered.getSeatsOffered()));
 
-        return new PilotMetricsResponse(from, to, totals(searches, routes, seats),
-                weekTwoRepeatRate(from, to), notifyMeRequestRepository.countByCreatedAtAfter(from),
-                notifyMeRequestRepository.countBookedSince(from), topSearchedRoutes(searches),
-                leavingNow(from, to, routes, seats));
-    }
-
-    private PilotMetricsResponse.LeavingNow leavingNow(Instant from, Instant to, List<RoutePost> routes, List<Booking> seats) {
-        Set<String> leavingNowIds = routes.stream()
-                .filter(r -> r.getCreatedAt() != null
-                        && r.getCreatedAt().isAfter(r.getDepartureTime().minus(TripScheduleService.ACTIVE_WINDOW)))
-                .map(RoutePost::getId).collect(Collectors.toSet());
-        long seatsOnThem = seats.stream().filter(b -> leavingNowIds.contains(b.getRoutePostId()))
-                .mapToLong(b -> b.getSeatCount() == null ? 0 : b.getSeatCount()).sum();
-
-        // Waiting for about the moment the request was made - not planning a trip for later.
-        List<org.coryd.trip.entity.NotifyMeRequest> waits = notifyMeRequestRepository.findByCreatedAtAfterAndDesiredDepartureTimeIsNotNull(from).stream()
-                .filter(n -> n.getCreatedAt() != null && n.getCreatedAt().isBefore(to)
-                        && Duration.between(n.getCreatedAt(), n.getDesiredDepartureTime()).abs().compareTo(TripScheduleService.ACTIVE_WINDOW) <= 0)
+        PilotMetricsRepository.Repeat repeat = pilotMetricsRepository.repeat(from.minus(Duration.ofDays(7)), from, to);
+        List<PilotMetricsResponse.SearchedRoute> topRoutes = pilotMetricsRepository.topSearchedRoutes(from).stream()
+                .map(r -> new PilotMetricsResponse.SearchedRoute(r.getOriginLabel(), r.getDestinationLabel(), r.getSearches(), r.getRiders(), r.getNoResults()))
                 .toList();
-        long found = waits.stream().filter(org.coryd.trip.entity.NotifyMeRequest::isFulfilled).count();
-        Instant now = Instant.now();
-        List<PilotMetricsResponse.UnmetArea> unmet = waits.stream()
-                .filter(n -> !n.isFulfilled() && !n.isCancelled() && !n.getExpiresAt().isAfter(now))
-                .collect(Collectors.groupingBy(n -> label(n.getDestinationLabel()),
-                        Collectors.mapping(org.coryd.trip.entity.NotifyMeRequest::getRiderId, Collectors.toSet())))
-                .entrySet().stream()
-                .map(e -> new PilotMetricsResponse.UnmetArea(e.getKey(), e.getValue().size()))
-                .sorted(Comparator.comparingLong(PilotMetricsResponse.UnmetArea::riders).reversed()
-                        .thenComparing(PilotMetricsResponse.UnmetArea::destinationLabel))
-                .limit(10)
+
+        return new PilotMetricsResponse(from, to, totals, repeat.getLastWeek() == 0 ? null : rate(repeat.getBack(), repeat.getLastWeek()),
+                notifyMeRequestRepository.countByCreatedAtAfter(from), notifyMeRequestRepository.countBookedSince(from), topRoutes,
+                leavingNow(from, to, offered));
+    }
+
+    private PilotMetricsResponse.LeavingNow leavingNow(Instant from, Instant to, PilotMetricsRepository.OfferedTotals offered) {
+        PilotMetricsRepository.Waits waits = pilotMetricsRepository.waits(from, to);
+        List<PilotMetricsResponse.UnmetArea> unmet = pilotMetricsRepository.unmetAreas(from, to, Instant.now()).stream()
+                .map(a -> new PilotMetricsResponse.UnmetArea(a.getDestinationLabel(), a.getRiders()))
                 .toList();
-        return new PilotMetricsResponse.LeavingNow(leavingNowIds.size(), seatsOnThem, waits.size(), found, rate(found, waits.size()),
-                unmet, routeTimeChangeRepository.countByCreatedAtAfter(from), routeTimeChangeRepository.countByCreatedAtAfterAndLastMinuteTrue(from));
-    }
-
-    private static PilotMetricsResponse.Totals totals(List<RouteSearch> searches, List<RoutePost> routes, List<Booking> seats) {
-        long withResults = searches.stream().filter(s -> s.getResultCount() != null && s.getResultCount() > 0).count();
-        Set<String> searchers = searches.stream().map(RouteSearch::getRiderId).collect(Collectors.toSet());
-        long booked = seats.stream().map(Booking::getRiderId).filter(searchers::contains).distinct().count();
-        long offered = routes.stream().mapToLong(r -> r.getSeatCapacity() == null ? 0 : r.getSeatCapacity()).sum();
-        long taken = seats.stream().mapToLong(b -> b.getSeatCount() == null ? 0 : b.getSeatCount()).sum();
-        return new PilotMetricsResponse.Totals(searches.size(), withResults, rate(withResults, searches.size()),
-                searchers.size(), booked, rate(booked, searchers.size()), routes.size(), offered, taken, rate(taken, offered));
-    }
-
-    private Double weekTwoRepeatRate(Instant from, Instant to) {
-        Set<String> lastWeek = completedRiders(from.minus(Duration.ofDays(7)), from);
-        if (lastWeek.isEmpty()) {
-            return null;
-        }
-        Set<String> thisWindow = completedRiders(from, to);
-        long back = lastWeek.stream().filter(thisWindow::contains).count();
-        return rate(back, lastWeek.size());
-    }
-
-    private Set<String> completedRiders(Instant from, Instant to) {
-        List<String> routeIds = routePostRepository.findByStatusInAndDepartureTimeBetween(List.of(RouteStatus.COMPLETED), from, to)
-                .stream().map(RoutePost::getId).toList();
-        return routeIds.isEmpty() ? Set.of() : bookingRepository.findByRoutePostIdIn(routeIds).stream()
-                .filter(b -> b.getStatus() == BookingStatus.COMPLETED).map(Booking::getRiderId).collect(Collectors.toSet());
-    }
-
-    private static List<PilotMetricsResponse.SearchedRoute> topSearchedRoutes(List<RouteSearch> searches) {
-        return searches.stream()
-                .collect(Collectors.groupingBy(s -> label(s.getOriginLabel()) + "\u0000" + label(s.getDestinationLabel())))
-                .values().stream()
-                .map(group -> new PilotMetricsResponse.SearchedRoute(
-                        group.getFirst().getOriginLabel(), group.getFirst().getDestinationLabel(), group.size(),
-                        group.stream().map(RouteSearch::getRiderId).distinct().count(),
-                        group.stream().filter(s -> s.getResultCount() == null || s.getResultCount() == 0).count()))
-                .sorted(Comparator.comparingLong(PilotMetricsResponse.SearchedRoute::riders).reversed()
-                        .thenComparing(Comparator.comparingLong(PilotMetricsResponse.SearchedRoute::searches).reversed()))
-                .limit(10)
-                .toList();
-    }
-
-    private static String label(String value) {
-        return value == null ? "(unnamed)" : value.trim().toLowerCase(Locale.ROOT);
+        return new PilotMetricsResponse.LeavingNow(offered.getLeavingNowRoutes(), offered.getLeavingNowSeats(), waits.getWaited(), waits.getFound(),
+                rate(waits.getFound(), waits.getWaited()), unmet, routeTimeChangeRepository.countByCreatedAtAfter(from),
+                routeTimeChangeRepository.countByCreatedAtAfterAndLastMinuteTrue(from));
     }
 
     private static Double rate(long part, long whole) {

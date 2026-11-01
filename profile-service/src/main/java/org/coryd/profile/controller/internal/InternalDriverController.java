@@ -27,6 +27,7 @@ public class InternalDriverController {
     private final DriverProfileService driverProfileService;
     private final FavoriteDriverService favoriteDriverService;
     private final VerificationAggregationService verificationAggregationService;
+    private final org.coryd.profile.service.DriverIndexService driverIndexService;
 
     @GetMapping("/{userId}")
     public ApiResponse<DriverProfile> get(@PathVariable String userId) {
@@ -43,6 +44,28 @@ public class InternalDriverController {
     @GetMapping("/{userId}/onboarding-status")
     public ApiResponse<DriverOnboardingStatusResponse> onboardingStatus(@PathVariable String userId) {
         return ApiResponse.ok(verificationAggregationService.getOnboardingStatus(userId));
+    }
+
+    /** ops-service's Drivers Directory - one indexed query: filter, sort and page in the database. */
+    @GetMapping("/index")
+    public ApiResponse<org.coryd.common.response.PagedResponse<org.coryd.profile.dto.DriverIndexView>> index(
+            @RequestParam(required = false) org.coryd.common.enums.DriverDirectoryStatus status,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) org.coryd.common.enums.DriverDirectorySort sort,
+            @RequestParam(required = false) org.springframework.data.domain.Sort.Direction direction,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(driverIndexService.directory(status, search, sort, direction, page, size));
+    }
+
+    @GetMapping("/index/counts")
+    public ApiResponse<org.coryd.profile.dto.DriverIndexCounts> indexCounts(@RequestParam(required = false) String search) {
+        return ApiResponse.ok(driverIndexService.counts(search));
+    }
+
+    @GetMapping("/index/{driverId}")
+    public ApiResponse<org.coryd.profile.dto.DriverIndexView> indexedDriver(@PathVariable String driverId) {
+        return ApiResponse.ok(driverIndexService.driver(driverId));
     }
 
     @GetMapping("/batch")

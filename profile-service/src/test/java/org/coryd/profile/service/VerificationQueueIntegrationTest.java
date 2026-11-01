@@ -56,7 +56,7 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @Import({VerificationAggregationService.class, DriverProfileService.class, VehicleService.class, DriverDocumentService.class,
-        EmergencyContactService.class, RiderProfileService.class})
+        EmergencyContactService.class, RiderProfileService.class, ReplacedFiles.class, DriverIndexService.class, DriverIndexer.class})
 class VerificationQueueIntegrationTest {
 
     @Container
@@ -68,6 +68,8 @@ class VerificationQueueIntegrationTest {
     @Autowired VehicleService vehicleService;
     @Autowired DriverDocumentService driverDocumentService;
     @Autowired DriverProfileRepository driverProfileRepository;
+    @Autowired DriverIndexService driverIndexService;
+    @Autowired org.coryd.profile.repository.DriverIndexRepository driverIndexRepository;
     @Autowired VehicleRepository vehicleRepository;
     @Autowired DriverDocumentRepository driverDocumentRepository;
     @Autowired EmergencyContactRepository emergencyContactRepository;
@@ -94,6 +96,7 @@ class VerificationQueueIntegrationTest {
         vehicleRepository.deleteAll();
         emergencyContactRepository.deleteAll();
         driverProfileRepository.deleteAll();
+        driverIndexRepository.deleteAll();
         when(kafkaTemplate.send(anyString(), any())).thenReturn(new CompletableFuture<>());
     }
 
@@ -261,5 +264,6 @@ class VerificationQueueIntegrationTest {
         jdbcTemplate.update("update profile.driver_profiles set government_id_submitted_at = ? where user_id = ?", at, driverId);
         jdbcTemplate.update("update profile.vehicles set submitted_at = ? where driver_id = ?", at, driverId);
         jdbcTemplate.update("update profile.driver_documents set submitted_at = ? where driver_id = ?", at, driverId);
+        driverIndexService.refresh(driverId); // raw SQL skips the save hooks that keep the index current
     }
 }

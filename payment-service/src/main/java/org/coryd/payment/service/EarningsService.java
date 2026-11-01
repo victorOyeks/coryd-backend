@@ -90,6 +90,7 @@ public class EarningsService {
     private final PayoutRecipientRepository payoutRecipientRepository;
     private final DriverDebtEntryRepository driverDebtEntryRepository;
     private final RefundRepository refundRepository;
+    private final EarningsPublisher earningsPublisher;
 
     /** Above this, a driver can't post routes until they pay it back - their fares are what recover it otherwise. */
     @Value("${payment.driver-owed-limit:10000}")
@@ -139,6 +140,7 @@ public class EarningsService {
         account.setLifetimeGross(account.getLifetimeGross().add(gross));
         account.setLifetimeCommission(account.getLifetimeCommission().add(commission));
         earningsAccountRepository.save(account);
+        earningsPublisher.changed(driverId);
 
         earningsTransactionRepository.save(EarningsTransaction.builder()
                 .driverId(driverId)

@@ -2,18 +2,10 @@ package org.coryd.profile.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.ReviewableItem;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
-import org.coryd.profile.dto.DriverOnboardingStatusResponse;
-import org.coryd.profile.dto.DriverProfileResponse;
-import org.coryd.profile.dto.DriverSummary;
-import org.coryd.profile.dto.RiderSummary;
-import org.coryd.profile.dto.NinLookupRequest;
-import org.coryd.profile.dto.NinLookupResponse;
-import org.coryd.profile.dto.SmileIdSession;
-import org.coryd.profile.dto.UpdateDriverProfileRequest;
-import org.coryd.profile.dto.VerificationDecisionBatchRequest;
-import org.coryd.profile.dto.VerificationStatusResponse;
+import org.coryd.profile.dto.*;
 import org.coryd.profile.service.DriverProfileService;
 import org.coryd.profile.entity.SmileIdCheckType;
 import org.coryd.profile.service.NinLookupService;
@@ -31,8 +23,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.coryd.common.enums.VerificationQueueTab;
 import org.coryd.common.response.PagedResponse;
-import org.coryd.profile.dto.VerificationQueueCountsResponse;
-import org.coryd.profile.dto.VerificationQueueItem;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -121,14 +111,14 @@ public class DriverProfileController {
 
     /** Ops review screen: each item's status and the reviewer's Verified / Flagged mark, and whether Approve Driver / Reject can be pressed. */
     @GetMapping("/{driverId}/verification/review")
-    public ApiResponse<org.coryd.profile.dto.VerificationReviewResponse> verificationReview(@AuthenticationPrincipal CoRydUserDetails principal,
+    public ApiResponse<VerificationReviewResponse> verificationReview(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                                          @PathVariable String driverId) {
         return ApiResponse.ok(verificationReviewService.review(driverId, principal.getActiveRole()));
     }
 
     /** Verified, or Flagged with the reason the driver will see. */
     @PutMapping("/{driverId}/verification/items/{item}/review")
-    public ApiResponse<org.coryd.profile.dto.VerificationReviewResponse> markVerificationItem(@AuthenticationPrincipal CoRydUserDetails principal,
+    public ApiResponse<VerificationReviewResponse> markVerificationItem(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                                            @PathVariable String driverId,
                                                                                            @PathVariable org.coryd.common.enums.ReviewableItem item,
                                                                                            @Valid @RequestBody org.coryd.profile.dto.ReviewMarkRequest request) {
@@ -137,9 +127,9 @@ public class DriverProfileController {
 
     /** "Reset to Default" - the item goes back to Unreviewed. */
     @DeleteMapping("/{driverId}/verification/items/{item}/review")
-    public ApiResponse<org.coryd.profile.dto.VerificationReviewResponse> resetVerificationItem(@AuthenticationPrincipal CoRydUserDetails principal,
-                                                                                            @PathVariable String driverId,
-                                                                                            @PathVariable org.coryd.common.enums.ReviewableItem item) {
+    public ApiResponse<VerificationReviewResponse> resetVerificationItem(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                         @PathVariable String driverId,
+                                                                         @PathVariable ReviewableItem item) {
         return ApiResponse.ok(verificationReviewService.reset(driverId, item, principal.getActiveRole()));
     }
 
@@ -147,7 +137,7 @@ public class DriverProfileController {
     @PostMapping("/{driverId}/verification/approve")
     public ApiResponse<VerificationStatusResponse> approveVerification(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                        @PathVariable String driverId,
-                                                                       @Valid @RequestBody(required = false) org.coryd.profile.dto.ReviewDecisionRequest request) {
+                                                                       @Valid @RequestBody(required = false) ReviewDecisionRequest request) {
         return ApiResponse.ok("Driver approved", verificationReviewService.approve(driverId, request, reviewerName(principal), principal.getActiveRole()));
     }
 
@@ -155,8 +145,16 @@ public class DriverProfileController {
     @PostMapping("/{driverId}/verification/reject")
     public ApiResponse<VerificationStatusResponse> rejectVerification(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                       @PathVariable String driverId,
-                                                                      @Valid @RequestBody(required = false) org.coryd.profile.dto.ReviewDecisionRequest request) {
+                                                                      @Valid @RequestBody(required = false) ReviewDecisionRequest request) {
         return ApiResponse.ok("Driver rejected", verificationReviewService.reject(driverId, request, reviewerName(principal), principal.getActiveRole()));
+    }
+
+    /** Save Changes (Drivers Directory): apply the marks as they stand - flagged rejected, verified approved, the rest left alone. */
+    @PostMapping("/{driverId}/verification/save")
+    public ApiResponse<VerificationStatusResponse> saveVerification(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                    @PathVariable String driverId,
+                                                                    @Valid @RequestBody(required = false) org.coryd.profile.dto.ReviewDecisionRequest request) {
+        return ApiResponse.ok("Changes saved", verificationReviewService.save(driverId, request, reviewerName(principal), principal.getActiveRole()));
     }
 
     /** The licence as Smile ID saw it: what it read, and fresh links to the images it captured. Ops only. */
