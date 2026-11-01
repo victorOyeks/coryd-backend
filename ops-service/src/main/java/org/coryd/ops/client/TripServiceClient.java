@@ -35,6 +35,44 @@ public class TripServiceClient {
         this.objectMapper = objectMapper;
     }
 
+    /** A rider's paid trips, newest first - search by route, driver, date ("11 July") or day ("wed"). */
+    public RiderTripPage riderTrips(String riderId, String search, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, RiderTripPage.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/ops/riders/{riderId}/trips").queryParam("page", page).queryParam("size", size);
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    return b.build(riderId);
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public RiderReceipt riderReceipt(String riderId, String bookingId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, RiderReceipt.class, () -> restClient.get()
+                .uri("/internal/ops/riders/{riderId}/trips/{bookingId}/receipt", riderId, bookingId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RiderTripPage(List<RiderTrip> content, int page, int size, long totalElements, int totalPages, boolean last) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RiderTrip(String bookingId, String routePostId, BookingStatus status, String originLabel, String destinationLabel,
+                            Instant departureTime, int seatCount, BigDecimal fareTotal, String driverId, String driverName,
+                            Double driverRatingAvg, Long driverRatingCount) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RiderReceipt(String bookingId, String riderId, String routePostId, BookingStatus status, String originLabel,
+                               String destinationLabel, String pickupLabel, String dropoffLabel, Instant departureTime,
+                               Instant bookedAt, Instant paidAt, Instant pickedUpAt, Instant completedAt, String driverId,
+                               String driverName, String vehiclePlate, int seatCount, BigDecimal farePerSeat, BigDecimal fareTotal) {
+    }
+
     public TripPage trips(OpsTripStatus status, String search, int page, int size) {
         return DownstreamCalls.data(SERVICE, objectMapper, TripPage.class, () -> restClient.get()
                 .uri(b -> {

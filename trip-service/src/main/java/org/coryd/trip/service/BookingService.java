@@ -100,6 +100,23 @@ public class BookingService {
 
     /** Public so BookingDetailsResponse/RideDetailsResponse can reference the same value the "seat held for X min" copy shown to riders describes. */
     public static final int SEAT_HOLD_MINUTES = 4;
+
+    /** Starts the history note of a seat cancelled because ops suspended the rider - rider stats leave these out. */
+    public static final String SUSPENDED_NOTE = "Rider suspended";
+
+    /** Long enough to get through card checkout, even when booking is about to close. */
+    static final int MIN_SEAT_HOLD_MINUTES = 2;
+
+    /** The usual hold, cut short so it doesn't outlast the trip's booking window by more than the time it takes to pay. */
+    static Instant holdUntil(Instant bookableUntil) {
+        Instant now = Instant.now();
+        Instant usual = now.plus(SEAT_HOLD_MINUTES, ChronoUnit.MINUTES);
+        Instant floor = now.plus(MIN_SEAT_HOLD_MINUTES, ChronoUnit.MINUTES);
+        if (bookableUntil == null || !bookableUntil.isBefore(usual)) {
+            return usual;
+        }
+        return bookableUntil.isAfter(floor) ? bookableUntil : floor;
+    }
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final BookingRepository bookingRepository;
@@ -119,6 +136,7 @@ public class BookingService {
     private final org.coryd.trip.config.TimeChangeProperties timeChangeProperties;
     private final org.coryd.trip.config.SavingsProperties savingsProperties;
     private final DriverStatsPublisher driverStatsPublisher;
+    private final RiderStatsPublisher riderStatsPublisher;
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
      * DriverSummary.verificationStatus, which is identity-only and would
@@ -710,8 +728,9 @@ public class BookingService {
         if (route.getStatus() != RouteStatus.PUBLISHED) {
             throw new BadRequestException("This ride is no longer taking bookings");
         }
-        if (!route.getDepartureTime().isAfter(Instant.now())) {
-            throw new BadRequestException("This ride has already departed");
+        Instant bookableUntil = matchingProperties.bookableUntil(route.getDepartureTime());
+        if (!Instant.now().isBefore(bookableUntil)) {
+            throw new BadRequestException("This ride is no longer taking bookings");
         }
         if (bookingRepository.findFirstByRiderIdAndRoutePostIdAndStatus(riderId, routePostId, BookingStatus.RESERVED).isPresent()) {
             throw new BadRequestException("Your favourite driver already reserved you a seat on this route - accept or decline that reservation instead of booking a fresh one");
@@ -747,7 +766,7 @@ public class BookingService {
                 .seatCount(request.seatCount())
                 .fareTotal(fareTotal)
                 .status(BookingStatus.HELD)
-                .holdExpiresAt(Instant.now().plus(SEAT_HOLD_MINUTES, ChronoUnit.MINUTES))
+                .holdExpiresAt(holdUntil(bookableUntil))
                 .driverNameSnapshot(profileServiceClient.fetchDriverName(route.getDriverId()))
                 .vehiclePlateSnapshot(profileServiceClient.fetchVehiclePlate(route.getVehicleId()))
                 .routeSummarySnapshot(route.getOriginLabel() + " -> " + route.getDestinationLabel())
@@ -777,8 +796,11 @@ public class BookingService {
         if (booking.getConfirmedAt() != null) {
             return;
         }
-        // A route cancelled between the hold and the payment can't take the rider anywhere.
-        boolean routeGone = FINISHED_ROUTE_STATUSES.contains(routeOf(booking).getStatus());
+        // A route cancelled between the hold and the payment can't take the rider anywhere - nor can one whose driver
+        // tapped Start while they were paying: starting closes booking, so a seat still only held is refunded.
+        RouteStatus routeStatus = routeOf(booking).getStatus();
+        boolean routeGone = FINISHED_ROUTE_STATUSES.contains(routeStatus)
+                || (routeStatus == RouteStatus.IN_PROGRESS && booking.getStatus() == BookingStatus.HELD);
         if (routeGone) {
             moveStatus(booking, BookingStatus.CANCELLED_DRIVER, List.of(BookingStatus.HELD));
         }
@@ -853,15 +875,22 @@ public class BookingService {
             throw new UnauthorizedException("Only this reservation's rider can accept it");
         }
         requireVerifiedRider(callerId);
+        RoutePost reservedRoute = routeOf(booking);
+        Instant bookableUntil = matchingProperties.bookableUntil(reservedRoute.getDepartureTime());
         if (booking.getStatus() == BookingStatus.RESERVED) {
-            tripScheduleService.requireNoOverlap(callerId, routeOf(booking));
+            boolean stillTaking = (reservedRoute.getStatus() == RouteStatus.PUBLISHED || reservedRoute.getStatus() == RouteStatus.FULL)
+                    && Instant.now().isBefore(bookableUntil);
+            if (!stillTaking) {
+                throw new BadRequestException("This ride is no longer taking bookings");
+            }
+            tripScheduleService.requireNoOverlap(callerId, reservedRoute);
             releaseOtherHolds(callerId, bookingId);
         }
         if (!moveStatus(booking, BookingStatus.HELD, List.of(BookingStatus.RESERVED))) {
             throw new BadRequestException("This reservation is no longer available - current status is " + booking.getStatus());
         }
 
-        booking.setHoldExpiresAt(Instant.now().plus(SEAT_HOLD_MINUTES, ChronoUnit.MINUTES));
+        booking.setHoldExpiresAt(holdUntil(bookableUntil));
         booking.setPickupLabel(request.pickupLabel());
         booking.setPickupLat(request.pickupLat());
         booking.setPickupLng(request.pickupLng());
@@ -887,7 +916,7 @@ public class BookingService {
     /** Every upcoming seat of a suspended rider: unpaid ones released, paid ones cancelled with a full refund. */
     @Transactional
     public void cancelForSuspension(String riderId) {
-        cancelUpcomingFor(riderId, UserSuspensionEventListener.CANCELLED_BY, "Rider suspended");
+        cancelUpcomingFor(riderId, UserSuspensionEventListener.CANCELLED_BY, SUSPENDED_NOTE);
     }
 
     /** Every upcoming seat of a rider who can't travel any more (suspended, or the account closed): unpaid ones
@@ -1088,6 +1117,7 @@ public class BookingService {
         booking.setPickupConfirmedAt(null);
         bookingRepository.save(booking);
         recordHistory(bookingId, BookingStatus.CONFIRMED, "Manifest mark reset by driver");
+        riderStatsPublisher.changed(booking.getRiderId());
     }
 
     /** "Reset all Manifest" - undoes every Picked Up/No Show mark on the route in one call. */
@@ -1104,6 +1134,7 @@ public class BookingService {
                 b.setPickupConfirmedAt(null);
                 bookingRepository.save(b);
                 recordHistory(b.getId(), BookingStatus.CONFIRMED, "Manifest mark reset by driver");
+                riderStatsPublisher.changed(b.getRiderId());
             }
         }
     }
@@ -1218,6 +1249,9 @@ public class BookingService {
                 .build();
         Rating saved = ratingRepository.save(rating);
         driverStatsPublisher.changed(rateeId);
+        if (direction == RatingDirection.DRIVER_TO_RIDER) {
+            riderStatsPublisher.changed(rateeId);
+        }
         return saved;
     }
 
@@ -1445,6 +1479,7 @@ public class BookingService {
             RoutePost route = routeOf(booking);
             requireParticipant(booking, route, callerId);
             driverStatsPublisher.changed(route.getDriverId());
+            riderStatsPublisher.changed(booking.getRiderId());
         }
         String referenceNumber = "ISS-" + String.format("%08d", RANDOM.nextInt(100_000_000));
         IssueReport issue = issueReportRepository.save(IssueReport.builder()

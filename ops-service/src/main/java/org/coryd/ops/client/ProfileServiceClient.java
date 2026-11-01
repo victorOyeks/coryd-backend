@@ -259,6 +259,132 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** The Document Expiry Tracker - filtered, sorted and paged by profile-service. */
+    public ExpiryPage documentExpiry(DocumentExpiryTab tab, String search, DocumentExpirySort sort, Sort.Direction direction,
+                                     int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, ExpiryPage.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/document-expiry").queryParam("page", page).queryParam("size", size);
+                    if (tab != null) {
+                        b.queryParam("tab", tab);
+                    }
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    if (sort != null) {
+                        b.queryParam("sort", sort);
+                    }
+                    if (direction != null) {
+                        b.queryParam("direction", direction);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public DocumentExpiryCounts documentExpiryCounts(String search) {
+        return DownstreamCalls.data(SERVICE, objectMapper, DocumentExpiryCounts.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/document-expiry/counts");
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public ExpiryRow notifyDocument(String documentId, String by) {
+        return DownstreamCalls.data(SERVICE, objectMapper, ExpiryRow.class, () -> restClient.post()
+                .uri(b -> b.path("/internal/document-expiry/{documentId}/notify").queryParam("by", by).build(documentId))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public DocumentExpiryNotifyResult notifyAllDocuments(DocumentExpiryTab tab, String search, String by) {
+        return DownstreamCalls.data(SERVICE, objectMapper, DocumentExpiryNotifyResult.class, () -> restClient.post()
+                .uri(b -> {
+                    b.path("/internal/document-expiry/notify-all").queryParam("by", by);
+                    if (tab != null) {
+                        b.queryParam("tab", tab);
+                    }
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** The Riders Directory - filtered, sorted and paged by profile-service's rider index. */
+    public RiderIndexPage riderIndex(RiderDirectoryStatus status, String search, RiderDirectorySort sort,
+                                     Sort.Direction direction, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, RiderIndexPage.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/riders/index").queryParam("page", page).queryParam("size", size);
+                    if (status != null) {
+                        b.queryParam("status", status);
+                    }
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    if (sort != null) {
+                        b.queryParam("sort", sort);
+                    }
+                    if (direction != null) {
+                        b.queryParam("direction", direction);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public RiderDirectoryCounts riderIndexCounts(String search) {
+        return DownstreamCalls.data(SERVICE, objectMapper, RiderDirectoryCounts.class, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/riders/index/counts");
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public IndexedRider indexedRider(String riderId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, IndexedRider.class, () -> restClient.get()
+                .uri("/internal/riders/index/{riderId}", riderId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ExpiryPage(List<ExpiryRow> content, int page, int size, long totalElements, int totalPages, boolean last) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ExpiryRow(String documentId, String driverId, String firstName, String lastName, String phone, String photoUrl,
+                            DocumentType documentType, java.time.LocalDate expiresOn, long daysLeft, DocumentExpiryStatus status,
+                            VerificationStatus verificationStatus, Instant verifiedAt, Instant lastNotifiedAt, String lastNotifiedBy,
+                            boolean notifiable, boolean notifiedRecently) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RiderIndexPage(List<IndexedRider> content, int page, int size, long totalElements, int totalPages, boolean last) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record IndexedRider(String riderId, String firstName, String lastName, String phone, String photoUrl, Instant joinedAt,
+                               RiderDirectoryStatus status, Instant suspendedAt, String suspensionReason,
+                               Long trips, Double ratingAvg, Long ratingCount, Integer reliabilityPercent, Long reportsFiled,
+                               BigDecimal totalSpent) {
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record IndexPage(List<IndexedDriver> content, int page, int size, long totalElements, int totalPages, boolean last) {
     }

@@ -32,6 +32,7 @@ public final class KafkaTopics {
     public static final String DRIVER_OWED_CHANGED = "coryd-driver-owed-changed";
     public static final String DRIVER_STATS_CHANGED = "coryd-driver-stats-changed";
     public static final String DRIVER_EARNINGS_CHANGED = "coryd-driver-earnings-changed";
+    public static final String RIDER_STATS_CHANGED = "coryd-rider-stats-changed";
     public static final String PAYOUT_PROCESSED = "coryd-payout-processed";
 
     public static final String DRIVER_APPROVED = "coryd-driver-approved";

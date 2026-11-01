@@ -105,6 +105,7 @@ public class VerificationAggregationService {
         }
 
         validate(request.decisions());
+        VerificationStatus before = overallStatus(driverId);
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         for (ItemDecision decision : request.decisions()) {
             applyDecision(driverId, decision);
@@ -112,7 +113,7 @@ public class VerificationAggregationService {
             publishItemDecision(driverId, email, decision, request.reviewedBy());
         }
 
-        reevaluateAndPublish(driverId, request.reviewedBy());
+        reevaluateAndPublish(driverId, request.reviewedBy(), before);
         return getStatus(driverId);
     }
 
@@ -123,11 +124,12 @@ public class VerificationAggregationService {
     @Transactional
     public void autoApproveGovernmentId(String driverId, String decidedBy) {
         ItemDecision decision = new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null);
+        VerificationStatus before = overallStatus(driverId);
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         applyDecision(driverId, decision);
         recordDecision(driverId, decision, decidedBy);
         publishItemDecision(driverId, email, decision, decidedBy);
-        reevaluateAndPublish(driverId, decidedBy);
+        reevaluateAndPublish(driverId, decidedBy, before);
         log.info("Driver {} licence approved by {}", driverId, decidedBy);
     }
 
@@ -187,8 +189,24 @@ public class VerificationAggregationService {
                             .email(profile == null ? null : profile.getEmail())
                             .reviewedBy(decidedBy)
                             .approvedAt(LocalDateTime.now())
+                            .firstApproval(false)
                             .build()));
         }
+    }
+
+    /** A driver who mustn't post - an expired document. trip-service's gate is told; the driver hears nothing from this. */
+    public void publishPostingBlocked(String driverId, String reason, String decidedBy) {
+        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
+        Vehicle vehicle = primaryVehicle(driverId);
+        logKafkaResult(driverId, KafkaTopics.DRIVER_REJECTED,
+                kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
+                        .driverId(driverId)
+                        .vehicleId(vehicle == null ? null : vehicle.getId())
+                        .email(profile == null ? null : profile.getEmail())
+                        .rejectionReason(reason)
+                        .reviewedBy(decidedBy)
+                        .rejectedAt(LocalDateTime.now())
+                        .build()));
     }
 
     /** What Smile ID's late result did to a licence ops had decided, for the audit log. */
@@ -415,6 +433,7 @@ public class VerificationAggregationService {
                 document.setStatus(decision.status());
                 document.setResubmitted(false);
                 document.setRejectionReason(decision.status() == VerificationStatus.REJECTED ? decision.rejectionReason() : null);
+                document.setReviewedAt(Instant.now());
                 driverDocumentRepository.save(document);
             }
         }
@@ -469,8 +488,13 @@ public class VerificationAggregationService {
         );
     }
 
-    /** Recomputes the driver's overall status and publishes DriverApprovedEvent/DriverRejectedEvent if it's now fully approved or has a rejection - called after every item-level decide() so trip-service's route-posting gate stays in sync. */
-    public void reevaluateAndPublish(String driverId, String reviewedBy) {
+    /**
+     * Recomputes the driver's overall status and publishes DriverApprovedEvent/DriverRejectedEvent if it's now fully
+     * approved or has a rejection - called after every item-level decide() so trip-service's route-posting gate stays in
+     * sync. before is the overall status ahead of the decisions: a driver approved again (after a rejection or an expired
+     * document was replaced) is announced too, marked not first, or trip-service would keep them blocked.
+     */
+    public void reevaluateAndPublish(String driverId, String reviewedBy, VerificationStatus before) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
         Vehicle vehicle = primaryVehicle(driverId);
         List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
@@ -488,7 +512,7 @@ public class VerificationAggregationService {
             driverProfileRepository.save(profile);
         }
 
-        if (isFirstApproval) {
+        if (isFirstApproval || (overall == VerificationStatus.APPROVED && before != VerificationStatus.APPROVED)) {
             logKafkaResult(driverId, KafkaTopics.DRIVER_APPROVED,
                     kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
                             .driverId(driverId)
@@ -496,6 +520,7 @@ public class VerificationAggregationService {
                             .email(email)
                             .reviewedBy(reviewedBy)
                             .approvedAt(LocalDateTime.now())
+                            .firstApproval(isFirstApproval)
                             .build()));
         } else if (overall == VerificationStatus.REJECTED) {
             logKafkaResult(driverId, KafkaTopics.DRIVER_REJECTED,

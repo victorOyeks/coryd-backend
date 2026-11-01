@@ -12,4 +12,6 @@ public interface RefundRepository extends JpaRepository<Refund, String> {
     Optional<Refund> findFirstByBookingIdAndKindAndStatusOrderByCreatedAtDesc(String bookingId, RefundKind kind, RefundStatus status);
 
     List<Refund> findByBookingId(String bookingId);
+
+    List<Refund> findByBookingIdIn(java.util.Collection<String> bookingIds);
 }

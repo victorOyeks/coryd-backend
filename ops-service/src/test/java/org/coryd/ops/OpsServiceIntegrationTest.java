@@ -650,6 +650,225 @@ class OpsServiceIntegrationTest {
                 .andExpect(jsonPath("$.data.passengers[0].phone").value("08011112222"));
     }
 
+    // ---- Document Expiry Tracker -----------------------------------------------------------------
+
+    private static final String EXPIRY_ROW = "{\"documentId\":\"doc-1\",\"driverId\":\"d-uuid-1\",\"firstName\":\"Emeka\",\"lastName\":\"Okafor\","
+            + "\"phone\":\"08053636321\",\"documentType\":\"ROADWORTHINESS_CERT\",\"expiresOn\":\"2026-09-02\",\"daysLeft\":-3,"
+            + "\"status\":\"EXPIRED\",\"verificationStatus\":\"EXPIRED\",\"lastNotifiedAt\":null,\"notifiable\":true,\"notifiedRecently\":false}";
+
+    @Test
+    void documentExpiryTableComesFromProfileServiceWithTheDriversRef() throws Exception {
+        replies.put("/profile/internal/document-expiry", new Reply(200, "{\"data\":{\"content\":[" + EXPIRY_ROW + "],"
+                + "\"page\":0,\"size\":10,\"totalElements\":14,\"totalPages\":2,\"last\":false}}"));
+
+        mockMvc.perform(get("/document-expiry").param("tab", "EXPIRED").param("search", "emeka").param("sort", "DAYS_LEFT")
+                        .param("direction", "DESC").param("size", "10").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(14))
+                .andExpect(jsonPath("$.data.content[0].documentId").value("doc-1"))
+                .andExpect(jsonPath("$.data.content[0].driver.ref").value("D-DUUID1"))
+                .andExpect(jsonPath("$.data.content[0].driver.name").value("Emeka Okafor"))
+                .andExpect(jsonPath("$.data.content[0].driver.phone").value("08053636321"))
+                .andExpect(jsonPath("$.data.content[0].documentLabel").value("Roadworthiness Certificate"))
+                .andExpect(jsonPath("$.data.content[0].daysLeft").value(-3))
+                .andExpect(jsonPath("$.data.content[0].status").value("EXPIRED"))
+                .andExpect(jsonPath("$.data.content[0].canNotify").value(true));
+        assertThat(paths.get(0)).contains("tab=EXPIRED").contains("search=emeka").contains("sort=DAYS_LEFT").contains("direction=DESC").contains("size=10");
+    }
+
+    @Test
+    void documentExpiryCardsAndBadgesComeFromTheirOwnEndpoint() throws Exception {
+        replies.put("/profile/internal/document-expiry/counts", new Reply(200,
+                "{\"data\":{\"all\":14,\"expiringSoon\":9,\"expired\":5,\"verified\":0,\"notVerified\":0,\"withoutExpiryDate\":2}}"));
+
+        mockMvc.perform(get("/document-expiry/counts").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.all").value(14))
+                .andExpect(jsonPath("$.data.expiringSoon").value(9))
+                .andExpect(jsonPath("$.data.expired").value(5))
+                .andExpect(jsonPath("$.data.withoutExpiryDate").value(2));
+    }
+
+    @Test
+    void notifyIsSignedWithTheAdminsNameAndReturnsTheRow() throws Exception {
+        replies.put("/profile/internal/document-expiry/doc-1/notify", new Reply(200, "{\"data\":"
+                + EXPIRY_ROW.replace("\"lastNotifiedAt\":null", "\"lastNotifiedAt\":\"2026-11-01T09:00:00Z\",\"lastNotifiedBy\":\"Ada Ops\"")
+                        .replace("\"notifiedRecently\":false", "\"notifiedRecently\":true") + "}"));
+
+        mockMvc.perform(post("/document-expiry/doc-1/notify").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.lastNotifiedBy").value("Ada Ops"))
+                .andExpect(jsonPath("$.data.notifiedRecently").value(true))
+                .andExpect(jsonPath("$.data.canNotify").value(false));
+        assertThat(lastMethod.get()).isEqualTo("POST");
+        assertThat(paths.get(0)).contains("by=Ada%20Ops");
+    }
+
+    @Test
+    void notifyingTooSoonPassesProfileServicesReasonThrough() throws Exception {
+        replies.put("/profile/internal/document-expiry/doc-1/notify", new Reply(400,
+                "{\"success\":false,\"message\":\"The driver was reminded at 1 Nov, 10:00 AM - you can remind them again after 2 Nov, 10:00 AM\"}"));
+
+        mockMvc.perform(post("/document-expiry/doc-1/notify").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("The driver was reminded at 1 Nov, 10:00 AM - you can remind them again after 2 Nov, 10:00 AM"));
+    }
+
+    @Test
+    void notifyAllFollowsTheTabAndSearch() throws Exception {
+        replies.put("/profile/internal/document-expiry/notify-all", new Reply(200, "{\"data\":{\"notified\":8,\"skippedRecentlyNotified\":1}}"));
+
+        mockMvc.perform(post("/document-expiry/notify-all").param("tab", "EXPIRING_SOON").param("search", "fatima")
+                        .header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified").value(8))
+                .andExpect(jsonPath("$.data.skippedRecentlyNotified").value(1));
+        assertThat(paths.get(0)).contains("tab=EXPIRING_SOON").contains("search=fatima").contains("by=Ada%20Ops");
+    }
+
+    @Test
+    void documentExpiryIsForOpsAdminsOnly() throws Exception {
+        mockMvc.perform(get("/document-expiry")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/document-expiry/notify-all").header("Authorization", bearer(UserRole.DRIVER))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/document-expiry").param("tab", "SOON").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isBadRequest());
+        assertThat(paths).isEmpty();
+    }
+
+    // ---- Riders Directory ------------------------------------------------------------------------
+
+    private static final String RIDER_ROW = "{\"riderId\":\"r-uuid-1\",\"firstName\":\"Emeka\",\"lastName\":\"Okafor\",\"phone\":\"08053636321\","
+            + "\"joinedAt\":\"2026-01-12T09:00:00Z\",\"status\":\"ACTIVE\",\"trips\":213,\"ratingAvg\":4.88,\"ratingCount\":40,"
+            + "\"reliabilityPercent\":91,\"reportsFiled\":0,\"totalSpent\":157000.00}";
+
+    @Test
+    void ridersTableComesFromTheRiderIndex() throws Exception {
+        replies.put("/profile/internal/riders/index", new Reply(200, "{\"data\":{\"content\":[" + RIDER_ROW + "],"
+                + "\"page\":0,\"size\":10,\"totalElements\":62,\"totalPages\":7,\"last\":false}}"));
+
+        mockMvc.perform(get("/riders").param("status", "ACTIVE").param("search", "emeka").param("sort", "RETENTION").param("direction", "DESC")
+                        .param("size", "10").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(62))
+                .andExpect(jsonPath("$.data.content[0].rider.ref").value("R-RUUID1"))
+                .andExpect(jsonPath("$.data.content[0].rider.name").value("Emeka Okafor"))
+                .andExpect(jsonPath("$.data.content[0].trips").value(213))
+                .andExpect(jsonPath("$.data.content[0].reliabilityPercent").value(91))
+                .andExpect(jsonPath("$.data.content[0].rating").value(4.88))
+                .andExpect(jsonPath("$.data.content[0].totalSpent").value(157000.0))
+                .andExpect(jsonPath("$.data.content[0].reportsFiled").value(0))
+                .andExpect(jsonPath("$.data.content[0].status").value("ACTIVE"));
+        assertThat(paths.get(0)).contains("status=ACTIVE").contains("search=emeka").contains("sort=RETENTION").contains("direction=DESC");
+    }
+
+    @Test
+    void riderTabBadgesComeFromTheirOwnEndpoint() throws Exception {
+        replies.put("/profile/internal/riders/index/counts", new Reply(200, "{\"data\":{\"all\":62,\"active\":52,\"suspended\":10}}"));
+
+        mockMvc.perform(get("/riders/counts").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.all").value(62))
+                .andExpect(jsonPath("$.data.suspended").value(10));
+    }
+
+    @Test
+    void aRidersProfileHasAccountActivityAndAnySuspension() throws Exception {
+        replies.put("/profile/internal/riders/index/r-uuid-1", new Reply(200, "{\"data\":" + RIDER_ROW
+                .replace("\"status\":\"ACTIVE\"", "\"status\":\"SUSPENDED\",\"suspendedAt\":\"2026-10-01T10:00:00Z\",\"suspensionReason\":\"Abusive\"") + "}"));
+
+        mockMvc.perform(get("/riders/r-uuid-1").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rider.ref").value("R-RUUID1"))
+                .andExpect(jsonPath("$.data.status").value("SUSPENDED"))
+                .andExpect(jsonPath("$.data.suspension.reason").value("Abusive"))
+                .andExpect(jsonPath("$.data.account.joinedAt").value("2026-01-12T09:00:00Z"))
+                .andExpect(jsonPath("$.data.activity.totalTrips").value(213))
+                .andExpect(jsonPath("$.data.activity.totalSpent").value(157000.0))
+                .andExpect(jsonPath("$.data.activity.reliabilityPercent").value(91))
+                .andExpect(jsonPath("$.data.activity.reportsFiled").value(0));
+    }
+
+    @Test
+    void anUnknownRiderIsA404() throws Exception {
+        replies.put("/profile/internal/riders/index/nope", new Reply(404, "{\"success\":false,\"message\":\"Rider not found\"}"));
+
+        mockMvc.perform(get("/riders/nope").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Rider not found"));
+        mockMvc.perform(get("/riders/nope/trips").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isNotFound());
+    }
+
+    private static final String RIDER_TRIP = "{\"bookingId\":\"b-uuid-1\",\"routePostId\":\"" + ROUTE_ID + "\",\"status\":\"COMPLETED\","
+            + "\"originLabel\":\"Ikorodu\",\"destinationLabel\":\"Victoria Island\",\"departureTime\":\"2026-07-11T06:00:00Z\","
+            + "\"seatCount\":1,\"fareTotal\":1800.00,\"driverId\":\"d-uuid-1\",\"driverName\":\"Emeka Okafor\","
+            + "\"driverRatingAvg\":4.9,\"driverRatingCount\":178}";
+
+    @Test
+    void tripHistoryAddsWhatWasPaidAndRefunded() throws Exception {
+        replies.put("/profile/internal/riders/index/r-uuid-1", new Reply(200, "{\"data\":" + RIDER_ROW + "}"));
+        replies.put("/trip/internal/ops/riders/r-uuid-1/trips", new Reply(200, "{\"data\":{\"content\":[" + RIDER_TRIP + "],"
+                + "\"page\":0,\"size\":10,\"totalElements\":1,\"totalPages\":1,\"last\":true}}"));
+        replies.put("/payment/internal/ops/payments/bookings", new Reply(200, "{\"data\":[{\"bookingId\":\"b-uuid-1\",\"status\":\"PAID\","
+                + "\"method\":\"PAYSTACK\",\"cardLast4\":\"4081\",\"amountPaid\":1800.00,\"refunded\":0,\"refundPending\":0,\"netPaid\":1800.00}]}"));
+
+        mockMvc.perform(get("/riders/r-uuid-1/trips").param("search", "wed").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[0].ref").value("B-BUUID1"))
+                .andExpect(jsonPath("$.data.content[0].originLabel").value("Ikorodu"))
+                .andExpect(jsonPath("$.data.content[0].fareTotal").value(1800.0))
+                .andExpect(jsonPath("$.data.content[0].driver.name").value("Emeka Okafor"))
+                .andExpect(jsonPath("$.data.content[0].driver.rating").value(4.9))
+                .andExpect(jsonPath("$.data.content[0].payment.status").value("PAID"))
+                .andExpect(jsonPath("$.data.content[0].payment.netPaid").value(1800.0));
+        assertThat(paths).anyMatch(p -> p.startsWith("/trip/internal/ops/riders/r-uuid-1/trips") && p.contains("search=wed"));
+    }
+
+    @Test
+    void tripHistoryStillShowsWhenPaymentServiceIsDown() throws Exception {
+        replies.put("/profile/internal/riders/index/r-uuid-1", new Reply(200, "{\"data\":" + RIDER_ROW + "}"));
+        replies.put("/trip/internal/ops/riders/r-uuid-1/trips", new Reply(200, "{\"data\":{\"content\":[" + RIDER_TRIP + "],"
+                + "\"page\":0,\"size\":10,\"totalElements\":1,\"totalPages\":1,\"last\":true}}"));
+        replies.put("/payment/internal/ops/payments/bookings", new Reply(500, "{}"));
+
+        mockMvc.perform(get("/riders/r-uuid-1/trips").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[0].bookingId").value("b-uuid-1"))
+                .andExpect(jsonPath("$.data.content[0].payment").doesNotExist());
+    }
+
+    @Test
+    void aReceiptHasTheRiderRouteDriverFareAndPayment() throws Exception {
+        replies.put("/profile/internal/riders/index/r-uuid-1", new Reply(200, "{\"data\":" + RIDER_ROW + "}"));
+        replies.put("/trip/internal/ops/riders/r-uuid-1/trips/b-uuid-1/receipt", new Reply(200, "{\"data\":{\"bookingId\":\"b-uuid-1\","
+                + "\"riderId\":\"r-uuid-1\",\"routePostId\":\"" + ROUTE_ID + "\",\"status\":\"CANCELLED_RIDER\",\"originLabel\":\"Ikorodu\","
+                + "\"destinationLabel\":\"Victoria Island\",\"pickupLabel\":\"Ikorodu Garage\",\"dropoffLabel\":\"Victoria Island\","
+                + "\"departureTime\":\"2026-07-11T06:00:00Z\",\"paidAt\":\"2026-07-10T18:00:00Z\",\"driverId\":\"d-uuid-1\","
+                + "\"driverName\":\"Emeka Okafor\",\"vehiclePlate\":\"LND-441-AA\",\"seatCount\":2,\"farePerSeat\":900.00,\"fareTotal\":1800.00}}"));
+        replies.put("/payment/internal/ops/payments/bookings", new Reply(200, "{\"data\":[{\"bookingId\":\"b-uuid-1\",\"status\":\"PAID\","
+                + "\"amountPaid\":1800.00,\"refunded\":1350.00,\"refundPending\":0,\"netPaid\":450.00}]}"));
+
+        mockMvc.perform(get("/riders/r-uuid-1/trips/b-uuid-1/receipt").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ref").value("B-BUUID1"))
+                .andExpect(jsonPath("$.data.rider.name").value("Emeka Okafor"))
+                .andExpect(jsonPath("$.data.route.pickupLabel").value("Ikorodu Garage"))
+                .andExpect(jsonPath("$.data.driver.ref").value("D-DUUID1"))
+                .andExpect(jsonPath("$.data.driver.vehiclePlate").value("LND-441-AA"))
+                .andExpect(jsonPath("$.data.seatCount").value(2))
+                .andExpect(jsonPath("$.data.paidAt").value("2026-07-10T18:00:00Z"))
+                .andExpect(jsonPath("$.data.payment.refunded").value(1350.0))
+                .andExpect(jsonPath("$.data.payment.netPaid").value(450.0));
+    }
+
+    @Test
+    void ridersAreForOpsAdminsOnly() throws Exception {
+        mockMvc.perform(get("/riders")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/riders").header("Authorization", bearer(UserRole.RIDER))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/riders").param("sort", "AGE").header("Authorization", bearer(UserRole.OPS_ADMIN))).andExpect(status().isBadRequest());
+        assertThat(paths).isEmpty();
+    }
+
     private String bearer(UserRole role) {
         return "Bearer " + jwtUtil.generateToken("admin-1", "08000000000", "Ada", "Ops", role);
     }

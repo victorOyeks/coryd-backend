@@ -1,6 +1,7 @@
 package org.coryd.trip.service;
 
 import org.coryd.common.enums.BookingStatus;
+import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.UnauthorizedException;
@@ -71,7 +72,8 @@ import static org.mockito.Mockito.verify;
 // The identity (NIN) gate is on by default; these tests cover everything else, and the gate's own tests switch it on.
 @org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
 @Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
-        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class, OpsDriverStatsService.class, DriverStatsPublisher.class})
+        NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class, OpsDriverStatsService.class, DriverStatsPublisher.class,
+        OpsRiderStatsService.class, RiderStatsPublisher.class, OpsRiderTripService.class})
 class BookingFlowIntegrationTest {
 
     @Container
@@ -95,6 +97,9 @@ class BookingFlowIntegrationTest {
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired OpsTripQueryService opsTripQueryService;
     @Autowired OpsDriverStatsService opsDriverStatsService;
+    @Autowired OpsRiderStatsService opsRiderStatsService;
+    @Autowired RiderStatsPublisher riderStatsPublisher;
+    @Autowired OpsRiderTripService opsRiderTripService;
     @Autowired DriverStatsPublisher driverStatsPublisher;
     @Autowired org.coryd.trip.repository.SuspendedUserRepository suspendedUserRepository;
     @Autowired org.coryd.trip.repository.UserBlockRepository userBlockRepository;
@@ -654,6 +659,166 @@ class BookingFlowIntegrationTest {
     }
 
     @Test
+    void theRidersDirectoryGetsEachRidersTripsReliabilitySpendRatingAndReportsAgainstThem() {
+        RoutePost done = route(4);
+        Booking ridden = book(done, RIDER, 2);
+        confirm(ridden);
+        start(done);
+        pickUp(ridden);
+        bookingService.completeTrip(ridden.getId(), DRIVER);
+        bookingService.completeRoute(done.getId(), DRIVER);
+        bookingService.rate(ridden.getId(), DRIVER, new RateRequest(null, null, null, 3, null));
+        bookingService.rate(ridden.getId(), RIDER, new RateRequest(null, null, null, 5, null));
+        bookingService.reportIssue(new org.coryd.trip.dto.IssueReportRequest(ridden.getId(), null,
+                org.coryd.common.enums.IssueCategory.RIDER_CONDUCT, "Late"), DRIVER);
+        bookingService.reportIssue(new org.coryd.trip.dto.IssueReportRequest(ridden.getId(), null,
+                org.coryd.common.enums.IssueCategory.DRIVER_CONDUCT, "Rude"), RIDER);
+
+        Booking walkedAway = book(route(4), RIDER, 1);
+        confirm(walkedAway);
+        bookingService.cancelByRider(walkedAway.getId(), RIDER);
+        book(route(4), RIDER, 1);
+        confirm(book(route(4), RIDER, 1));
+        bookingService.cancelForSuspension(RIDER);
+
+        var stats = opsRiderStatsService.stats(List.of(RIDER, "rider-nobody", RIDER));
+
+        assertThat(stats).hasSize(2);
+        assertThat(stats.get(0)).satisfies(s -> {
+            assertThat(s.riderId()).isEqualTo(RIDER);
+            assertThat(s.trips()).isEqualTo(1);
+            assertThat(s.ratingAvg()).as("the driver's stars for the rider, not the rider's for the driver").isEqualTo(3.0);
+            assertThat(s.ratingCount()).isEqualTo(1);
+            assertThat(s.reliabilityPercent())
+                    .as("1 completed, 1 paid seat they cancelled; the unpaid hold and the seat cancelled by suspending them don't count")
+                    .isEqualTo(50);
+            assertThat(s.reportsFiled()).as("the driver's report on them, not their own").isEqualTo(1);
+            assertThat(s.totalSpent()).isEqualByComparingTo(reload(ridden).getFareTotal());
+        });
+        assertThat(stats.get(1)).isEqualTo(new org.coryd.trip.dto.OpsRiderStats("rider-nobody", 0, null, 0, null, 0, BigDecimal.ZERO));
+        assertThat(opsRiderStatsService.stats(List.of())).isEmpty();
+    }
+
+    @Test
+    void aRidersNumbersAreSentWhenABookingEndsTheyreRatedOrReportedAndForEveryRiderNightly() {
+        RoutePost done = route(4);
+        Booking ridden = book(done, RIDER, 1);
+        confirm(ridden);
+        start(done);
+        pickUp(ridden);
+        clearInvocations(kafkaTemplate);
+
+        bookingService.completeTrip(ridden.getId(), DRIVER);
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && s.getTrips() == 1 && s.getComputedAt() != null));
+
+        clearInvocations(kafkaTemplate);
+        bookingService.completeRoute(done.getId(), DRIVER);
+        bookingService.rate(ridden.getId(), DRIVER, new RateRequest(null, null, null, 4, null));
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && s.getRatingCount() == 1));
+
+        clearInvocations(kafkaTemplate);
+        bookingService.reportIssue(new org.coryd.trip.dto.IssueReportRequest(ridden.getId(), null,
+                org.coryd.common.enums.IssueCategory.RIDER_CONDUCT, "Late"), DRIVER);
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && s.getReportsFiled() == 1));
+
+        clearInvocations(kafkaTemplate);
+        Booking cancelled = book(route(4), OTHER_RIDER, 1);
+        confirm(cancelled);
+        bookingService.cancelByRider(cancelled.getId(), OTHER_RIDER);
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(OTHER_RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && Integer.valueOf(0).equals(s.getReliabilityPercent())));
+
+        clearInvocations(kafkaTemplate);
+        assertThat(riderStatsPublisher.syncAll()).isEqualTo(2);
+        verify(kafkaTemplate, times(2)).send(eq(KafkaTopics.RIDER_STATS_CHANGED), anyString(), any());
+    }
+
+    @Test
+    void aBookingThatHasntEndedSendsNothing() {
+        RoutePost route = route(4);
+        clearInvocations(kafkaTemplate);
+
+        confirm(book(route, RIDER, 1));
+
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.RIDER_STATS_CHANGED), anyString(), any());
+    }
+
+    @Test
+    void opsSeesARidersPaidTripsNewestFirstAndCanSearchByRouteDriverDateOrDay() {
+        Instant soon = Instant.now().plus(2, ChronoUnit.DAYS);
+        Instant later = Instant.now().plus(5, ChronoUnit.DAYS);
+        RoutePost near = routePostRepository.save(routeBuilder(4).departureTime(soon).build());
+        RoutePost far = routePostRepository.save(routeBuilder(4).departureTime(later).destinationLabel("Victoria Island").build());
+        Booking first = book(near, RIDER, 1);
+        confirm(first);
+        Booking second = book(far, RIDER, 2);
+        confirm(second);
+        book(route(4), RIDER, 1);
+        confirm(book(route(4), OTHER_RIDER, 1));
+
+        var all = opsRiderTripService.trips(RIDER, null, 0, 10);
+        assertThat(all.content()).extracting(org.coryd.trip.dto.OpsRiderTrip::bookingId).containsExactly(second.getId(), first.getId());
+        assertThat(all.content().get(0).destinationLabel()).isEqualTo("Victoria Island");
+        assertThat(all.content().get(0).seatCount()).isEqualTo(2);
+        assertThat(all.content().get(0).driverId()).isEqualTo(DRIVER);
+
+        assertThat(ids(opsRiderTripService.trips(RIDER, "victoria", 0, 10))).containsExactly(second.getId());
+        assertThat(ids(opsRiderTripService.trips(RIDER, "OBALENDE", 0, 10))).containsExactly(first.getId());
+        java.time.ZonedDateTime farDay = later.atZone(java.time.ZoneId.of("Africa/Lagos"));
+        String dayMonth = farDay.getDayOfMonth() + " " + farDay.getMonth().getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH);
+        assertThat(ids(opsRiderTripService.trips(RIDER, dayMonth, 0, 10))).containsExactly(second.getId());
+        assertThat(ids(opsRiderTripService.trips(RIDER, farDay.toLocalDate().toString(), 0, 10))).containsExactly(second.getId());
+        String weekday = farDay.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH);
+        assertThat(ids(opsRiderTripService.trips(RIDER, weekday, 0, 10))).contains(second.getId()).doesNotContain(first.getId());
+        assertThat(ids(opsRiderTripService.trips(RIDER, "1 Jan 1999", 0, 10))).isEmpty();
+        String driverDay = farDay.getDayOfWeek().plus(1).getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH);
+        bookingRepository.findById(first.getId()).ifPresent(b -> {
+            b.setDriverNameSnapshot(driverDay + " Adeyemi");
+            bookingRepository.save(b);
+        });
+        assertThat(ids(opsRiderTripService.trips(RIDER, driverDay, 0, 10)))
+                .as("a driver named like a day is still found by name").contains(first.getId());
+        assertThat(ids(opsRiderTripService.trips(RIDER, "100%_", 0, 10))).isEmpty();
+
+        var page = opsRiderTripService.trips(RIDER, null, 1, 1);
+        assertThat(ids(page)).containsExactly(first.getId());
+        assertThat(page.totalElements()).isEqualTo(2);
+    }
+
+    @Test
+    void aTripsReceiptCarriesTheRouteDriverSeatsAndFare() {
+        RoutePost done = route(4);
+        Booking ridden = book(done, RIDER, 2);
+        confirm(ridden);
+        start(done);
+        pickUp(ridden);
+        bookingService.completeTrip(ridden.getId(), DRIVER);
+
+        var receipt = opsRiderTripService.receipt(RIDER, ridden.getId());
+
+        assertThat(receipt.status()).isEqualTo(BookingStatus.COMPLETED);
+        assertThat(receipt.originLabel()).isEqualTo("Campos Memorial Mini Stadium");
+        assertThat(receipt.pickupLabel()).isEqualTo("Pickup point");
+        assertThat(receipt.dropoffLabel()).isEqualTo("Obalende Bridge");
+        assertThat(receipt.driverId()).isEqualTo(DRIVER);
+        assertThat(receipt.seatCount()).isEqualTo(2);
+        assertThat(receipt.farePerSeat()).isEqualByComparingTo(FARE);
+        assertThat(receipt.fareTotal()).isEqualByComparingTo(reload(ridden).getFareTotal());
+        assertThat(receipt.paidAt()).isNotNull();
+        assertThat(receipt.pickedUpAt()).isNotNull();
+        assertThat(receipt.completedAt()).isNotNull();
+        assertThatThrownBy(() -> opsRiderTripService.receipt(OTHER_RIDER, ridden.getId())).isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> opsRiderTripService.receipt(RIDER, "nope")).isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    private static List<String> ids(org.coryd.common.response.PagedResponse<org.coryd.trip.dto.OpsRiderTrip> page) {
+        return page.content().stream().map(org.coryd.trip.dto.OpsRiderTrip::bookingId).toList();
+    }
+
+    @Test
     void aDriverCancellingTheirTripSendsTheirNewReliability() {
         RoutePost route = route(4);
         confirm(book(route, RIDER, 1));
@@ -852,7 +1017,7 @@ class BookingFlowIntegrationTest {
         RoutePost soon = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
         confirm(book(soon, RIDER, 1));
         var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
-                org.mockito.Mockito.mock(NearbyDemandService.class));
+                org.mockito.Mockito.mock(NearbyDemandService.class), matchingProperties);
 
         job.sendUpcomingDepartureReminders();
         job.sendUpcomingDepartureReminders();
@@ -867,7 +1032,7 @@ class BookingFlowIntegrationTest {
         RoutePost route = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(25, ChronoUnit.MINUTES)).build());
         postedAt(route, Instant.now().minus(2, ChronoUnit.HOURS));
         var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
-                org.mockito.Mockito.mock(NearbyDemandService.class));
+                org.mockito.Mockito.mock(NearbyDemandService.class), matchingProperties);
 
         job.sendUpcomingDepartureReminders();
         job.sendUpcomingDepartureReminders();
@@ -880,7 +1045,7 @@ class BookingFlowIntegrationTest {
     void leaveNowRouteSkipsTheDriverGetReadyReminder() {
         routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(25, ChronoUnit.MINUTES)).build());
         var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
-                org.mockito.Mockito.mock(NearbyDemandService.class));
+                org.mockito.Mockito.mock(NearbyDemandService.class), matchingProperties);
 
         job.sendUpcomingDepartureReminders();
 
@@ -893,7 +1058,7 @@ class BookingFlowIntegrationTest {
         confirm(book(route, RIDER, 1));
         departAt(route, Instant.now().minus(10, ChronoUnit.MINUTES));
         var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
-                org.mockito.Mockito.mock(NearbyDemandService.class));
+                org.mockito.Mockito.mock(NearbyDemandService.class), matchingProperties);
 
         job.sendUpcomingDepartureReminders();
         job.sendUpcomingDepartureReminders();
@@ -1475,8 +1640,170 @@ class BookingFlowIntegrationTest {
         routeService.cancel(cancelled.getId(), DRIVER);
         assertThat(routeService.getRouteDetails(cancelled.getId(), 6.45, 3.39, RIDER).unavailableReason()).isEqualTo("This ride has been cancelled");
 
-        RoutePost departed = routeAt(Instant.now().minus(10, ChronoUnit.MINUTES), null);
-        assertThat(routeService.getRouteDetails(departed.getId(), 6.45, 3.39, RIDER).unavailableReason()).isEqualTo("This ride has already departed");
+        RoutePost closed = routeAt(Instant.now().minus(11, ChronoUnit.MINUTES), null);
+        assertThat(routeService.getRouteDetails(closed.getId(), 6.45, 3.39, RIDER).unavailableReason()).isEqualTo("This ride is no longer taking bookings");
+    }
+
+    // ---- booking window: until the driver starts, or the grace period after departure ------------
+
+    @Test
+    void aTripNotYetStartedTakesBookingsForTheGracePeriodAfterItsDepartureTime() {
+        RoutePost leaving = routeAt(Instant.now().minus(3, ChronoUnit.MINUTES), 50);
+
+        var details = routeService.getRouteDetails(leaving.getId(), 6.45, 3.39, RIDER);
+        assertThat(details.bookable()).isTrue();
+        assertThat(details.bookableUntil()).isCloseTo(leaving.getDepartureTime().plus(10, ChronoUnit.MINUTES),
+                org.assertj.core.api.Assertions.within(1, ChronoUnit.MILLIS));
+        var request = new org.coryd.trip.dto.SearchRequest(6.45, 3.39, 6.44, 3.40, Instant.now(), null, null);
+        assertThat(routeService.searchAsRider(request, RIDER)).extracting(org.coryd.trip.dto.RideSearchResult::routePostId)
+                .containsExactly(leaving.getId());
+        assertThat(routeService.searchAsRider(request, RIDER).get(0).bookableUntil()).isEqualTo(details.bookableUntil());
+
+        Booking booking = book(leaving, RIDER, 1);
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.HELD);
+        assertThat(booking.getHoldExpiresAt()).isBefore(details.bookableUntil().plusSeconds(1));
+    }
+
+    @Test
+    void aHoldNeverOutlastsTheBookingWindowByMoreThanTheTimeToPay() {
+        RoutePost closingSoon = routeAt(Instant.now().minus(7, ChronoUnit.MINUTES), 50);
+        Instant closes = closingSoon.getDepartureTime().plus(10, ChronoUnit.MINUTES);
+        Booking cut = book(closingSoon, RIDER, 1);
+        assertThat(cut.getHoldExpiresAt()).as("3 minutes left - the hold ends with the window")
+                .isCloseTo(closes, org.assertj.core.api.Assertions.within(1, ChronoUnit.MILLIS));
+
+        RoutePost lastMoment = routeAt(Instant.now().minus(9, ChronoUnit.MINUTES).minus(50, ChronoUnit.SECONDS), 50);
+        Booking floor = book(lastMoment, OTHER_RIDER, 1);
+        assertThat(floor.getHoldExpiresAt()).as("10 seconds left - still long enough to pay")
+                .isBetween(Instant.now().plus(110, ChronoUnit.SECONDS), Instant.now().plus(2, ChronoUnit.MINUTES));
+
+        assertThat(BookingService.holdUntil(Instant.now().plus(1, ChronoUnit.HOURS)))
+                .isBetween(Instant.now().plus(3, ChronoUnit.MINUTES), Instant.now().plus(4, ChronoUnit.MINUTES));
+        assertThat(BookingService.holdUntil(null)).isAfter(Instant.now().plus(3, ChronoUnit.MINUTES));
+    }
+
+    @Test
+    void aPaymentThatLandsAfterTheDriverStartedIsRefundedNotSeated() {
+        RoutePost route = route(4);
+        Booking late = book(route, RIDER, 1);
+        start(route);
+        clearInvocations(kafkaTemplate);
+
+        bookingService.confirm(late.getId());
+
+        assertThat(status(late)).isEqualTo(BookingStatus.CANCELLED_DRIVER);
+        assertThat(reload(late).getPickupCode()).isNull();
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.BookingCancelledEvent c && c.isPaid() && "SYSTEM".equals(c.getCancelledBy())));
+    }
+
+    @Test
+    void aSeatAlreadyPaidForBeforeTheStartStaysConfirmed() {
+        RoutePost route = route(4);
+        Booking paid = book(route, RIDER, 1);
+        confirm(paid);
+        start(route);
+
+        bookingService.confirm(paid.getId());
+
+        assertThat(status(paid)).isEqualTo(BookingStatus.CONFIRMED);
+    }
+
+    @Test
+    void aReservationCantBeAcceptedOnceBookingHasClosed() {
+        RoutePost closed = routeAt(Instant.now().minus(11, ChronoUnit.MINUTES), 50);
+        Booking reserved = bookingRepository.save(Booking.builder().routePostId(closed.getId()).riderId(RIDER).seatCount(1)
+                .fareTotal(FARE).status(BookingStatus.RESERVED).holdExpiresAt(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
+
+        assertThatThrownBy(() -> bookingService.acceptReservation(reserved.getId(), RIDER,
+                new org.coryd.trip.dto.AcceptReservationRequest("Pickup point", 6.45, 3.39)))
+                .isInstanceOf(BadRequestException.class).hasMessage("This ride is no longer taking bookings");
+        assertThat(status(reserved)).isEqualTo(BookingStatus.RESERVED);
+    }
+
+    @Test
+    void anAcceptedReservationsHoldEndsWithTheBookingWindow() {
+        RoutePost closingSoon = routeAt(Instant.now().minus(7, ChronoUnit.MINUTES), 50);
+        Booking reserved = bookingRepository.save(Booking.builder().routePostId(closingSoon.getId()).riderId(RIDER).seatCount(1)
+                .fareTotal(FARE).status(BookingStatus.RESERVED).holdExpiresAt(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
+
+        Booking held = bookingService.acceptReservation(reserved.getId(), RIDER,
+                new org.coryd.trip.dto.AcceptReservationRequest("Pickup point", 6.45, 3.39));
+
+        assertThat(held.getStatus()).isEqualTo(BookingStatus.HELD);
+        assertThat(held.getHoldExpiresAt()).isCloseTo(closingSoon.getDepartureTime().plus(10, ChronoUnit.MINUTES),
+                org.assertj.core.api.Assertions.within(1, ChronoUnit.MILLIS));
+    }
+
+    @Test
+    void undoingANoShowSendsTheRidersNumbersAgain() {
+        RoutePost route = route(4);
+        Booking booking = book(route, RIDER, 1);
+        confirm(booking);
+        start(route);
+        bookingService.markNoShow(booking.getId(), DRIVER);
+        clearInvocations(kafkaTemplate);
+
+        bookingService.undoManifestMark(booking.getId(), DRIVER);
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(RIDER), any());
+    }
+
+    @Test
+    void bookingClosesOnceTheGracePeriodRunsOut() {
+        RoutePost tooLate = routeAt(Instant.now().minus(11, ChronoUnit.MINUTES), 50);
+
+        assertThatThrownBy(() -> book(tooLate, RIDER, 1)).isInstanceOf(BadRequestException.class)
+                .hasMessage("This ride is no longer taking bookings");
+        var request = new org.coryd.trip.dto.SearchRequest(6.45, 3.39, 6.44, 3.40, Instant.now(), null, null);
+        assertThat(routeService.searchAsRider(request, RIDER)).isEmpty();
+        assertThat(routeService.getNearbyOptions(request, RIDER)).isEmpty();
+        assertThat(routeService.getNearbyActivity(6.45, 3.39, 5, RIDER).count()).isZero();
+    }
+
+    @Test
+    void bookingClosesTheMomentTheDriverStarts() {
+        RoutePost route = route(4);
+        confirm(book(route, RIDER, 1));
+        start(route);
+
+        var details = routeService.getRouteDetails(route.getId(), 6.45, 3.39, OTHER_RIDER);
+        assertThat(details.bookable()).isFalse();
+        assertThat(details.bookableUntil()).isNull();
+        assertThatThrownBy(() -> book(route, OTHER_RIDER, 1)).isInstanceOf(BadRequestException.class)
+                .hasMessage("This ride is no longer taking bookings");
+        var request = new org.coryd.trip.dto.SearchRequest(6.45, 3.39, 6.44, 3.40, Instant.now(), null, null);
+        assertThat(routeService.searchAsRider(request, OTHER_RIDER)).isEmpty();
+    }
+
+    @Test
+    void aFullTripIsNotShownButStillSaysWhenBookingCloses() {
+        RoutePost full = routePostRepository.save(routeBuilder(1).status(RouteStatus.FULL).seatsAvailable(0).build());
+        var request = new org.coryd.trip.dto.SearchRequest(6.45, 3.39, 6.44, 3.40, full.getDepartureTime(), null, null);
+
+        assertThat(routeService.searchAsRider(request, RIDER)).isEmpty();
+        assertThat(routeService.getRouteDetails(full.getId(), 6.45, 3.39, RIDER).bookableUntil()).isNotNull();
+    }
+
+    @Test
+    void aLeavingNowDriverIsOnlyNudgedToStartOnceBookingHasClosed() {
+        var job = new org.coryd.trip.scheduler.RouteDepartureReminderJob(routePostRepository, bookingRepository, kafkaTemplate,
+                org.mockito.Mockito.mock(NearbyDemandService.class), matchingProperties);
+        RoutePost stillBooking = routeAt(Instant.now().minus(3, ChronoUnit.MINUTES), 50);
+        postedAt(stillBooking, Instant.now().minus(5, ChronoUnit.MINUTES));
+        RoutePost closed = routeAt(Instant.now().minus(12, ChronoUnit.MINUTES), 50);
+        postedAt(closed, Instant.now().minus(14, ChronoUnit.MINUTES));
+        RoutePost scheduled = routeAt(Instant.now().minus(3, ChronoUnit.MINUTES), 50);
+        postedAt(scheduled, Instant.now().minus(3, ChronoUnit.HOURS));
+        clearInvocations(kafkaTemplate);
+
+        job.sendUpcomingDepartureReminders();
+
+        assertThat(routePostRepository.findById(stillBooking.getId()).orElseThrow().getStartNudgeSentAt()).isNull();
+        assertThat(routePostRepository.findById(closed.getId()).orElseThrow().getStartNudgeSentAt()).isNotNull();
+        assertThat(routePostRepository.findById(scheduled.getId()).orElseThrow().getStartNudgeSentAt())
+                .as("a trip posted well ahead is still nudged at its departure time").isNotNull();
+        verify(kafkaTemplate, times(2)).send(eq(KafkaTopics.ROUTE_DEPARTURE_REMINDER), argThat(e -> kind(e).equals("DRIVER_START_OVERDUE")));
     }
 
     // ---- ops console ------------------------------------------------------------------------------

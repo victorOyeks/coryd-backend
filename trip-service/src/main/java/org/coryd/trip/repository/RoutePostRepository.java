@@ -151,7 +151,7 @@ public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
 
     /**
      * Powers the "Rides nearby" map - bookable routes (published, seats left, departing between now
-     * and latest, not the caller's own) whose origin sits within radiusKm of the given point. Same
+     * and latest, not the caller's own; "now" is passed less the booking grace, as a trip takes riders until then) whose origin sits within radiusKm of the given point. Same
      * Haversine expression as search() (see its comment), matched on origin only since this is about
      * "where are rides starting near me."
      */

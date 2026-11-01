@@ -349,12 +349,36 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.DOCUMENT_EXPIRING, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onDocumentExpiring(DocumentExpiringEvent event) {
-        dispatchService.sendPush(event.getDriverId(), "Document expiring soon",
-                "Your " + event.getDocumentType() + " expires in " + event.getDaysRemaining() + " days.", "DOCUMENT_EXPIRING", null);
+        String label = documentLabel(event.getDocumentType());
+        int days = event.getDaysRemaining();
+        String when = event.getExpiresOn() == null ? "" : " on " + event.getExpiresOn().format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH));
+        if (days < 0) {
+            dispatchService.sendPush(event.getDriverId(), label + " expired",
+                    "Your " + label.toLowerCase() + " expired" + when + ". Upload a current one to post trips again.", "DOCUMENT_EXPIRING", null);
+            return;
+        }
+        String in = days == 0 ? "today" : days == 1 ? "tomorrow" : "in " + days + " days";
+        dispatchService.sendPush(event.getDriverId(), label + " expiring soon",
+                "Your " + label.toLowerCase() + " expires " + in + ". Upload the renewed one before then to keep posting trips.",
+                "DOCUMENT_EXPIRING", null);
+    }
+
+    private static String documentLabel(String documentType) {
+        if ("INSURANCE".equals(documentType)) {
+            return "Insurance certificate";
+        }
+        if ("ROADWORTHINESS_CERT".equals(documentType)) {
+            return "Roadworthiness certificate";
+        }
+        return documentType == null ? "Document" : documentType;
     }
 
     @KafkaListener(topics = KafkaTopics.DRIVER_APPROVED, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onDriverApproved(DriverApprovedEvent event) {
+        // Approved again after a renewal or a rejection - the per-document push already told them.
+        if (Boolean.FALSE.equals(event.getFirstApproval())) {
+            return;
+        }
         dispatchService.sendPush(event.getDriverId(), "You're verified!",
                 "Your CoRyd driver verification is complete. You can start posting routes now.", "DRIVER_APPROVED", null);
         if (event.getEmail() != null) {

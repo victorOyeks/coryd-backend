@@ -67,4 +67,10 @@ public class DriverDocument extends BaseEntity {
     private String reviewedBy;
 
     private Instant reviewedAt;
+
+    /** When the driver was last told this document is expiring or expired - by the nightly reminders or an ops admin. */
+    private Instant lastNotifiedAt;
+
+    /** Who sent it: an ops admin's name, or "system" for the nightly reminders. */
+    private String lastNotifiedBy;
 }

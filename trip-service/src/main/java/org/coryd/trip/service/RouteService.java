@@ -426,7 +426,9 @@ public class RouteService {
             }
         }
 
+        Instant now = Instant.now();
         List<RoutePost> matched = withoutBlocked(new ArrayList<>(routes.values()), riderId).stream()
+                .filter(r -> openForBooking(r, now))
                 .sorted(Comparator.comparing((RoutePost r) -> along.containsKey(r.getId()) ? along.get(r.getId()).pickup().time() : r.getDepartureTime()))
                 .toList();
         Set<String> partWay = along.keySet().stream().filter(id -> !endToEnd.contains(id)).collect(Collectors.toSet());
@@ -471,7 +473,9 @@ public class RouteService {
                 radiusKm
         );
 
-        List<RoutePost> capped = withoutBlocked(matches, riderId).stream().limit(NEARBY_OPTIONS_LIMIT).toList();
+        Instant now = Instant.now();
+        List<RoutePost> capped = withoutBlocked(matches, riderId).stream().filter(r -> openForBooking(r, now))
+                .limit(NEARBY_OPTIONS_LIMIT).toList();
         return enrich(capped, request.originLat(), request.originLng());
     }
 
@@ -494,8 +498,23 @@ public class RouteService {
                 route.getRoutePolyline() != null ? route.getRoutePolyline()
                         : overviewPolyline(route.getOriginLat(), route.getOriginLng(), route.getDestinationLat(), route.getDestinationLng()),
                 unavailableReason == null, unavailableReason, route.getViaSummary(),
-                base.vehicleColour(), route.getOriginalDepartureTime(), route.getTimeChangeCount()
+                base.vehicleColour(), route.getOriginalDepartureTime(), route.getTimeChangeCount(),
+                bookableUntil(route)
         );
+    }
+
+    /** Still taking bookings: published, seats left, and booking hasn't closed - the driver hasn't started and the grace
+     * period after departure hasn't run out. Search shows only these, so whatever a rider finds, they can book. */
+    private boolean openForBooking(RoutePost route, Instant now) {
+        return route.getStatus() == RouteStatus.PUBLISHED
+                && route.getSeatsAvailable() != null && route.getSeatsAvailable() > 0
+                && now.isBefore(matchingProperties.bookableUntil(route.getDepartureTime()));
+    }
+
+    /** When booking closes, for the app's countdown - null once the trip can't take bookings at all. */
+    private java.time.Instant bookableUntil(RoutePost route) {
+        return route.getStatus() == RouteStatus.PUBLISHED || route.getStatus() == RouteStatus.FULL
+                ? matchingProperties.bookableUntil(route.getDepartureTime()) : null;
     }
 
     /** Why this rider can't book this route right now, in words the app shows as-is - null when they can.
@@ -509,8 +528,8 @@ public class RouteService {
             case IN_PROGRESS, COMPLETED -> "This ride has already left";
             case FULL -> "This ride is full";
             default -> {
-                if (!route.getDepartureTime().isAfter(Instant.now())) {
-                    yield "This ride has already departed";
+                if (!Instant.now().isBefore(matchingProperties.bookableUntil(route.getDepartureTime()))) {
+                    yield "This ride is no longer taking bookings";
                 }
                 if (route.getSeatsAvailable() == null || route.getSeatsAvailable() <= 0) {
                     yield "This ride is full";
@@ -647,7 +666,8 @@ public class RouteService {
                     stop(along.get(route.getId()), false, dropoffLabel),
                     route.getViaSummary(),
                     vehicle == null ? null : vehicle.color(),
-                    route.getTimeChangeCount()
+                    route.getTimeChangeCount(),
+                    bookableUntil(route)
             );
         }).toList();
     }
@@ -710,7 +730,8 @@ public class RouteService {
      * that's a Maps call per pin; the details screen computes it for the one route tapped. */
     public NearbyActivityResponse getNearbyActivity(double lat, double lng, double radiusKm, String callerId) {
         Instant now = Instant.now();
-        List<RoutePost> nearby = withoutBlocked(routePostRepository.findNearbyOrigins(lat, lng, radiusKm, now,
+        Instant closedBefore = now.minus(matchingProperties.getBookingGraceMinutes(), ChronoUnit.MINUTES);
+        List<RoutePost> nearby = withoutBlocked(routePostRepository.findNearbyOrigins(lat, lng, radiusKm, closedBefore,
                 now.plus(NEARBY_OPTIONS_TIME_WINDOW_HOURS, ChronoUnit.HOURS), callerId), callerId);
         if (nearby.isEmpty()) {
             return new NearbyActivityResponse(0, List.of());

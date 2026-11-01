@@ -136,6 +136,89 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
         Long getReports();
     }
 
+    /**
+     * The Riders Directory's numbers for many riders at once: trips completed, paid seats they cancelled (not those ops
+     * cancelled by suspending them) or didn't show up for, and what their completed trips cost them. Riders with no
+     * bookings are left out.
+     */
+    @Query(value = "select b.rider_id as riderId,"
+            + " count(*) filter (where b.status = 'COMPLETED') as completed,"
+            + " count(*) filter (where b.status = 'CANCELLED_RIDER' and b.confirmed_at is not null"
+            + "   and not exists (select 1 from trip.booking_status_history h"
+            + "                   where h.booking_id = b.id and h.note like '" + org.coryd.trip.service.BookingService.SUSPENDED_NOTE + "%')) as cancelledRider,"
+            + " count(*) filter (where b.status = 'NO_SHOW') as noShow,"
+            + " coalesce(sum(b.fare_total) filter (where b.status = 'COMPLETED'), 0) as spent"
+            + " from trip.bookings b"
+            + " where b.rider_id in (:riderIds)"
+            + " group by b.rider_id", nativeQuery = true)
+    List<RiderTripCounts> countTripsForRiders(@Param("riderIds") Collection<String> riderIds);
+
+    interface RiderTripCounts {
+        String getRiderId();
+        Long getCompleted();
+        Long getCancelledRider();
+        Long getNoShow();
+        java.math.BigDecimal getSpent();
+    }
+
+    /** Problems drivers reported on these riders' bookings - not the riders' own reports. */
+    @Query(value = """
+            select b.rider_id as riderId, count(*) as reports
+            from trip.issue_reports i
+            join trip.bookings b on b.id = i.booking_id
+            where b.rider_id in (:riderIds) and i.reported_by <> b.rider_id
+            group by b.rider_id
+            """, nativeQuery = true)
+    List<RiderReportCount> countReportsAgainstRiders(@Param("riderIds") Collection<String> riderIds);
+
+    interface RiderReportCount {
+        String getRiderId();
+        Long getReports();
+    }
+
+    /**
+     * The Ops Console's trip history for one rider: paid bookings, newest trip first. A trip matches when text (lower case,
+     * "%...%", or "" for none) matches the route, its ends or the driver, or - when hasDate is 1 - its date in Lagos
+     * matches year/month/day/isodow (0 for any). Either, so "Sunday" finds a driver called Sunday as well as Sunday trips.
+     * departure_time is stored in the JVM's zone; shiftSeconds moves it to Lagos.
+     */
+    @Query(value = """
+            select b.* from trip.bookings b
+            join trip.route_posts r on r.id = b.route_post_id
+            where b.rider_id = :riderId and b.confirmed_at is not null
+              and ((:text = '' and :hasDate = 0)
+                   or (:text <> '' and (lower(coalesce(b.route_summary_snapshot, '')) like :text or lower(r.origin_label) like :text
+                        or lower(r.destination_label) like :text or lower(coalesce(b.driver_name_snapshot, '')) like :text))
+                   or (:hasDate = 1
+                        and (:year = 0 or extract(year from r.departure_time + make_interval(secs => :shiftSeconds)) = :year)
+                        and (:month = 0 or extract(month from r.departure_time + make_interval(secs => :shiftSeconds)) = :month)
+                        and (:day = 0 or extract(day from r.departure_time + make_interval(secs => :shiftSeconds)) = :day)
+                        and (:isodow = 0 or extract(isodow from r.departure_time + make_interval(secs => :shiftSeconds)) = :isodow)))
+            order by r.departure_time desc, b.id
+            """, countQuery = """
+            select count(*) from trip.bookings b
+            join trip.route_posts r on r.id = b.route_post_id
+            where b.rider_id = :riderId and b.confirmed_at is not null
+              and ((:text = '' and :hasDate = 0)
+                   or (:text <> '' and (lower(coalesce(b.route_summary_snapshot, '')) like :text or lower(r.origin_label) like :text
+                        or lower(r.destination_label) like :text or lower(coalesce(b.driver_name_snapshot, '')) like :text))
+                   or (:hasDate = 1
+                        and (:year = 0 or extract(year from r.departure_time + make_interval(secs => :shiftSeconds)) = :year)
+                        and (:month = 0 or extract(month from r.departure_time + make_interval(secs => :shiftSeconds)) = :month)
+                        and (:day = 0 or extract(day from r.departure_time + make_interval(secs => :shiftSeconds)) = :day)
+                        and (:isodow = 0 or extract(isodow from r.departure_time + make_interval(secs => :shiftSeconds)) = :isodow)))
+            """, nativeQuery = true)
+    org.springframework.data.domain.Page<Booking> findRiderTripsForOps(@Param("riderId") String riderId, @Param("text") String text,
+                                                                      @Param("year") int year, @Param("month") int month,
+                                                                      @Param("day") int day, @Param("isodow") int isodow,
+                                                                      @Param("hasDate") int hasDate,
+                                                                      @Param("shiftSeconds") int shiftSeconds,
+                                                                      org.springframework.data.domain.Pageable pageable);
+
+    /** Everyone who has ever booked, a page at a time - the nightly rider stats sync. */
+    @Query("select distinct b.riderId from Booking b order by b.riderId")
+    org.springframework.data.domain.Slice<String> findDistinctRiderIds(org.springframework.data.domain.Pageable pageable);
+
     interface DriverTripCounts {
         Long getCompleted();
         Long getCancelledDriver();

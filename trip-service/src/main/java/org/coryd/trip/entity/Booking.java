@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity
+@jakarta.persistence.EntityListeners(BookingRiderStatsListener.class)
 @Table(name = "bookings", schema = "trip")
 @Getter
 @Setter

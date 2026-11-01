@@ -33,7 +33,7 @@ public class UserService {
         return userRepository.findAllById(userIds).stream()
                 .map(user -> new UserContactResponse(user.getId(), Names.join(user.getFirstName(), user.getLastName()),
                         user.getFirstName(), user.getLastName(), user.getPhone(),
-                        user.getSuspendedAt(), user.getSuspensionReason(), user.getCreatedAt()))
+                        user.getSuspendedAt(), user.getSuspensionReason(), user.getCreatedAt(), java.util.Set.copyOf(user.getRoles())))
                 .toList();
     }
 

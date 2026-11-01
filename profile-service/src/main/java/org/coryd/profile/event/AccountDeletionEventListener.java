@@ -45,7 +45,8 @@ public class AccountDeletionEventListener {
             "DELETE FROM profile.identity_verifications WHERE user_id = ?",
             "DELETE FROM profile.rider_profiles WHERE user_id = ?",
             "DELETE FROM profile.driver_profiles WHERE user_id = ?",
-            "DELETE FROM profile.driver_index WHERE driver_id = ?");
+            "DELETE FROM profile.driver_index WHERE driver_id = ?",
+            "DELETE FROM profile.rider_index WHERE rider_id = ?");
 
     private final JdbcTemplate jdbc;
     private final CloudinaryService cloudinaryService;

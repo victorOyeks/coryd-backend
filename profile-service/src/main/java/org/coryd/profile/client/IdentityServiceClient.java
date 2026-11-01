@@ -84,7 +84,17 @@ public class IdentityServiceClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Contact(String userId, String phone, java.time.Instant suspendedAt, String suspensionReason, java.time.Instant joinedAt) {
+    public record Contact(String userId, String phone, java.time.Instant suspendedAt, String suspensionReason, java.time.Instant joinedAt,
+                          java.util.Set<String> roles) {
+
+        public Contact(String userId, String phone, java.time.Instant suspendedAt, String suspensionReason, java.time.Instant joinedAt) {
+            this(userId, phone, suspendedAt, suspensionReason, joinedAt, null);
+        }
+
+        /** Null when identity-service didn't say - treat as a rider rather than drop them. */
+        public boolean isRider() {
+            return roles == null || roles.contains("RIDER");
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

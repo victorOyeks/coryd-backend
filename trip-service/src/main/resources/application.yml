@@ -89,6 +89,8 @@ matching:
   max-trip-minutes: ${MATCHING_MAX_TRIP_MINUTES:240}
   # Ask PostGIS for along-the-way candidates when it's installed; false forces the in-memory path.
   use-postgis: ${MATCHING_USE_POSTGIS:true}
+  # Riders can book until the driver taps Start, or this many minutes after the departure time if they haven't.
+  booking-grace-minutes: ${BOOKING_GRACE_MINUTES:10}
 
 # STRICT (default): nobody books (riders) or posts (drivers) until their NIN + selfie check is approved.
 # OFF only where nobody can be verified yet.
@@ -139,6 +141,10 @@ trip:
   driver-stats:
     sync-cron: ${DRIVER_STATS_SYNC_CRON:0 30 2 * * *}
     sync-on-startup: ${DRIVER_STATS_SYNC_ON_STARTUP:true}
+  # The same for the rider index (Riders Directory): trips, rating, reliability, reports and spend.
+  rider-stats:
+    sync-cron: ${RIDER_STATS_SYNC_CRON:0 35 2 * * *}
+    sync-on-startup: ${RIDER_STATS_SYNC_ON_STARTUP:true}
   # "You saved about N compared with a solo cab" on a rider's booking: base + per road km, roughly a solo ride-hailing fare.
   savings:
     enabled: ${SAVINGS_ENABLED:true}

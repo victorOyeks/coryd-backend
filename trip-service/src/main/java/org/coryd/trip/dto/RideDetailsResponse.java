@@ -45,6 +45,9 @@ public record RideDetailsResponse(
         /** The departure before the driver first changed it - null while it never has. */
         java.time.Instant originalDepartureTime,
         /** How many times the driver changed this trip's time with riders booked. */
-        int timeChangeCount
+        int timeChangeCount,
+        /** When booking closes - the departure time plus the grace period, or sooner if the driver starts. Null once the
+         * trip isn't taking bookings (started, finished or cancelled). */
+        java.time.Instant bookableUntil
 ) {
 }

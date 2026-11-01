@@ -46,6 +46,7 @@ public class RouteDepartureReminderJob {
     private final BookingRepository bookingRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final NearbyDemandService nearbyDemandService;
+    private final org.coryd.trip.config.MatchingProperties matchingProperties;
 
     @Scheduled(fixedDelay = 60_000)
     public void sendUpcomingDepartureReminders() {
@@ -55,9 +56,7 @@ public class RouteDepartureReminderJob {
                         NOT_STARTED, now, now.plus(TripScheduleService.ACTIVE_WINDOW)),
                 routePostRepository::markDriverReminderSent, now, route -> {
                     // Posted already inside the window ("leave now") - the driver is on the passenger screen already.
-                    boolean postedInsideWindow = route.getCreatedAt() != null
-                            && route.getCreatedAt().isAfter(route.getDepartureTime().minus(TripScheduleService.ACTIVE_WINDOW));
-                    if (postedInsideWindow) {
+                    if (postedInsideWindow(route)) {
                         return null;
                     }
                     RouteDepartureReminderEvent ready = event(route, DRIVER_GET_READY, confirmedRiders(route));
@@ -72,10 +71,20 @@ public class RouteDepartureReminderJob {
                     return riders.isEmpty() ? null : event(route, RIDER_GET_READY, riders);
                 });
 
+        // A trip posted to leave soon ("I'm leaving now") is still taking riders for the grace period after departure -
+        // the driver is waiting for them, so the "due to leave" nudge waits until booking has closed.
         sweep(routePostRepository.findByStatusInAndDepartureTimeBetweenAndStartNudgeSentAtIsNull(
-                        NOT_STARTED, now.minus(RouteExpiryJob.NEVER_STARTED_GRACE), now),
+                        NOT_STARTED, now.minus(RouteExpiryJob.NEVER_STARTED_GRACE), now).stream()
+                        .filter(route -> !postedInsideWindow(route) || !now.isBefore(matchingProperties.bookableUntil(route.getDepartureTime())))
+                        .toList(),
                 routePostRepository::markStartNudgeSent, now,
                 route -> event(route, DRIVER_START_OVERDUE, confirmedRiders(route)));
+    }
+
+    /** Posted less than the active window before departure - "I'm leaving now", or close to it. */
+    private static boolean postedInsideWindow(RoutePost route) {
+        return route.getCreatedAt() != null
+                && route.getCreatedAt().isAfter(route.getDepartureTime().minus(TripScheduleService.ACTIVE_WINDOW));
     }
 
     private void sweep(List<RoutePost> routes, BiFunction<String, Instant, Integer> claim, Instant now,

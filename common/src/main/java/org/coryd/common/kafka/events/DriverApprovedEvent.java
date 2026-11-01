@@ -17,4 +17,7 @@ public class DriverApprovedEvent {
     private String email;
     private String reviewedBy;
     private LocalDateTime approvedAt;
+    /** False when a verified driver is approved again (a renewed or re-uploaded document) - they can post again, but
+     * aren't welcomed as if new. Null from older senders means a first approval. */
+    private Boolean firstApproval;
 }

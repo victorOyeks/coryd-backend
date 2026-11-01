@@ -114,11 +114,16 @@ final class DriverIndexSpecs {
     /** A search term, lower case: as typed (escaped for LIKE), letters and digits only (ref and plate), digits only (phone). */
     record Term(String escaped, String ref, String digits) {
         static Term of(String search) {
+            return of(search, "d-");
+        }
+
+        /** refPrefix is the reference's lower-case prefix ("d-", "r-"), dropped from a typed reference. */
+        static Term of(String search, String refPrefix) {
             if (search == null || search.isBlank()) {
                 return null;
             }
             String term = search.trim().toLowerCase(Locale.ROOT);
-            String ref = (term.startsWith("d-") ? term.substring(2) : term).replaceAll("[^a-z0-9]", "");
+            String ref = (term.startsWith(refPrefix) ? term.substring(refPrefix.length()) : term).replaceAll("[^a-z0-9]", "");
             return new Term(term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"), ref, term.replaceAll("[^0-9]", ""));
         }
     }

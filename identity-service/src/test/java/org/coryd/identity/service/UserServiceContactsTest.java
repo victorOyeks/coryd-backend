@@ -23,7 +23,8 @@ class UserServiceContactsTest {
     void contactsCarryTheSuspensionAndSignUpDate() {
         Instant joined = Instant.parse("2026-01-12T09:00:00Z");
         Instant suspended = Instant.parse("2026-10-01T10:00:00Z");
-        User active = User.builder().phone("08011112222").firstName("Ada").lastName("Obi").build();
+        User active = User.builder().phone("08011112222").firstName("Ada").lastName("Obi")
+                .roles(new java.util.HashSet<>(java.util.Set.of(org.coryd.common.enums.UserRole.RIDER))).build();
         active.setId("u-1");
         active.setCreatedAt(joined);
         User off = User.builder().phone("08033334444").firstName("Tunde").lastName("Bakare")
@@ -33,7 +34,9 @@ class UserServiceContactsTest {
 
         List<UserContactResponse> contacts = userService.getContacts(List.of("u-1", "u-2"));
 
-        assertThat(contacts.get(0)).isEqualTo(new UserContactResponse("u-1", "Ada Obi", "Ada", "Obi", "08011112222", null, null, joined));
+        assertThat(contacts.get(0)).isEqualTo(new UserContactResponse("u-1", "Ada Obi", "Ada", "Obi", "08011112222", null, null, joined,
+                java.util.Set.of(org.coryd.common.enums.UserRole.RIDER)));
+        assertThat(contacts.get(1).roles()).isEmpty();
         assertThat(contacts.get(1).suspendedAt()).isEqualTo(suspended);
         assertThat(contacts.get(1).suspensionReason()).isEqualTo("Threatened a rider");
     }

@@ -56,6 +56,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic riderStatsChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.RIDER_STATS_CHANGED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic seatReservedTopic() {
         return TopicBuilder.name(KafkaTopics.SEAT_RESERVED).partitions(3).replicas(1).build();
     }

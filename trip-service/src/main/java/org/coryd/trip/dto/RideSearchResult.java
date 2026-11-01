@@ -39,6 +39,9 @@ public record RideSearchResult(
         /** The car's colour, to spot it in a car park - null if the driver never gave one. */
         String vehicleColour,
         /** How many times the driver changed this trip's time with riders booked. */
-        int timeChangeCount
+        int timeChangeCount,
+        /** When booking closes - the departure time plus the grace period, or sooner if the driver starts. Use this, not
+         * departureTime, for any "book by" countdown. Null once the trip isn't taking bookings. */
+        java.time.Instant bookableUntil
 ) {
 }

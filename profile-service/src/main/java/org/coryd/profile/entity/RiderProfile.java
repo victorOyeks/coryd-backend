@@ -12,6 +12,7 @@ import org.coryd.common.entity.BaseEntity;
 
 
 @Entity
+@jakarta.persistence.EntityListeners(RiderIndexListener.class)
 @Table(name = "rider_profiles", schema = "profile")
 @Getter
 @Setter

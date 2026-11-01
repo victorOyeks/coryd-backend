@@ -102,7 +102,8 @@ import static org.mockito.Mockito.when;
         OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class, DemandService.class,
         DemandProperties.class, TimeChangeProperties.class, RouteTimeChangeService.class, SavingsProperties.class,
         SavedPlaceService.class, RecentDestinationService.class, NearbyDemandService.class, NearbyAlertService.class,
-        NearbyAlertProperties.class, RouteDepartureReminderJob.class, PilotMetricsService.class, OpsDriverStatsService.class, DriverStatsPublisher.class})
+        NearbyAlertProperties.class, RouteDepartureReminderJob.class, PilotMetricsService.class, OpsDriverStatsService.class, DriverStatsPublisher.class,
+        OpsRiderStatsService.class, RiderStatsPublisher.class, OpsRiderTripService.class})
 class LeavingNowIntegrationTest {
 
     @Container

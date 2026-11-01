@@ -38,5 +38,6 @@
     <include file="db/changelog/027-verification-review.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/028-licence-decided-during-check.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/029-driver-index.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/030-document-expiry-and-rider-index.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

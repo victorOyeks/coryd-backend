@@ -24,6 +24,29 @@ public class InternalRiderController {
 
     private final RiderProfileService riderProfileService;
     private final EmergencyContactService emergencyContactService;
+    private final org.coryd.profile.service.RiderIndexService riderIndexService;
+
+    /** ops-service's Riders Directory - one indexed query: filter, sort and page in the database. */
+    @GetMapping("/index")
+    public ApiResponse<org.coryd.common.response.PagedResponse<org.coryd.profile.dto.RiderIndexView>> index(
+            @RequestParam(required = false) org.coryd.common.enums.RiderDirectoryStatus status,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) org.coryd.common.enums.RiderDirectorySort sort,
+            @RequestParam(required = false) org.springframework.data.domain.Sort.Direction direction,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(riderIndexService.directory(status, search, sort, direction, page, size));
+    }
+
+    @GetMapping("/index/counts")
+    public ApiResponse<org.coryd.profile.dto.RiderIndexCounts> indexCounts(@RequestParam(required = false) String search) {
+        return ApiResponse.ok(riderIndexService.counts(search));
+    }
+
+    @GetMapping("/index/{riderId}")
+    public ApiResponse<org.coryd.profile.dto.RiderIndexView> indexedRider(@PathVariable String riderId) {
+        return ApiResponse.ok(riderIndexService.rider(riderId));
+    }
 
     @GetMapping("/{userId}/billing-contact")
     public ApiResponse<BillingContactResponse> billingContact(@PathVariable String userId) {

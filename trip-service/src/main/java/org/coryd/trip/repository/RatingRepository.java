@@ -29,6 +29,15 @@ public interface RatingRepository extends JpaRepository<Rating, String> {
             """)
     List<RatingSummary> summarize(@Param("rateeIds") List<String> rateeIds);
 
+    /** summarize() for ratings given in one direction - a rider's stars from drivers, not any they got as a driver. */
+    @Query("""
+            select r.rateeId as rateeId, avg(r.stars) as avgStars, count(r) as ratingCount
+            from Rating r
+            where r.rateeId in :rateeIds and r.direction = :direction
+            group by r.rateeId
+            """)
+    List<RatingSummary> summarize(@Param("rateeIds") List<String> rateeIds, @Param("direction") RatingDirection direction);
+
     interface RatingSummary {
         String getRateeId();
         Double getAvgStars();

@@ -31,4 +31,16 @@ public class MatchingProperties {
 
     /** Minimum published fares before a corridor gets a suggested-rate range (D-205). */
     private int minFareReports = 5;
+
+    /**
+     * Riders can book until the driver taps Start, or this many minutes after the departure time if they haven't -
+     * a driver still at the start can take another rider, but one who drove off without tapping Start mustn't be sold
+     * seats for long.
+     */
+    private int bookingGraceMinutes = 10;
+
+    /** When booking closes on a trip leaving at departureTime, unless the driver starts it first. */
+    public java.time.Instant bookableUntil(java.time.Instant departureTime) {
+        return departureTime == null ? null : departureTime.plus(java.time.Duration.ofMinutes(bookingGraceMinutes));
+    }
 }
