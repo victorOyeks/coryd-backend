@@ -16,5 +16,6 @@
     <include file="db/changelog/005-user-notification-route-post-id.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/006-notification-log-push-tracing.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/007-ndpc-threshold-alerts.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/008-notification-preferences-whatsapp.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

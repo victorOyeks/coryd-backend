@@ -58,6 +58,22 @@ termii:
   api-key: ${TERMII_API_KEY:placeholder}
   sender-id: ${TERMII_SENDER_ID:OE Alert}
 
+# WhatsApp (docs/whatsapp-notifications.md). Off by default; when on, a notification goes by WhatsApp only if
+# its template id below is set, and falls back to SMS when WhatsApp refuses or fails - never both.
+whatsapp:
+  enabled: ${WHATSAPP_ENABLED:false}
+  provider: ${WHATSAPP_PROVIDER:termii}
+  termii:
+    base-url: ${WHATSAPP_TERMII_BASE_URL:https://api.ng.termii.com}
+    api-key: ${WHATSAPP_TERMII_API_KEY:${TERMII_API_KEY:placeholder}}
+    device-id: ${WHATSAPP_TERMII_DEVICE_ID:}
+  templates:
+    otp: ${WHATSAPP_TEMPLATE_OTP:}
+    trip-share: ${WHATSAPP_TEMPLATE_TRIP_SHARE:}
+    sos-contact: ${WHATSAPP_TEMPLATE_SOS_CONTACT:}
+    sos-ops: ${WHATSAPP_TEMPLATE_SOS_OPS:}
+    safety-escalated: ${WHATSAPP_TEMPLATE_SAFETY_ESCALATED:}
+
 spring.mail:
   host: ${SMTP_HOST:localhost}
   port: ${SMTP_PORT:587}
