@@ -41,6 +41,19 @@ spring:
 jwt:
   secret: ${JWT_SECRET:change-me-in-every-environment}
   expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  # ops console access tokens (riders/drivers keep expiration-ms) - docs/ops-console/security.md
+  ops-expiration-minutes: ${OPS_ACCESS_TOKEN_MINUTES:15}
+
+# Ops console sign-in rules (phase 7) - docs/ops-console/security.md
+ops:
+  # every ops admin must use two-factor sign-in; off by default so nobody is locked out on deploy
+  mfa-required: ${OPS_MFA_REQUIRED:false}
+  mfa:
+    # AES-GCM key for the TOTP secrets (32 bytes base64, or a passphrase); unset = derived from JWT_SECRET
+    encryption-key: ${MFA_ENCRYPTION_KEY:}
+  session:
+    idle-minutes: ${OPS_SESSION_IDLE_MINUTES:30}
+    absolute-hours: ${OPS_SESSION_ABSOLUTE_HOURS:12}
 
 services:
   profile:

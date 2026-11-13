@@ -10,6 +10,7 @@ import org.coryd.common.kafka.events.OpsCountsChangedEvent;
 import org.coryd.common.kafka.events.OpsSosChangedEvent;
 import org.coryd.common.kafka.events.SosTriggeredEvent;
 import org.coryd.common.kafka.events.TripSafetyEscalatedEvent;
+import org.coryd.common.kafka.events.UserTokensRevokedEvent;
 import org.coryd.common.security.JwtUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -197,6 +198,47 @@ class OpsStreamIntegrationTest {
         assertThat(stranger.next("resync").data()).contains("reload");
     }
 
+    // ---- phase 7: streams end with the session -------------------------------------------------------------------
+
+    @Test
+    void anOpenStreamClosesWithSessionEndedWhenTheAdminsTokensAreRevokedAndNoNewOneOpens() throws Exception {
+        String adminId = "admin-revoked-" + System.nanoTime();
+        String bearer = "Bearer " + jwtUtil.generateToken(adminId, null, "Rev", "Oked", UserRole.OPS_ADMIN, org.coryd.common.enums.OpsRole.SUPPORT);
+        HttpResponse<String> issued = post("/ops/stream/token", bearer);
+        assertThat(issued.statusCode()).isEqualTo(200);
+        String streamToken = objectMapper.readTree(issued.body()).get("data").get("token").asText();
+        String spareStreamToken = objectMapper.readTree(post("/ops/stream/token", bearer).body()).get("data").get("token").asText();
+        SseClient stream = connect(streamToken, null);
+        stream.next("hello");
+        SseClient bystander = connect(token(), null);
+        bystander.next("hello");
+
+        Thread.sleep(5);
+        // what identity publishes on deactivation / suspension / sign out everywhere / role change / two-factor reset
+        producer.send(KafkaTopics.USER_TOKENS_REVOKED, adminId, UserTokensRevokedEvent.builder().userId(adminId)
+                .tokensValidAfter(Instant.now()).suspended(false).reason("OPS_ADMIN_DEACTIVATED").stateAt(Instant.now()).build());
+
+        long sent = System.currentTimeMillis();
+        SseEvent bye = stream.next("bye");
+        assertThat(System.currentTimeMillis() - sent).as("within seconds").isLessThan(10_000);
+        JsonNode reason = objectMapper.readTree(bye.data());
+        assertThat(reason.get("reason").asText()).isEqualTo("SESSION_ENDED");
+        assertThat(stream.awaitClosed(Duration.ofSeconds(10))).as("the server closed the stream").isTrue();
+
+        // the old access token gets no new stream token, and a stream token minted before the cut-off no longer opens
+        assertThat(post("/ops/stream/token", bearer).statusCode()).isEqualTo(401);
+        assertThat(openStatus("/ops/stream?token=" + spareStreamToken)).isEqualTo(401);
+        // other admins' streams carry on
+        assertThat(bystander.awaitComment(Duration.ofSeconds(5))).startsWith("hb");
+
+        // after signing in again, streaming works
+        Thread.sleep(5);
+        String fresh = "Bearer " + jwtUtil.generateToken(adminId, null, "Rev", "Oked", UserRole.OPS_ADMIN, org.coryd.common.enums.OpsRole.SUPPORT);
+        HttpResponse<String> again = post("/ops/stream/token", fresh);
+        assertThat(again.statusCode()).isEqualTo(200);
+        connect(objectMapper.readTree(again.body()).get("data").get("token").asText(), null).next("hello");
+    }
+
     // ---- helpers -------------------------------------------------------------------------------------------------
 
     private static OpsSosChangedEvent changed(String id, String status) {
@@ -292,6 +334,12 @@ class OpsStreamIntegrationTest {
                 }
             }
             throw new AssertionError("No '" + name + "' event within 20s");
+        }
+
+        /** Whether the server ended the stream within the time. */
+        boolean awaitClosed(Duration within) throws InterruptedException {
+            reader.join(within);
+            return !reader.isAlive();
         }
 
         String awaitComment(Duration within) throws InterruptedException {

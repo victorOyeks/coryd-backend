@@ -221,6 +221,73 @@ class OpsTeamRolesAuditApiTest {
                 .andExpect(jsonPath("$.data.email").doesNotExist());
     }
 
+    // ---- phase 7: two-factor sign-in and session fields --------------------------------------------------------------
+
+    @Test
+    void meCarriesTwoFactorStateAndTheSessionLimits() throws Exception {
+        replies.put("/identity/internal/ops-admins/fin-2", new Reply(200, "{\"data\":{\"userId\":\"fin-2\",\"email\":\"f@coryd.ng\",\"mfaEnabled\":true}}"));
+        replies.put("/identity/internal/ops-admins/fin-2/mfa", new Reply(200,
+                "{\"data\":{\"mfaEnabled\":true,\"mfaRequired\":false,\"sessionIdleMinutes\":30,\"sessionAbsoluteHours\":12}}"));
+        Instant sessionEnd = Instant.parse("2026-11-13T22:00:00Z");
+        String token = "Bearer " + jwtUtil.generateToken("fin-2", null, "Ada", "Admin", UserRole.OPS_ADMIN, OpsRole.FINANCE, sessionEnd);
+        mockMvc.perform(get("/me").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mfaEnabled").value(true))
+                .andExpect(jsonPath("$.data.mfaRequired").value(false))
+                .andExpect(jsonPath("$.data.sessionIdleMinutes").value(30))
+                .andExpect(jsonPath("$.data.sessionAbsoluteHours").value(12))
+                .andExpect(jsonPath("$.data.sessionExpiresAt").value("2026-11-13T22:00:00Z"));
+
+        // identity down: the token's answer and the configured limits, two-factor state unknown
+        replies.put("/identity/internal/ops-admins/sup-2", new Reply(503, "{\"message\":\"down\"}"));
+        mockMvc.perform(get("/me").header("Authorization", bearer("sup-2", OpsRole.SUPPORT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mfaEnabled").doesNotExist())
+                .andExpect(jsonPath("$.data.sessionIdleMinutes").value(30))
+                .andExpect(jsonPath("$.data.sessionAbsoluteHours").value(12));
+    }
+
+    @Test
+    void everyOpsRoleManagesTheirOwnTwoFactorAndOnlySuperAdminsResetSomeoneElses() throws Exception {
+        String finance = bearer("fin-3", OpsRole.FINANCE);
+        mockMvc.perform(post("/me/mfa/setup").header("Authorization", finance)).andExpect(status().isOk());
+        assertThat(requests.getLast().path()).isEqualTo("/identity/internal/ops-admins/fin-3/mfa/setup");
+        mockMvc.perform(postJson("/me/mfa/enable", "{}").header("Authorization", finance))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("code: Enter the 6-digit code from your app"));
+        mockMvc.perform(postJson("/me/mfa/enable", "{\"code\":\"123456\"}").header("Authorization", finance)).andExpect(status().isOk());
+        assertThat(MAPPER.readTree(requests.getLast().body()).get("code").asText()).isEqualTo("123456");
+        replies.put("/identity/internal/ops-admins/fin-3/mfa/disable", new Reply(400,
+                "{\"success\":false,\"message\":\"That code didn't work - try the latest one from your app\"}"));
+        mockMvc.perform(postJson("/me/mfa/disable", "{\"code\":\"111111\",\"reason\":\"New phone\"}").header("Authorization", finance))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("That code didn't work - try the latest one from your app"));
+        mockMvc.perform(postJson("/me/mfa/recovery-codes", "{\"code\":\"123456\"}").header("Authorization", finance)).andExpect(status().isOk());
+        assertThat(requests.getLast().path()).isEqualTo("/identity/internal/ops-admins/fin-3/mfa/recovery-codes");
+        mockMvc.perform(get("/me/mfa").header("Authorization", finance)).andExpect(status().isOk());
+
+        requests.clear();
+        mockMvc.perform(postJson("/team/a-2/mfa/reset", "{\"reason\":\"Lost phone\"}").header("Authorization", finance))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Your ops role (FINANCE) can't manage the admin team"));
+        String boss = bearer("boss-1", OpsRole.SUPER_ADMIN);
+        mockMvc.perform(postJson("/team/boss-1/mfa/reset", "{\"reason\":\"Lost phone\"}").header("Authorization", boss))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("You can't reset your own two-factor sign-in - ask another super admin"));
+        mockMvc.perform(postJson("/team/a-2/mfa/reset", "{}").header("Authorization", boss))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Give a reason for resetting two-factor sign-in"));
+        assertThat(requests).as("refused here, never sent").isEmpty();
+        replies.put("/identity/internal/ops-admins/a-2/mfa/reset", new Reply(200, "{\"data\":{\"userId\":\"a-2\",\"mfaEnabled\":false}}"));
+        mockMvc.perform(postJson("/team/a-2/mfa/reset", "{\"reason\":\"Lost phone\"}").header("Authorization", boss))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mfaEnabled").value(false))
+                .andExpect(jsonPath("$.data.you").value(false));
+        JsonNode sent = MAPPER.readTree(requests.getLast().body());
+        assertThat(sent.get("opsUserId").asText()).isEqualTo("boss-1");
+        assertThat(sent.get("reason").asText()).isEqualTo("Lost phone");
+    }
+
     // ---- the admin team -------------------------------------------------------------------------------------------------
 
     @Test

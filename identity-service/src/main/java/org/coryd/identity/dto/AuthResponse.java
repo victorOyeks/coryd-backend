@@ -16,6 +16,8 @@ public record AuthResponse(
         long refreshExpiresIn,
         // ops console sessions only (null otherwise): the admin's ops role and sign-in email
         String opsRole,
-        String email
-) {
+        String email,
+        // ops console sessions only (null otherwise): when the session ends however active it is (the absolute limit)
+        java.time.Instant sessionExpiresAt
+) implements LoginResult {
 }

@@ -29,6 +29,8 @@ public final class OpsAccessPolicy {
     static final List<Rule> RULES = List.of(
             // every ops role
             new Rule(GET, "/me", OpsPermission.CONSOLE_BASICS),
+            // an admin's own two-factor sign-in (phase 7)
+            new Rule(ANY, "/me/mfa/**", OpsPermission.CONSOLE_BASICS),
             new Rule(ANY, "/stream/**", OpsPermission.CONSOLE_BASICS),
             new Rule(GET, "/metrics/**", OpsPermission.CONSOLE_BASICS),
             new Rule(GET, "/team/roles", OpsPermission.CONSOLE_BASICS),

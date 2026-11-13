@@ -14,6 +14,13 @@ import org.coryd.identity.dto.ChangePasswordRequest;
 import org.coryd.identity.dto.DeviceResponse;
 import org.coryd.identity.dto.ForgotPasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
+import org.coryd.identity.dto.LoginResult;
+import org.coryd.identity.dto.mfa.MfaEnrollConfirmRequest;
+import org.coryd.identity.dto.mfa.MfaEnrollSetupRequest;
+import org.coryd.identity.dto.mfa.MfaEnrolledResponse;
+import org.coryd.identity.dto.mfa.MfaSetupView;
+import org.coryd.identity.dto.mfa.MfaVerifyRequest;
+import org.coryd.identity.service.OpsMfaService;
 import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
@@ -46,6 +53,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final AccountDeletionService accountDeletionService;
+    private final OpsMfaService opsMfaService;
 
     @PostMapping("/signup")
     public ApiResponse<Void> signup(@Valid @RequestBody SignupRequest request) {
@@ -110,9 +118,31 @@ public class AuthController {
         return ApiResponse.ok("Terms accepted", null);
     }
 
+    /**
+     * A session - or, for an ops admin with two-factor sign-in, {mfaRequired, mfaToken, mfaTokenExpiresAt} (then
+     * /auth/mfa/verify), or with it required and not set up, {mfaEnrollmentRequired, enrollToken, enrollTokenExpiresAt}.
+     */
     @PostMapping("/login")
-    public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
+    public ApiResponse<LoginResult> login(@Valid @RequestBody LoginRequest request) {
         return ApiResponse.ok(authService.login(request));
+    }
+
+    /** Ops console sign-in, second step: the code from the app (or a recovery code) for the session. */
+    @PostMapping("/mfa/verify")
+    public ApiResponse<AuthResponse> verifyMfa(@Valid @RequestBody MfaVerifyRequest request) {
+        return ApiResponse.ok(opsMfaService.verifyLogin(request));
+    }
+
+    /** Ops console sign-in when two-factor is required and not set up: the secret for the app. */
+    @PostMapping("/mfa/enroll/setup")
+    public ApiResponse<MfaSetupView> enrollSetup(@Valid @RequestBody MfaEnrollSetupRequest request) {
+        return ApiResponse.ok(opsMfaService.enrollSetup(request));
+    }
+
+    /** The first code from the app: two-factor on, the session, and the recovery codes (shown once). */
+    @PostMapping("/mfa/enroll/confirm")
+    public ApiResponse<MfaEnrolledResponse> enrollConfirm(@Valid @RequestBody MfaEnrollConfirmRequest request) {
+        return ApiResponse.ok("Two-factor sign-in is on", opsMfaService.enrollConfirm(request));
     }
 
     @PostMapping("/refresh-token")

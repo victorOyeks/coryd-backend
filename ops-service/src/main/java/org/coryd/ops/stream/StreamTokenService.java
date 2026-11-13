@@ -25,7 +25,11 @@ import java.util.UUID;
 @Component
 public class StreamTokenService {
 
-    public record Claims(String adminId, String adminName, Instant expiresAt, String tokenId) {
+    /**
+     * sessionIssuedAtMs: when the admin's access token that asked for this stream token was issued - the stream is closed
+     * as soon as that session is ended (suspension, deactivation, sign out everywhere, role change, two-factor reset).
+     */
+    public record Claims(String adminId, String adminName, Instant expiresAt, String tokenId, long sessionIssuedAtMs) {
     }
 
     public record Issued(String token, Instant expiresAt) {
@@ -53,10 +57,16 @@ public class StreamTokenService {
     }
 
     public Issued issue(String adminId, String adminName) {
+        return issue(adminId, adminName, clock.millis());
+    }
+
+    /** sessionIssuedAtMs: the issue time of the access token the admin asked with (CoRydUserDetails.getIssuedAtMs()). */
+    public Issued issue(String adminId, String adminName, long sessionIssuedAtMs) {
         Instant expiresAt = clock.instant().plus(ttl);
         try {
             byte[] payload = objectMapper.writeValueAsBytes(Map.of("sub", adminId, "name", adminName == null ? adminId : adminName,
-                    "exp", expiresAt.getEpochSecond(), "jti", UUID.randomUUID().toString()));
+                    "exp", expiresAt.getEpochSecond(), "jti", UUID.randomUUID().toString(),
+                    "sat", sessionIssuedAtMs > 0 ? sessionIssuedAtMs : clock.millis()));
             String body = ENCODER.encodeToString(payload);
             return new Issued(body + "." + ENCODER.encodeToString(sign(body)), expiresAt);
         } catch (Exception e) {
@@ -89,7 +99,10 @@ public class StreamTokenService {
             if (!clock.instant().isBefore(expiresAt)) {
                 throw new UnauthorizedException("Stream token expired - get a new one from POST /ops/stream/token");
             }
-            return new Claims((String) claims.get("sub"), (String) claims.get("name"), expiresAt, (String) claims.get("jti"));
+            // Tokens from before "sat" existed: their own issue time (the session was valid then, or none would have been issued).
+            long sessionIssuedAt = claims.get("sat") instanceof Number n ? n.longValue() : expiresAt.minus(ttl).toEpochMilli();
+            return new Claims((String) claims.get("sub"), (String) claims.get("name"), expiresAt, (String) claims.get("jti"),
+                    sessionIssuedAt);
         } catch (UnauthorizedException e) {
             throw e;
         } catch (Exception e) {

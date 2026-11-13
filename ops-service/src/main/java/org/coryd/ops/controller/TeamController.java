@@ -126,6 +126,18 @@ public class TeamController {
         return ApiResponse.ok("Admin reactivated", opsTeamClient.act(adminId, "reactivate", withReason(admin, body)));
     }
 
+    /** Clears the admin's two-factor sign-in and ends every session they have; they set it up again at next sign-in. */
+    @PostMapping("/{adminId}/mfa/reset")
+    public ApiResponse<JsonNode> resetMfa(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String adminId,
+                                          @Valid @RequestBody(required = false) ReasonBody body) {
+        if (admin.getUserId().equals(adminId)) {
+            throw new BadRequestException("You can't reset your own two-factor sign-in - ask another super admin");
+        }
+        requireReason(body, "Give a reason for resetting two-factor sign-in");
+        return ApiResponse.ok("Two-factor sign-in reset - every session they had has ended",
+                markYou(opsTeamClient.mfa(adminId, "reset", withReason(admin, body)), admin));
+    }
+
     private static void requireReason(ReasonBody body, String message) {
         if (body == null || body.reason() == null || body.reason().isBlank()) {
             throw new BadRequestException(message);

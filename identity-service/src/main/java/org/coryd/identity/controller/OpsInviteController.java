@@ -3,7 +3,7 @@ package org.coryd.identity.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
-import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.LoginResult;
 import org.coryd.identity.dto.ops.AcceptOpsInviteRequest;
 import org.coryd.identity.dto.ops.OpsInvitePreview;
 import org.coryd.identity.service.OpsTeamService;
@@ -30,7 +30,7 @@ public class OpsInviteController {
 
     /** Sets the password (once) and returns a console session, like /auth/login with role OPS_ADMIN. */
     @PostMapping("/accept")
-    public ApiResponse<AuthResponse> accept(@Valid @RequestBody AcceptOpsInviteRequest request) {
+    public ApiResponse<LoginResult> accept(@Valid @RequestBody AcceptOpsInviteRequest request) {
         return ApiResponse.ok("Welcome to the CoRyd ops console", opsTeamService.accept(request));
     }
 }

@@ -44,6 +44,17 @@ public class OpsTeamClient {
         return post("/internal/ops-admins/invites", body);
     }
 
+    /** The admin's two-factor state and the console's sign-in rules (mfaRequired, session minutes). */
+    public JsonNode mfaStatus(String userId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get().uri("/internal/ops-admins/{id}/mfa", userId)
+                .retrieve().body(JsonNode.class));
+    }
+
+    /** action: setup, enable, disable, recovery-codes, reset - for the signed-in admin, or (reset) the admin a super admin picked. */
+    public JsonNode mfa(String userId, String action, Map<String, Object> body) {
+        return post("/internal/ops-admins/" + userId + "/mfa/" + action, body == null ? Map.of() : body);
+    }
+
     /** action: invite/resend, invite/revoke, role, deactivate, reactivate. */
     public JsonNode act(String userId, String action, Map<String, Object> body) {
         return post("/internal/ops-admins/" + userId + "/" + action, body);

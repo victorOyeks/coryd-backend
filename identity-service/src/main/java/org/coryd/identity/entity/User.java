@@ -105,6 +105,22 @@ public class User extends BaseEntity {
     /** Last console sign-in, token refresh or console load (ops admins only). */
     private Instant lastSeenAt;
 
+    /** Ops admins' two-factor sign-in: the confirmed TOTP secret, AES-GCM encrypted (MfaSecretCipher). Never logged. */
+    @Column(length = 255)
+    private String mfaSecret;
+
+    /** Set once the admin confirmed a code from their app - only then does console sign-in ask for one. */
+    private Instant mfaEnabledAt;
+
+    /** A secret shown by setup and not yet confirmed (encrypted), and when it was created. */
+    @Column(length = 255)
+    private String mfaPendingSecret;
+
+    private Instant mfaPendingAt;
+
+    /** The 30-second step of the last code accepted - a code is good once. */
+    private Long mfaLastStep;
+
     /** "How did you hear about us?" from signup - first answer wins. */
     @Enumerated(EnumType.STRING)
     @Column(length = 30)
