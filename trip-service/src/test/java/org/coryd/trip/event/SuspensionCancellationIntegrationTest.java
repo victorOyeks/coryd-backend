@@ -78,7 +78,8 @@ import static org.mockito.Mockito.verify;
 @TestPropertySource(properties = "identity.verification.enforcement=OFF")
 @Import({UserSuspensionEventListener.class, BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class,
         org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class,
-        TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class,
+        TripScheduleService.class, OpsTripQueryService.class, org.coryd.trip.service.CancellationLogService.class,
+        org.coryd.trip.config.StuckTripProperties.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class,
         DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class,
         org.coryd.trip.config.SavingsProperties.class, OpsDriverStatsService.class, DriverStatsPublisher.class, OpsRiderStatsService.class,
         RiderStatsPublisher.class, OpsRiderTripService.class})
