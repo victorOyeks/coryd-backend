@@ -183,14 +183,14 @@ class LicenceCheck implements SmileIdCheckHandler {
         String number = normalize(idFields.idNumber());
         if (!properties.isSandbox() && number != null && !number.equals(normalize(profile.getIdNumber()))) {
             return SmileIdDecision.ops(VerificationCheckOutcome.DETAILS_MISMATCH, score, true,
-                    "Licence number on the card is " + number + ", driver entered " + profile.getIdNumber());
+                    "Licence number on the card is " + summaryMask(number) + ", driver entered " + summaryMask(profile.getIdNumber()));
         }
         LocalDate expires = parseDate(idFields.expirationDate());
         if (expires != null && expires.isBefore(LocalDate.now(LAGOS))) {
             return SmileIdDecision.ops(VerificationCheckOutcome.DETAILS_MISMATCH, score, true, "Licence expired on " + expires);
         }
         String summary = "Genuine licence in the name of " + onLicence
-                + (number == null ? "" : ", number " + number) + (expires == null ? "" : ", valid to " + expires)
+                + (number == null ? "" : ", number " + summaryMask(number)) + (expires == null ? "" : ", valid to " + expires)
                 + ", live selfie matched the licence photo";
         return partial == null ? SmileIdDecision.approve(score, summary) : SmileIdDecision.approveForReview(score, partial + summary);
     }
@@ -244,5 +244,15 @@ class LicenceCheck implements SmileIdCheckHandler {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /** Summaries are shown in the ops console, so a licence number in one keeps only its last four characters ("••••5678") -
+     * the full number is an audited reveal (docs/ops-console/privacy.md). */
+    static String summaryMask(String number) {
+        if (number == null || number.isBlank()) {
+            return number;
+        }
+        String n = number.trim();
+        return "\u2022\u2022\u2022\u2022" + n.substring(Math.max(0, n.length() - 4));
     }
 }

@@ -20,7 +20,8 @@ public record OpsAccountProfile(
         List<Contact> emergencyContacts,
         Identity identity
 ) {
-    public record Driver(String firstName, String lastName, String email, String photoUrl, LocalDate dateOfBirth, String licenceNumber,
+    /** licenceNumberMasked ("•••••••5678") and birthYear - the full values are an audited reveal (docs/ops-console/privacy.md). */
+    public record Driver(String firstName, String lastName, String email, String photoUrl, Integer birthYear, String licenceNumberMasked,
                          VerificationStatus verificationStatus, Instant verifiedSince, List<Item> items, LicenceAttempts licenceAttempts) {
     }
 

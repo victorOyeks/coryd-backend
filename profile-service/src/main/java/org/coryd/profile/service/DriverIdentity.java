@@ -153,7 +153,9 @@ public class DriverIdentity {
         }
         LocalDate licenceDob = VerifiedIdentityService.date(licence.dateOfBirth());
         if (nimc.getVerifiedDateOfBirth() != null && licenceDob != null && !nimc.getVerifiedDateOfBirth().equals(licenceDob)) {
-            return new CrossCheck("NIMC date of birth " + nimc.getVerifiedDateOfBirth() + ", licence " + licenceDob, null);
+            // Shown in the ops console, so years only - the full dates are an audited reveal (docs/ops-console/privacy.md).
+            return new CrossCheck("NIMC and licence dates of birth differ (born " + nimc.getVerifiedDateOfBirth().getYear() + " / "
+                    + licenceDob.getYear() + ")", null);
         }
         return new CrossCheck(null, partial);
     }

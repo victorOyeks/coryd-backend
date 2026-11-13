@@ -4,6 +4,7 @@ import org.coryd.common.enums.DocumentType;
 import org.coryd.common.enums.VerificationCheckOutcome;
 import org.coryd.common.enums.VerificationCheckType;
 import org.coryd.common.enums.VerificationStatus;
+import org.coryd.common.util.PiiMask;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -36,8 +37,28 @@ public record VerificationStatusResponse(
                                 Double nameMatchScore, String summary, Instant checkedAt, String providerReference) {
     }
 
-    /** Who is being reviewed - licenceNumber is the driver's licence number, the one checked against FRSC. */
-    public record DriverDetails(String firstName, String lastName, String photoUrl, String licenceNumber, LocalDate dateOfBirth) {
+    /**
+     * Who is being reviewed - licenceNumber is the driver's licence number, the one checked against FRSC. Anyone but the
+     * driver (ops) gets {@link #masked()}: licenceNumber and dateOfBirth null, licenceNumberMasked ("•••••••5678") and
+     * birthYear instead - the full values are an audited reveal (docs/ops-console/privacy.md).
+     */
+    public record DriverDetails(String firstName, String lastName, String photoUrl, String licenceNumber, LocalDate dateOfBirth,
+                                String licenceNumberMasked, Integer birthYear) {
+
+        public static DriverDetails of(String firstName, String lastName, String photoUrl, String licenceNumber, LocalDate dateOfBirth) {
+            return new DriverDetails(firstName, lastName, photoUrl, licenceNumber, dateOfBirth, PiiMask.trailing(licenceNumber),
+                    PiiMask.birthYear(dateOfBirth));
+        }
+
+        public DriverDetails masked() {
+            return new DriverDetails(firstName, lastName, photoUrl, null, null, licenceNumberMasked, birthYear);
+        }
+    }
+
+    /** The same response with the driver's licence number and date of birth masked - what everyone but the driver sees. */
+    public VerificationStatusResponse masked() {
+        return new VerificationStatusResponse(driver == null ? null : driver.masked(), waitingSince, governmentId, vehicleRegistration,
+                documents, overallStatus, verifiedSince, providerChecks, resubmissionRequests);
     }
 
     /** awaitingProvider: the licence is with Smile ID and its result hasn't come - ops may still decide it; ops' decision then stands and the result is only recorded. */

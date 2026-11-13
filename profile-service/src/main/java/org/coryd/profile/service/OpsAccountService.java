@@ -87,7 +87,8 @@ public class OpsAccountService {
                 .map(e -> new OpsAccountProfile.Item(e.item(), e.item().label(), e.status(), e.awaitingProvider(), e.submittedAt(), e.resubmitted()))
                 .toList();
         return new OpsAccountProfile.Driver(driver.getFirstName(), driver.getLastName(), driver.getEmail(), driver.getPhotoUrl(),
-                driver.getDateOfBirth(), driver.getIdNumber(), verificationAggregationService.overallStatus(id), driver.getVerifiedSince(),
+                org.coryd.common.util.PiiMask.birthYear(driver.getDateOfBirth()), org.coryd.common.util.PiiMask.trailing(driver.getIdNumber()),
+                verificationAggregationService.overallStatus(id), driver.getVerifiedSince(),
                 items, licenceAttemptsService.attempts(id));
     }
 

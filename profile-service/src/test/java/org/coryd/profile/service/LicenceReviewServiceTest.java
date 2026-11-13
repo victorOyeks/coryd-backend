@@ -62,7 +62,7 @@ class LicenceReviewServiceTest {
 
         assertThat(licence.smileJobId()).as("the latest licence check").isEqualTo("job-9");
         assertThat(licence.outcome()).isEqualTo("NAME_MISMATCH");
-        assertThat(licence.licence()).isEqualTo(new LicenceReviewResponse.LicenceDetails("EMEKA OKAFOR", "LAG12345678", "1990-01-01", "2029-05-01"));
+        assertThat(licence.licence()).isEqualTo(new LicenceReviewResponse.LicenceDetails("EMEKA OKAFOR", "\u2022\u2022\u2022\u2022\u2022\u2022\u20225678", 1990, "2029-05-01"));
         assertThat(licence.images()).extracting(LicenceReviewResponse.Image::kind).containsExactly("LICENCE_FRONT", "LICENCE_BACK", "SELFIE");
         assertThat(licence.images().get(0).url()).isEqualTo("https://s3/front.jpg");
         assertThat(licence.imagesUnavailableReason()).isNull();
@@ -75,7 +75,7 @@ class LicenceReviewServiceTest {
 
         LicenceReviewResponse licence = service.licence("d-1", UserRole.OPS_ADMIN);
 
-        assertThat(licence.licence().licenceNumber()).isEqualTo("LAG12345678");
+        assertThat(licence.licence().licenceNumberMasked()).isEqualTo("\u2022\u2022\u2022\u2022\u2022\u2022\u20225678");
         assertThat(licence.images()).isEmpty();
         assertThat(licence.imagesUnavailableReason()).contains("couldn't send the images");
     }

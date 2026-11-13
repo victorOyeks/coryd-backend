@@ -147,7 +147,7 @@ class OpsAccountIntegrationTest {
 
         assertThat(profile.driver().verificationStatus()).isEqualTo(VerificationStatus.APPROVED);
         assertThat(profile.driver().items()).extracting(OpsAccountProfile.Item::item).containsExactly(ReviewableItem.values());
-        assertThat(profile.driver().licenceNumber()).isEqualTo("LAG12345678");
+        assertThat(profile.driver().licenceNumberMasked()).as("masked for ops - the full number is a reveal").isEqualTo("\u2022\u2022\u2022\u2022\u2022\u2022\u20225678");
         assertThat(profile.driver().licenceAttempts().left()).isEqualTo(SmileIdCheck.MAX_ATTEMPTS);
         assertThat(profile.rider().email()).isEqualTo("e@x.ng");
         assertThat(profile.vehicles()).singleElement().satisfies(v -> {
