@@ -50,6 +50,13 @@ public final class KafkaTopics {
     public static final String USER_REINSTATED = "coryd-user-reinstated";
     public static final String USER_DELETED = "coryd-user-deleted";
 
+    /**
+     * Compacted, keyed by userId: the latest session state per user (tokens valid after, suspended). Every service's
+     * JwtFilter replays it at startup and follows it live, so a suspension or "sign out everywhere" ends every access token
+     * within seconds instead of at its expiry. See UserTokensRevokedEvent.
+     */
+    public static final String USER_TOKENS_REVOKED = "coryd-user-tokens-revoked";
+
     /** A person's NIN + selfie check was approved or rejected - trip-service gates booking and posting on it. */
     public static final String IDENTITY_VERIFICATION_CHANGED = "coryd-identity-verification-changed";
 

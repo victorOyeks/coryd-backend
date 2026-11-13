@@ -945,6 +945,7 @@ public class BookingService {
                     .cancelledBy(cancelledBy)
                     .feeApplied(false)
                     .paid(true)
+                    .riderAccountCancelled(true)
                     .cancelledAt(LocalDateTime.now())
                     .build());
         }

@@ -35,6 +35,7 @@ public class IdentityVerificationController {
 
     private final ProfileServiceClient profileServiceClient;
     private final IdentityReviewOpsService identityReviewOpsService;
+    private final org.coryd.ops.service.AccountOpsService accountOpsService;
 
     @GetMapping("/queue")
     public ApiResponse<JsonNode> queue(@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
@@ -113,6 +114,8 @@ public class IdentityVerificationController {
     @PostMapping("/people/{userId}/reset-attempts")
     public ApiResponse<JsonNode> resetAttempts(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String userId,
                                                @Valid @RequestBody(required = false) OpsNoteRequest request) {
-        return ApiResponse.ok("Tries reset", identityReviewOpsService.resetAttempts(userId, request == null ? null : request.note(), admin));
+        JsonNode person = identityReviewOpsService.resetAttempts(userId, request == null ? null : request.note(), admin);
+        accountOpsService.identityAttemptsReset(userId, request == null ? null : request.note(), admin);
+        return ApiResponse.ok("Tries reset", person);
     }
 }

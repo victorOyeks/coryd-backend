@@ -52,6 +52,12 @@ services:
   internal:
     api-key: ${INTERNAL_API_KEY}
 
+coryd:
+  token-revocation:
+    # identity-service reads its own database for the revocation snapshot (LocalTokenRevocationSource) - no HTTP call to itself.
+    http-bootstrap:
+      enabled: false
+
 management:
   endpoints:
     web:

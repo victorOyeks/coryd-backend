@@ -175,6 +175,14 @@ public class KafkaTopicsConfig {
         return TopicBuilder.name(KafkaTopics.USER_DELETED).partitions(3).replicas(1).build();
     }
 
+    /** Compacted and kept forever: a service starting up reads every user's latest state from the beginning. */
+    @Bean
+    public NewTopic userTokensRevokedTopic() {
+        return TopicBuilder.name(KafkaTopics.USER_TOKENS_REVOKED).partitions(3).replicas(1).compact()
+                .config("retention.ms", "-1")
+                .build();
+    }
+
     @Bean
     public NewTopic tripSafetyCheckTopic() {
         return TopicBuilder.name(KafkaTopics.TRIP_SAFETY_CHECK).partitions(3).replicas(1).build();

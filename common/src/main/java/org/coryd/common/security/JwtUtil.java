@@ -9,6 +9,8 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.util.Names;
+import org.coryd.common.security.revocation.TokenRevocationRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +35,14 @@ public class JwtUtil {
      */
     private JwtParser parser;
 
+    /** Absent only where JwtUtil is built by hand (unit tests). */
+    private TokenRevocationRegistry revocations;
+
+    @Autowired(required = false)
+    public void setRevocations(TokenRevocationRegistry revocations) {
+        this.revocations = revocations;
+    }
+
     @PostConstruct
     void buildParser() {
         parser = Jwts.parser().verifyWith(signingKey()).build();
@@ -46,15 +56,23 @@ public class JwtUtil {
         return expirationMs;
     }
 
+    /**
+     * The standard iat claim is whole seconds; a "sign out everywhere" and a sign-in a moment later can fall in the same
+     * second. This carries the exact millisecond, so the revocation cut-off can tell them apart.
+     */
+    public static final String ISSUED_AT_MS_CLAIM = "iat_ms";
+
     public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole) {
+        long now = System.currentTimeMillis();
         return Jwts.builder()
                 .subject(userId)
                 .claim("phone", phone)
                 .claim("firstName", firstName)
                 .claim("lastName", lastName)
                 .claim("role", activeRole.name())
-                .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expirationMs))
+                .claim(ISSUED_AT_MS_CLAIM, now)
+                .issuedAt(new Date(now))
+                .expiration(new Date(now + expirationMs))
                 .signWith(signingKey())
                 .compact();
     }
@@ -63,19 +81,42 @@ public class JwtUtil {
         return parser.parseSignedClaims(token).getPayload();
     }
 
-    public boolean isTokenValid(String token) {
+    /** The token's claims when it's genuine and unexpired, else null - one parse for JwtFilter. */
+    public Claims validClaims(String token) {
         try {
             Claims claims = extractAllClaims(token);
-            return !claims.getExpiration().before(new Date());
+            return claims.getExpiration().before(new Date()) ? null : claims;
         } catch (JwtException | IllegalArgumentException e) {
             log.warn("Invalid JWT token: {}", e.getMessage());
-            return false;
+            return null;
         }
+    }
+
+    /** When the token was issued, to the millisecond if it says (tokens from before iat_ms: the start of its iat second). */
+    public static long issuedAtMillis(Claims claims) {
+        Object exact = claims.get(ISSUED_AT_MS_CLAIM);
+        if (exact instanceof Number number) {
+            return number.longValue();
+        }
+        Date issuedAt = claims.getIssuedAt();
+        return issuedAt == null ? 0L : issuedAt.getTime();
+    }
+
+    /**
+     * Genuine, unexpired, and its sessions not ended by ops (suspension, sign out everywhere) - what trip-service's
+     * WebSocket CONNECT checks. JwtFilter uses validClaims and the registry itself, to say why it refused.
+     */
+    public boolean isTokenValid(String token) {
+        Claims claims = validClaims(token);
+        return claims != null && (revocations == null || revocations.refusal(claims.getSubject(), issuedAtMillis(claims)) == null);
     }
 
     /** Tokens minted before the name split carry a single fullName claim, so fall back to splitting it. */
     public CoRydUserDetails extractUserDetails(String token) {
-        Claims claims = extractAllClaims(token);
+        return userDetails(extractAllClaims(token));
+    }
+
+    public CoRydUserDetails userDetails(Claims claims) {
         String firstName = claims.get("firstName", String.class);
         String lastName = claims.get("lastName", String.class);
         if (firstName == null && lastName == null) {

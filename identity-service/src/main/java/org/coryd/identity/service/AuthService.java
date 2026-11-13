@@ -371,6 +371,8 @@ public class AuthService {
                 .orElseThrow(() -> new BadRequestException("Invalid or expired refresh token"));
 
         if (existing.isRevoked()) {
+            // A session ops ended by suspending the account: say so, rather than "sign in again" (which would fail anyway).
+            userRepository.findById(existing.getUserId()).ifPresent(AuthService::requireActive);
             return handleSpentToken(existing, request.deviceId());
         }
         if (existing.getExpiresAt().isBefore(Instant.now())) {

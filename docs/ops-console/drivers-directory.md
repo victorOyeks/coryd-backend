@@ -2,7 +2,7 @@
 
 Sidebar: **Drivers → Drivers Directory**.
 
-Every driver, with their car, trips, rating, earnings, reliability and status. From a row, ops opens the driver's profile, then their documents. They can suspend or reinstate the driver.
+Every driver, with their car, trips, rating, earnings, reliability and status. From a row, ops opens the driver's profile, then their documents. They can suspend or reinstate the driver, sign them out everywhere, and edit their details and vehicle; see [accounts.md](accounts.md).
 
 **Basics:**
 - **Base URL:** `https://api-dev.coryd.ng/ops`.
@@ -17,8 +17,11 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
 |---|---|
 | Header "N total drivers" and the tab badges | `GET /drivers/counts` |
 | Table: tabs, search, sorting, paging | `GET /drivers` |
-| **View**: the driver's profile | `GET /drivers/{driverId}` |
-| **Suspend Driver** / reinstate | `POST /users/{driverId}/suspend` · `POST /users/{driverId}/reinstate` |
+| **View**: the driver's profile, with every section | `GET /drivers/{driverId}`; see [accounts.md](accounts.md) section 3 |
+| **Suspend Driver** / reinstate / sign out everywhere | `POST /users/{driverId}/suspend` · `/reinstate` · `/sign-out-everywhere`; see [accounts.md](accounts.md) section 2 |
+| Edit name / email · edit vehicle | `PATCH /users/{driverId}/details` · `PATCH /drivers/{driverId}/vehicles/{vehicleId}` |
+| Give licence tries back | `POST /drivers/{driverId}/verification/licence/reset-attempts` |
+| Account history | `GET /users/{driverId}/account-history` |
 | **View Document**: the Documents list with ✓ / ✗ | `GET /drivers/{driverId}/verification` |
 | Each document's screen (licence, vehicle, insurance, roadworthiness) | Same as the Verification Queue; see [verification-queue.md](verification-queue.md) sections 4–5 |
 | Flag / Verify / Reset on a document | `PUT` / `DELETE /drivers/{driverId}/verification/items/{item}/review`; see section 6 |
@@ -133,6 +136,18 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
 
 An unknown driver gets `404 Driver not found`.
 
+**The same call also returns the rest of the profile:**
+- the account, with status, roles, last seen and devices;
+- `email`;
+- `verification`, with the documents, licence tries and identity;
+- every vehicle;
+- emergency contacts;
+- suspension history;
+- recent account history;
+- any pending deletion.
+
+The `account` object gains fields and `suspension` gains `suspendedBy`. See [accounts.md](accounts.md) section 3 for the full shape.
+
 ---
 
 ## 4. Suspend and reinstate
@@ -147,7 +162,15 @@ An unknown driver gets `404 Driver not found`.
 - The driver can't sign in again, or post or book.
 - Their upcoming trips are cancelled, and riders are refunded.
 
-**Reinstate:** `POST /users/{driverId}/reinstate`, with no body.
+**Reinstate:** `POST /users/{driverId}/reinstate`, with `{ "reason": "…" }`. **The reason is required.**
+
+**What changes now:**
+- Suspending ends the driver's sessions on every device **within seconds**.
+- Reinstating doesn't revive those sessions; the driver signs in again.
+- A trip already in progress is never interrupted.
+- Both are kept in `suspensionHistory` and the account history.
+
+See [accounts.md](accounts.md) section 2 for the errors and what the app shows.
 
 **After either one,** refetch the profile and the counts.
 
@@ -214,7 +237,7 @@ The document screens' buttons work here too, including on documents that are alr
 - **Insurance Certificate screen:** it shows a *vehicle ownership certificate* and an **Approve Car Ownership** button. Both should be insurance.
 - **Driver's Licence screen:** the button reads **Verify NIN**; it should be **Verify Licence**.
 - **Driver ID:** it's `D-` plus the first six characters of the driver's id (`D-4F2A91`), not a running number (`D-001`). The documents header shows a different ID from the profile (`D-1041` vs `D-001`); use `driver.ref` in both.
-- **Reinstate:** there's no button for a suspended driver yet; add **Reinstate Driver**.
+- **Reinstate:** there's no button for a suspended driver yet; add **Reinstate Driver**, with a reason dialog.
 - **"PDF" badge:** use `file.fileType`, since documents can be photos or PDFs.
 
 ---
@@ -225,7 +248,8 @@ The document screens' buttons work here too, including on documents that are alr
 - [ ] Table from `/drivers`: tabs (`status`), search, sortable columns (`sort` + `direction`), page size and paging.
 - [ ] Reliability bar colour from `reliabilityPercent`; dashes for `null` numbers.
 - [ ] Profile from `/drivers/{driverId}`: card, Verified badge, vehicle, performance, account, suspension banner.
-- [ ] **Suspend Driver** (with a reason dialog) and **Reinstate Driver**, refreshing afterwards.
+- [ ] **Suspend Driver** and **Reinstate Driver**, both with a reason dialog, refreshing afterwards.
+- [ ] Profile sections, edits, account history and licence tries; see [accounts.md](accounts.md) section 11.
 - [ ] Documents list from `/drivers/{driverId}/verification`, with ✓ / ✗ and **View** to the document screens.
 - [ ] Flag / Verify / Reset on each document screen (the same calls as the Verification Queue).
 - [ ] **Save Changes** calls `/verification/save`, enabled by `review.canSave`.

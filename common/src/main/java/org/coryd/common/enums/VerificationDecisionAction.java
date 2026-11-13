@@ -12,6 +12,11 @@ public enum VerificationDecisionAction {
     RESUBMISSION_REQUESTED,
     /** Ops gave the person their identity-check tries back. The status doesn't change. */
     ATTEMPTS_RESET,
-    /** Smile ID's late result overrode an ops decision made while it was out. */
-    PROVIDER_RESULT
+    /**
+     * Smile ID's result came in after ops had decided the licence while it was out. Recorded for the audit trail with what
+     * Smile ID said (providerOutcome); ops' decision stands (status is unchanged). Older entries: the result overrode ops.
+     */
+    PROVIDER_RESULT,
+    /** Ops changed the vehicle's identity (plate, make, model, year) on an approved vehicle - its registration is back in review. */
+    SENT_BACK_TO_REVIEW
 }

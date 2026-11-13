@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class DriverDirectoryController {
 
     private final DriverDirectoryService driverDirectoryService;
+    private final org.coryd.ops.service.AccountOpsService accountOpsService;
 
     /** status is omitted for the "All" tab. Newest sign-up first unless sorted. */
     @GetMapping
@@ -39,6 +40,27 @@ public class DriverDirectoryController {
     @GetMapping("/counts")
     public ApiResponse<DriverDirectoryCounts> counts(@RequestParam(required = false) String search) {
         return ApiResponse.ok(driverDirectoryService.counts(search));
+    }
+
+    /**
+     * Change a driver's vehicle - send only what changes, with a reason. Changing the plate, make, model or year of an
+     * approved vehicle sends its registration back to review (sentBackToReview).
+     */
+    @org.springframework.web.bind.annotation.PatchMapping("/{driverId}/vehicles/{vehicleId}")
+    public ApiResponse<org.coryd.ops.dto.AccountEditResult> editVehicle(
+            @org.springframework.security.core.annotation.AuthenticationPrincipal org.coryd.common.security.CoRydUserDetails admin,
+            @PathVariable String driverId, @PathVariable String vehicleId,
+            @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody org.coryd.ops.dto.EditVehicleRequest request) {
+        return ApiResponse.ok("Vehicle updated", accountOpsService.editVehicle(driverId, vehicleId, request, admin));
+    }
+
+    /** Give a driver locked out of the licence check their tries back. note is optional. Returns their tries now. */
+    @org.springframework.web.bind.annotation.PostMapping("/{driverId}/verification/licence/reset-attempts")
+    public ApiResponse<com.fasterxml.jackson.databind.JsonNode> resetLicenceAttempts(
+            @org.springframework.security.core.annotation.AuthenticationPrincipal org.coryd.common.security.CoRydUserDetails admin,
+            @PathVariable String driverId,
+            @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody(required = false) org.coryd.ops.dto.OpsNoteRequest request) {
+        return ApiResponse.ok("Tries reset", accountOpsService.resetLicenceAttempts(driverId, request == null ? null : request.note(), admin));
     }
 
     /** The profile drawer: driver, car, performance, account and any suspension. */

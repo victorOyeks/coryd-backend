@@ -16,8 +16,9 @@ Everything the **Drivers → Verification Queue** screens need:
 **The rules (enforced by the server):**
 1. **A licence Smile ID approved stays approved.** It can't be flagged, rejected or sent back; you get a `400`. The one exception: a licence approved on a **partial name match** that ops hasn't reviewed yet. A licence **ops** approved can still be flagged or sent back.
 2. **Ops can approve a licence Smile ID failed** (it asked the driver to try again) or sent for review, and any document that's waiting. Approving over Smile ID's failed check, or over a rejection, needs a **note**. Every approval over a Smile ID result is recorded as an **override** in the audit log: who, when, the note, and what Smile ID said.
-3. **A rejection or resubmission request always has a reason** the driver sees.
-4. **Every decision is in the audit log**, with the status before and after (section 8).
+3. **Once ops decides a licence, ops' decision stands.** A Smile ID result that arrives afterwards is recorded in the audit log (`PROVIDER_RESULT`, with what Smile ID said) and changes nothing; see section 7.
+4. **A rejection or resubmission request always has a reason** the driver sees.
+5. **Every decision is in the audit log**, with the status before and after (section 8).
 
 The driver's **NIN** (the NIN lookup) isn't one of the four documents. Decide it on the identity screen: see [rider-identity.md](rider-identity.md) (`role=DRIVER`).
 
@@ -506,27 +507,41 @@ Smile ID usually answers within minutes, but some results take hours. Ops can de
 - There's **no image yet**, because Smile ID's job only exists once its result is in. The licence screen's call returns `404` or no images; decide from what the driver sent through support.
 - A driver who opened the licence check and quit also shows as awaiting, because that can't be told apart until a result arrives.
 
-**Smile ID's result overrides the ops decision when it arrives:**
+**Once ops has decided, ops' decision stands.** Smile ID's result is recorded when it arrives, but it never changes the licence:
 
-| Smile ID says | Licence becomes |
+| Smile ID says | The licence |
 |---|---|
-| Genuine, details match | **Approved**, even if ops rejected it |
-| Needs a human look (name or number mismatch, forgery or risk flag…) | **In review** again, with Smile ID's finding in `providerChecks` |
-| The driver must try again (face mismatch, wrong document…) | **Pending**, waiting for the driver's next check |
+| Genuine, details match | Stays as ops decided, even a rejection |
+| Needs a human look (name or number mismatch, forgery or risk flag…) | Stays as ops decided |
+| The driver must try again (face mismatch, wrong document…) | Stays as ops decided. The driver isn't asked to retry, and no try is used. |
 
-**After an override:**
-- It's recorded in the audit log with `decidedBy: "SMILE_ID"` and a note.
-- Whether the driver can post follows the override automatically.
+**What's recorded:**
+- An audit log entry with `action: "PROVIDER_RESULT"` and `decidedBy: "SMILE_ID"`.
+- In that entry, `status` and `previousStatus` are ops' decision, unchanged.
+- `providerOutcome` is what Smile ID said: `MATCH`, `PARTIAL_NAME_MATCH`, `NAME_MISMATCH`, `DETAILS_MISMATCH`, `FACE_MISMATCH`, `NOT_A_LICENCE`, …
+- `note` reads: "Smile ID's result came in after ops decided - ops' decision stands. Smile ID approved it: …".
+- The result is also in `providerChecks`, as evidence.
 
-**When there's no override:**
-- If ops decides **after** Smile ID has already answered, a later result can't override it.
-- If the driver starts a new check, the old result has nothing left to override.
+**If Smile ID disagrees with ops,** decide again from the document screens, as for any document. Whether the driver can post doesn't change.
+
+**Before ops decides,** Smile ID's result applies as it always has: it approves, sends the licence to ops, or asks the driver to try again.
+
+**Also:**
+- If ops decides **after** Smile ID has already answered, nothing is waiting, so nothing is recorded later.
+- If the driver starts a new check, the old result is ignored.
+- Audit entries written before this change, where `PROVIDER_RESULT` changed the status, read as they always did.
 
 ### A licence Smile ID failed
 
 When Smile ID asks the driver to try again (the selfie isn't the face on the licence, it isn't a licence it accepts, the photo was unusable…), the licence goes back to `status: "PENDING"` with `awaitingProvider: false`, and `review.items[].providerOutcome` says why (`FACE_MISMATCH`, `NOT_A_LICENCE`, `UNREADABLE`, `TRY_LATER`). The driver is asked to retry in the app; after 5 failed tries the app tells them to contact support.
 
-Ops can approve it anyway with **Approve** on the document (section 6), **with a note**. It's recorded as `OVERRIDE_APPROVED` with Smile ID's `providerOutcome`. Since Smile ID has already answered, nothing overrides this approval later.
+Ops can approve it anyway with **Approve** on the document (section 6), **with a note**. It's recorded as `OVERRIDE_APPROVED` with Smile ID's `providerOutcome`.
+
+**A driver locked out** has used all 5 tries; the app tells them to contact support. Ops can give the tries back with `POST /drivers/{driverId}/verification/licence/reset-attempts`, using the same rules as identity tries:
+- not for a licence that's already verified;
+- only when tries have been used.
+
+The driver is told they can try again, and it's logged as `ATTEMPTS_RESET`. See [accounts.md](accounts.md) section 6. The driver profile's `verification.licenceAttempts` shows the tries and whether a reset is allowed.
 
 A licence Smile ID sent to ops (`IN_REVIEW`: name, number or expiry mismatch, forgery or risk flag) is approved the usual way, by **Verify** + **Approve Driver** or by **Approve** on the document; no note is required, and the audit log still records it as `OVERRIDE_APPROVED` with Smile ID's finding.
 
@@ -536,7 +551,9 @@ A licence Smile ID sent to ops (`IN_REVIEW`: name, number or expiry mismatch, fo
 
 Newest first. It includes every decision:
 - from the review screen and the older `decisions` call: `decidedBy` is the admin's name;
-- Smile ID's automatic licence approvals and overrides: `decidedBy` is `"SMILE_ID"`.
+- Smile ID's automatic licence approvals, and its late results recorded after ops decided (`PROVIDER_RESULT`; ops' decision stands): `decidedBy` is `"SMILE_ID"`;
+- licence tries given back (`ATTEMPTS_RESET`);
+- a vehicle sent back to review because ops changed its plate, make, model or year (`SENT_BACK_TO_REVIEW`; see [accounts.md](accounts.md) section 5).
 
 It also includes the driver's **identity (NIN)** decisions made on the identity screen: `subject: "IDENTITY"`, `item: null`, `label: "Identity (NIN)"`.
 
@@ -553,8 +570,8 @@ It also includes the driver's **identity (NIN)** decisions made on the identity 
     "note": "Selfie was in poor light - matched the licence on a video call",
     "decidedBy": "Ada Ops", "decidedById": "0b5e…", "decidedAt": "2026-10-03T10:00:00Z" },
   { "item": "GOVERNMENT_ID", "subject": "GOVERNMENT_ID", "label": "Driver's licence",
-    "action": "PROVIDER_RESULT", "previousStatus": null, "status": "IN_REVIEW", "overrodeProvider": false, "providerOutcome": null,
-    "note": "Smile ID's result came in after ops decided - back for review: …", "decidedBy": "SMILE_ID", "decidedById": null, "decidedAt": "…" },
+    "action": "PROVIDER_RESULT", "previousStatus": "APPROVED", "status": "APPROVED", "overrodeProvider": false, "providerOutcome": "NAME_MISMATCH",
+    "note": "Smile ID's result came in after ops decided - ops' decision stands. Smile ID sent it for review: …", "decidedBy": "SMILE_ID", "decidedById": null, "decidedAt": "…" },
   { "item": "VEHICLE", "subject": "VEHICLE", "label": "Vehicle registration",
     "action": "REJECTED", "previousStatus": "IN_REVIEW", "status": "REJECTED", "overrodeProvider": false, "providerOutcome": null,
     "note": "Blurry document", "decidedBy": "Ada Ops", "decidedById": "0b5e…", "decidedAt": "2026-10-03T09:00:00Z" }

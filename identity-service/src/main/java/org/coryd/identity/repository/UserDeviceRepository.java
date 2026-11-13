@@ -18,4 +18,12 @@ public interface UserDeviceRepository extends JpaRepository<UserDevice, String> 
     Optional<UserDevice> findByUserIdAndDeviceId(String userId, String deviceId);
 
     List<UserDevice> findByUserIdAndRevokedFalseOrderByLastSeenAtDesc(String userId);
+
+    /** Every phone the account ever signed in from, signed out or not - for ops. */
+    List<UserDevice> findByUserIdOrderByLastSeenAtDesc(String userId);
+
+    /** Sign out everywhere: every device is marked signed out, as "sign out this device" does for one. */
+    @Modifying
+    @Query("update UserDevice d set d.revoked = true, d.biometricEnabled = false where d.userId = :userId and d.revoked = false")
+    int revokeAllForUser(@Param("userId") String userId);
 }

@@ -3,6 +3,8 @@ package org.coryd.ops.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.coryd.common.enums.AccountActionType;
+import org.coryd.common.enums.AccountDeletionStatus;
 import org.coryd.common.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -11,6 +13,7 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
 
 /** Phone numbers and account status (suspension) live only in identity-service. */
@@ -77,13 +80,8 @@ public class IdentityServiceClient {
                 .retrieve().body(JsonNode.class));
     }
 
-    public void suspend(String userId, String reason, String opsUserId) {
-        DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
-                .uri("/internal/users/{userId}/suspend", userId)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("reason", reason, "opsUserId", opsUserId))
-                .retrieve()
-                .body(JsonNode.class));
+    public void suspend(String userId, String reason, String opsUserId, String opsUserName) {
+        accountAction(userId, "suspend", reason, opsUserId, opsUserName);
     }
 
     /** Deletes the account everywhere - refused (400, with the reasons) while the person is on a trip or has money still moving. */
@@ -94,9 +92,75 @@ public class IdentityServiceClient {
                 .body(JsonNode.class));
     }
 
-    public void reinstate(String userId, String opsUserId) {
+    public void reinstate(String userId, String reason, String opsUserId, String opsUserName) {
+        accountAction(userId, "reinstate", reason, opsUserId, opsUserName);
+    }
+
+    public void signOutEverywhere(String userId, String reason, String opsUserId, String opsUserName) {
+        accountAction(userId, "sign-out-everywhere", reason, opsUserId, opsUserName);
+    }
+
+    private void accountAction(String userId, String action, String reason, String opsUserId, String opsUserName) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("reason", reason);
+        body.put("opsUserId", opsUserId);
+        body.put("opsUserName", opsUserName);
         DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
-                .uri(b -> b.path("/internal/users/{userId}/reinstate").queryParam("opsUserId", opsUserId).build(userId))
+                .uri("/internal/users/{userId}/{action}", userId, action)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** Status, roles, devices, suspension and its history - the account half of a profile. */
+    public JsonNode account(String userId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/internal/users/{userId}/account", userId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode accountHistory(String userId, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/internal/users/{userId}/account-actions").queryParam("page", page).queryParam("size", size).build(userId))
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** Adds an edit or reset made in another service to the account history. changes: [{field, before, after}]. */
+    public JsonNode recordAccountAction(String userId, AccountActionType action, String reason, JsonNode changes,
+                                        String opsUserId, String opsUserName) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("action", action);
+        body.put("reason", reason);
+        body.put("changes", changes);
+        body.put("opsUserId", opsUserId);
+        body.put("opsUserName", opsUserName);
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
+                .uri("/internal/users/{userId}/account-actions", userId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode accountDeletions(AccountDeletionStatus status, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/internal/account-deletions").queryParam("page", page).queryParam("size", size);
+                    if (status != null) {
+                        b.queryParam("status", status);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode accountDeletion(String id) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/internal/account-deletions/{id}", id)
                 .retrieve()
                 .body(JsonNode.class));
     }

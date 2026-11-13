@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -40,6 +41,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=localhost:1",
         "spring.kafka.admin.auto-create=false",
+        // The revocation feed is driven by hand here (revokedTokens...), so nothing calls the fake services in the background.
+        "coryd.token-revocation.kafka.enabled=false",
+        "coryd.token-revocation.bootstrap.enabled=false",
         "services.internal.api-key=test-internal-key",
         "jwt.secret=test-secret-test-secret-test-secret-test-secret-0123456789"
 })
@@ -76,6 +80,8 @@ class OpsServiceIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired JwtUtil jwtUtil;
     @Autowired ObjectMapper objectMapper;
+    @Autowired org.coryd.common.security.revocation.TokenRevocationRegistry revocations;
+    @Autowired org.coryd.common.security.revocation.TokenRevocationBootstrap revocationBootstrap;
 
     @BeforeEach
     void reset() {
@@ -88,6 +94,7 @@ class OpsServiceIntegrationTest {
         replies.clear();
         paths.clear();
         requests.clear();
+        revocations.clear();
     }
 
     @AfterAll
@@ -946,7 +953,8 @@ class OpsServiceIntegrationTest {
 
         mockMvc.perform(post("/identity-verification/people/7c1e22aa-0000/reset-attempts").header("Authorization", token))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("Tries reset"));
-        assertThat(lastPath.get()).isEqualTo("/profile/identity-verification/people/7c1e22aa-0000/reset-attempts");
+        assertThat(paths).contains("/profile/identity-verification/people/7c1e22aa-0000/reset-attempts");
+        assertThat(lastPath.get()).as("then added to the account history").isEqualTo("/identity/internal/users/7c1e22aa-0000/account-actions");
     }
 
     @Test
@@ -1039,6 +1047,267 @@ class OpsServiceIntegrationTest {
 
         Request sent = requests.stream().filter(r -> r.path().endsWith("/request-resubmission")).findFirst().orElseThrow();
         assertThat(objectMapper.readTree(sent.body()).get("reviewedBy").asText()).isEqualTo("Ada Ops");
+    }
+
+    // ---- Phase 2: account management - see docs/ops-console/accounts.md ---------------------------------------------
+
+    @Test
+    void accountActionsAreForOpsAdminsOnlyAndNeedAReason() throws Exception {
+        mockMvc.perform(post("/users/u-1/suspend").header("Authorization", bearer(UserRole.RIDER))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"x\"}")).andExpect(status().isForbidden());
+        mockMvc.perform(post("/users/u-1/sign-out-everywhere").header("Authorization", bearer(UserRole.DRIVER))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"x\"}")).andExpect(status().isForbidden());
+        mockMvc.perform(patch("/users/u-1/details").header("Authorization", bearer(UserRole.RIDER))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":\"A\",\"reason\":\"x\"}")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/users/u-1/account-history").header("Authorization", bearer(UserRole.DRIVER))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/account-deletions").header("Authorization", bearer(UserRole.RIDER))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/account-deletions")).andExpect(status().isUnauthorized());
+
+        String ops = bearer(UserRole.OPS_ADMIN);
+        mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops)).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("reason: is required"));
+        mockMvc.perform(post("/users/u-1/suspend").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"  \"}")).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/users/u-1/sign-out-everywhere").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{}")).andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/users/u-1/details").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"firstName\":\"Ada\"}")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("reason: is required"));
+        mockMvc.perform(patch("/drivers/d-1/vehicles/v-1").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"plateNumber\":\"KJA1\"}")).andExpect(status().isBadRequest());
+        assertThat(paths).as("nothing refused reaches another service").isEmpty();
+    }
+
+    @Test
+    void suspendReinstateAndSignOutGoToIdentityWithTheAdminAndTheReason() throws Exception {
+        String ops = bearer(UserRole.OPS_ADMIN);
+        nextBody.set("{\"success\":true,\"data\":null}");
+
+        mockMvc.perform(post("/users/u-1/suspend").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"Threatened a rider\"}")).andExpect(status().isOk());
+        mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"Investigated - CCTV cleared him\"}")).andExpect(status().isOk());
+        mockMvc.perform(post("/users/u-1/sign-out-everywhere").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"Lost phone\"}")).andExpect(status().isOk()).andExpect(jsonPath("$.message").value("Signed out everywhere"));
+
+        assertThat(requests).extracting(Request::path).containsExactly("/identity/internal/users/u-1/suspend",
+                "/identity/internal/users/u-1/reinstate", "/identity/internal/users/u-1/sign-out-everywhere");
+        JsonNode reinstate = objectMapper.readTree(requests.get(1).body());
+        assertThat(reinstate.get("reason").asText()).isEqualTo("Investigated - CCTV cleared him");
+        assertThat(reinstate.get("opsUserId").asText()).isEqualTo("admin-1");
+        assertThat(reinstate.get("opsUserName").asText()).isEqualTo("Ada Ops");
+        assertThat(lastAuth.get()).isEqualTo(ops);
+
+        replies.put("/identity/internal/users/u-1/reinstate", new Reply(400, "{\"success\":false,\"message\":\"This account isn't suspended\"}"));
+        mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"again\"}")).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("This account isn't suspended"));
+    }
+
+    @Test
+    void aPhoneNumberCantBeEditedByOps() throws Exception {
+        for (String body : List.of("{\"phone\":\"08099998888\",\"reason\":\"New number\"}",
+                "{\"firstName\":\"Ada\",\"phoneNumber\":\"08099998888\",\"reason\":\"New number\"}")) {
+            mockMvc.perform(patch("/users/u-1/details").header("Authorization", bearer(UserRole.OPS_ADMIN))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value("Phone numbers can't be changed from the ops console - the phone number is "
+                            + "how the person signs in, so only they can change it"));
+        }
+        assertThat(paths).isEmpty();
+    }
+
+    @Test
+    void aDetailsEditIsMadeInProfileServiceAndRecordedInTheAccountHistory() throws Exception {
+        replies.put("/profile/internal/users/u-1/details", new Reply(200, "{\"success\":true,\"data\":{\"changes\":["
+                + "{\"field\":\"lastName\",\"before\":\"Okafr\",\"after\":\"Okafor\"}],\"vehicle\":null,\"sentBackToReview\":false}}"));
+        replies.put("/identity/internal/users/u-1/account-actions", new Reply(200, "{\"success\":true,\"data\":{}}"));
+
+        mockMvc.perform(patch("/users/u-1/details").header("Authorization", bearer(UserRole.OPS_ADMIN)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lastName\":\"Okafor\",\"reason\":\"Typo - checked against the licence\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changes[0].field").value("lastName"))
+                .andExpect(jsonPath("$.data.changes[0].before").value("Okafr"))
+                .andExpect(jsonPath("$.data.historyRecorded").value(true));
+
+        assertThat(requests).extracting(Request::method).containsExactly("PATCH", "POST");
+        assertThat(objectMapper.readTree(requests.get(0).body()).get("lastName").asText()).isEqualTo("Okafor");
+        JsonNode recorded = objectMapper.readTree(requests.get(1).body());
+        assertThat(recorded.get("action").asText()).isEqualTo("DETAILS_EDITED");
+        assertThat(recorded.get("reason").asText()).isEqualTo("Typo - checked against the licence");
+        assertThat(recorded.at("/changes/0/after").asText()).isEqualTo("Okafor");
+        assertThat(recorded.get("opsUserName").asText()).isEqualTo("Ada Ops");
+
+        replies.put("/identity/internal/users/u-1/account-actions", new Reply(503, "{\"success\":false,\"message\":\"down\"}"));
+        mockMvc.perform(patch("/users/u-1/details").header("Authorization", bearer(UserRole.OPS_ADMIN)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lastName\":\"Okafor\",\"reason\":\"Typo\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.historyRecorded").value(false));
+
+        replies.put("/profile/internal/users/u-1/details", new Reply(400,
+                "{\"success\":false,\"message\":\"Nothing to change - these are already the details on the account\"}"));
+        mockMvc.perform(patch("/users/u-1/details").header("Authorization", bearer(UserRole.OPS_ADMIN)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lastName\":\"Okafor\",\"reason\":\"Typo\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Nothing to change - these are already the details on the account"));
+    }
+
+    @Test
+    void aVehicleEditAndALicenceResetAreRecordedTooAndSoIsAnIdentityReset() throws Exception {
+        replies.put("/profile/internal/drivers/d-1/vehicles/v-1", new Reply(200, "{\"success\":true,\"data\":{\"changes\":["
+                + "{\"field\":\"plateNumber\",\"before\":\"LND-1\",\"after\":\"KJA-100-AA\"}],"
+                + "\"vehicle\":{\"id\":\"v-1\",\"plateNumber\":\"KJA-100-AA\",\"status\":\"IN_REVIEW\"},\"sentBackToReview\":true}}"));
+        replies.put("/profile/drivers/d-1/verification/licence/reset-attempts", new Reply(200,
+                "{\"success\":true,\"data\":{\"used\":0,\"max\":5,\"left\":5,\"lockedOut\":false,\"canReset\":false}}"));
+        replies.put("/profile/identity-verification/people/d-1/reset-attempts", new Reply(200, "{\"success\":true,\"data\":{\"userId\":\"d-1\"}}"));
+        replies.put("/identity/internal/users/d-1/account-actions", new Reply(200, "{\"success\":true,\"data\":{}}"));
+        String ops = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(patch("/drivers/d-1/vehicles/v-1").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plateNumber\":\"KJA-100-AA\",\"reason\":\"Driver re-registered the car\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sentBackToReview").value(true))
+                .andExpect(jsonPath("$.data.vehicle.status").value("IN_REVIEW"));
+        assertThat(paths).anyMatch(p -> p.startsWith("/profile/internal/drivers/d-1/vehicles/v-1?") && p.contains("opsUserId=admin-1"));
+        assertThat(objectMapper.readTree(requests.get(0).body()).get("plateNumber").asText()).isEqualTo("KJA-100-AA");
+
+        mockMvc.perform(post("/drivers/d-1/verification/licence/reset-attempts").header("Authorization", ops)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"Camera was broken\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.left").value(5));
+        mockMvc.perform(post("/identity-verification/people/d-1/reset-attempts").header("Authorization", ops)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"Bad light\"}")).andExpect(status().isOk());
+
+        List<JsonNode> recorded = new java.util.ArrayList<>();
+        for (Request r : requests) {
+            if (r.path().equals("/identity/internal/users/d-1/account-actions")) {
+                recorded.add(objectMapper.readTree(r.body()));
+            }
+        }
+        assertThat(recorded).extracting(n -> n.get("action").asText())
+                .containsExactly("VEHICLE_EDITED", "LICENCE_ATTEMPTS_RESET", "IDENTITY_ATTEMPTS_RESET");
+        assertThat(recorded.get(0).get("reason").asText()).isEqualTo("Driver re-registered the car");
+        assertThat(recorded.get(1).get("reason").asText()).isEqualTo("Camera was broken");
+    }
+
+    @Test
+    void historyAndDeletionRequestsArePassedThrough() throws Exception {
+        replies.put("/identity/internal/users/u-1/account-actions", new Reply(200, "{\"success\":true,\"data\":{\"content\":["
+                + "{\"id\":\"a-1\",\"action\":\"SUSPENDED\",\"actor\":{\"id\":\"admin-1\",\"name\":\"Ada Ops\"},\"reason\":\"x\",\"changes\":[],"
+                + "\"at\":\"2026-11-01T10:00:00Z\"}],\"page\":1,\"size\":5,\"totalElements\":6,\"totalPages\":2,\"last\":true}}"));
+        replies.put("/identity/internal/account-deletions", new Reply(200, "{\"success\":true,\"data\":{\"content\":["
+                + "{\"id\":\"del-1\",\"status\":\"PENDING\",\"blockers\":[\"you're on a trip right now\"]}],\"page\":0,\"size\":20,"
+                + "\"totalElements\":1,\"totalPages\":1,\"last\":true}}"));
+        replies.put("/identity/internal/account-deletions/del-1", new Reply(200, "{\"success\":true,\"data\":{\"id\":\"del-1\",\"status\":\"PENDING\"}}"));
+        replies.put("/identity/internal/account-deletions/nope", new Reply(404, "{\"success\":false,\"message\":\"Account deletion request not found\"}"));
+        String ops = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/users/u-1/account-history?page=1&size=5").header("Authorization", ops))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.content[0].action").value("SUSPENDED"))
+                .andExpect(jsonPath("$.data.totalElements").value(6));
+        assertThat(paths).anyMatch(p -> p.startsWith("/identity/internal/users/u-1/account-actions?") && p.contains("page=1") && p.contains("size=5"));
+
+        mockMvc.perform(get("/account-deletions?status=PENDING").header("Authorization", ops))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.content[0].blockers[0]").value("you're on a trip right now"));
+        assertThat(paths).anyMatch(p -> p.startsWith("/identity/internal/account-deletions?") && p.contains("status=PENDING"));
+        mockMvc.perform(get("/account-deletions/del-1").header("Authorization", ops)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PENDING"));
+        mockMvc.perform(get("/account-deletions/nope").header("Authorization", ops)).andExpect(status().isNotFound());
+        mockMvc.perform(get("/account-deletions?status=SOON").header("Authorization", ops)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void aDriversProfileIsCompleteInOneCallAndSurvivesAServiceBeingDown() throws Exception {
+        replies.put("/profile/internal/drivers/index/dddd4444-4", new Reply(200, "{\"data\":{\"driverId\":\"dddd4444-4\","
+                + "\"firstName\":\"Aisha\",\"lastName\":\"Lawal\",\"phone\":\"08055556666\",\"joinedAt\":\"2026-02-01T09:00:00Z\","
+                + "\"status\":\"SUSPENDED\",\"verificationStatus\":\"APPROVED\",\"suspendedAt\":\"2026-10-01T10:00:00Z\","
+                + "\"suspensionReason\":\"Threatened a rider\",\"plateNumber\":\"EKY-9-ZZ\"}}"));
+        replies.put("/identity/internal/users/dddd4444-4/account", new Reply(200, "{\"data\":{\"status\":\"SUSPENDED\",\"roles\":[\"DRIVER\",\"RIDER\"],"
+                + "\"lastSeenAt\":\"2026-10-01T09:00:00Z\",\"sessionsValidAfter\":\"2026-10-01T10:00:00Z\",\"phoneVerifiedAt\":\"2026-02-01T09:00:00Z\","
+                + "\"devices\":[{\"deviceId\":\"p-1\",\"deviceName\":\"Aisha's Pixel\",\"platform\":\"ANDROID\",\"signedIn\":false}],"
+                + "\"suspension\":{\"suspendedAt\":\"2026-10-01T10:00:00Z\",\"reason\":\"Threatened a rider\",\"suspendedBy\":{\"id\":\"admin-9\",\"name\":\"Bola Ops\"}},"
+                + "\"suspensionHistory\":[{\"suspendedAt\":\"2026-03-01T10:00:00Z\",\"reason\":\"Late\",\"reinstatedAt\":\"2026-03-02T10:00:00Z\","
+                + "\"reinstateReason\":\"Apologised\"},{\"suspendedAt\":\"2026-10-01T10:00:00Z\",\"reason\":\"Threatened a rider\"}],"
+                + "\"pendingDeletion\":null}}"));
+        replies.put("/profile/internal/users/dddd4444-4/ops-profile", new Reply(200, "{\"data\":{\"userId\":\"dddd4444-4\","
+                + "\"driver\":{\"email\":\"aisha@x.ng\",\"verificationStatus\":\"APPROVED\",\"verifiedSince\":\"2026-02-03T09:00:00Z\","
+                + "\"items\":[{\"item\":\"GOVERNMENT_ID\",\"status\":\"APPROVED\"}],\"licenceAttempts\":{\"used\":1,\"left\":4}},"
+                + "\"rider\":{\"email\":\"aisha@x.ng\"},\"vehicles\":[{\"id\":\"v-1\",\"plateNumber\":\"EKY-9-ZZ\",\"seatCapacity\":4,\"primary\":true}],"
+                + "\"emergencyContacts\":[{\"id\":\"c-1\",\"name\":\"Musa\",\"phone\":\"08011112222\",\"primary\":true}],"
+                + "\"identity\":{\"status\":\"APPROVED\"}}}"));
+        replies.put("/identity/internal/users/dddd4444-4/account-actions", new Reply(200, "{\"data\":{\"content\":["
+                + "{\"action\":\"SUSPENDED\",\"reason\":\"Threatened a rider\"}],\"totalElements\":3}}"));
+        String ops = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/drivers/dddd4444-4").header("Authorization", ops))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.suspension.reason").value("Threatened a rider"))
+                .andExpect(jsonPath("$.data.suspension.suspendedBy.name").value("Bola Ops"))
+                .andExpect(jsonPath("$.data.account.ref").value("D-DDDD44"))
+                .andExpect(jsonPath("$.data.account.status").value("SUSPENDED"))
+                .andExpect(jsonPath("$.data.account.roles[1]").value("RIDER"))
+                .andExpect(jsonPath("$.data.account.lastSeenAt").value("2026-10-01T09:00:00Z"))
+                .andExpect(jsonPath("$.data.account.devices[0].deviceName").value("Aisha's Pixel"))
+                .andExpect(jsonPath("$.data.email").value("aisha@x.ng"))
+                .andExpect(jsonPath("$.data.verification.status").value("APPROVED"))
+                .andExpect(jsonPath("$.data.verification.licenceAttempts.left").value(4))
+                .andExpect(jsonPath("$.data.verification.identity.status").value("APPROVED"))
+                .andExpect(jsonPath("$.data.vehicles[0].seatCapacity").value(4))
+                .andExpect(jsonPath("$.data.emergencyContacts[0].name").value("Musa"))
+                .andExpect(jsonPath("$.data.suspensionHistory[0].reinstateReason").value("Apologised"))
+                .andExpect(jsonPath("$.data.recentActions[0].action").value("SUSPENDED"));
+
+        replies.put("/identity/internal/users/dddd4444-4/account", new Reply(503, "{\"success\":false,\"message\":\"down\"}"));
+        replies.put("/identity/internal/users/dddd4444-4/account-actions", new Reply(503, "{\"success\":false,\"message\":\"down\"}"));
+        mockMvc.perform(get("/drivers/dddd4444-4").header("Authorization", ops))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.suspension.reason").value("Threatened a rider"))
+                .andExpect(jsonPath("$.data.account.status").doesNotExist())
+                .andExpect(jsonPath("$.data.vehicles[0].plateNumber").value("EKY-9-ZZ"));
+    }
+
+    @Test
+    void aRidersProfileHasContactsIdentityAndHistoryToo() throws Exception {
+        replies.put("/profile/internal/riders/index/r-uuid-1", new Reply(200, "{\"data\":" + RIDER_ROW + "}"));
+        replies.put("/identity/internal/users/r-uuid-1/account", new Reply(200, "{\"data\":{\"status\":\"ACTIVE\",\"roles\":[\"RIDER\"],"
+                + "\"devices\":[],\"suspensionHistory\":[],\"pendingDeletion\":{\"requestId\":\"del-1\",\"blockers\":[\"refund pending\"]}}}"));
+        replies.put("/profile/internal/users/r-uuid-1/ops-profile", new Reply(200, "{\"data\":{\"rider\":{\"email\":\"r@x.ng\"},"
+                + "\"vehicles\":[],\"emergencyContacts\":[{\"name\":\"Ngozi\"}],\"identity\":{\"status\":\"IN_REVIEW\"}}}"));
+        replies.put("/identity/internal/users/r-uuid-1/account-actions", new Reply(200, "{\"data\":{\"content\":[]}}"));
+
+        mockMvc.perform(get("/riders/r-uuid-1").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.email").value("r@x.ng"))
+                .andExpect(jsonPath("$.data.account.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.verification.identity.status").value("IN_REVIEW"))
+                .andExpect(jsonPath("$.data.emergencyContacts[0].name").value("Ngozi"))
+                .andExpect(jsonPath("$.data.pendingDeletion.blockers[0]").value("refund pending"))
+                .andExpect(jsonPath("$.data.activity.totalTrips").value(213));
+    }
+
+    @Test
+    void aTokenRevokedInIdentityIsRefusedHereAndOneIssuedAfterwardsWorks() throws Exception {
+        replies.put("/profile/drivers/verification/queue", new Reply(200, "{\"data\":{\"content\":[],\"page\":0,\"size\":20,"
+                + "\"totalElements\":0,\"totalPages\":0,\"last\":true}}"));
+        String before = bearer(UserRole.OPS_ADMIN);
+        Thread.sleep(5);
+        java.time.Instant cut = java.time.Instant.now();
+        replies.put("/identity/internal/users/token-revocations", new Reply(200, "{\"success\":true,\"data\":["
+                + "{\"userId\":\"admin-1\",\"tokensValidAfter\":\"" + cut + "\",\"suspended\":false,\"reason\":\"SIGNED_OUT_EVERYWHERE\","
+                + "\"stateAt\":\"" + cut + "\"},"
+                + "{\"userId\":\"admin-2\",\"tokensValidAfter\":\"" + cut + "\",\"suspended\":true,\"stateAt\":\"" + cut + "\"}]}"));
+        assertThat(revocationBootstrap.loadOnce()).isTrue();
+        Thread.sleep(5);
+        String after = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/drivers/verification/queue").header("Authorization", before))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Your session has ended. Please sign in again."));
+        mockMvc.perform(get("/drivers/verification/queue").header("Authorization", after)).andExpect(status().isOk());
+        mockMvc.perform(get("/drivers/verification/queue").header("Authorization",
+                        "Bearer " + jwtUtil.generateToken("admin-2", null, "Bola", "Ops", UserRole.OPS_ADMIN)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("This account has been suspended. Contact CoRyd support."));
+        assertThat(paths).as("the snapshot came from identity with the internal key and a system token")
+                .contains("/identity/internal/users/token-revocations");
     }
 
     private String bearer(UserRole role) {

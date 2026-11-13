@@ -40,7 +40,11 @@ class AccountDeletionServiceTest {
     private final DeletionBlockerClient blockers = mock(DeletionBlockerClient.class);
     @SuppressWarnings("unchecked")
     private final KafkaTemplate<String, Object> kafka = mock(KafkaTemplate.class);
-    private final AccountDeletionService service = new AccountDeletionService(users, tokens, devices, otps, waitlist, blockers, kafka);
+    private final AccountDeletionRecorder recorder = mock(AccountDeletionRecorder.class);
+    private final SessionRevocationService sessions = mock(SessionRevocationService.class);
+    private final org.coryd.identity.repository.AccountActionRepository history = mock(org.coryd.identity.repository.AccountActionRepository.class);
+    private final AccountDeletionService service = new AccountDeletionService(users, tokens, devices, otps, waitlist, blockers, kafka,
+            recorder, sessions, history);
 
     private User user;
 

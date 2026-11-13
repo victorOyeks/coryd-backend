@@ -23,4 +23,9 @@ public class BookingCancelledEvent {
     private boolean paid;
     private BigDecimal feeAmount;
     private LocalDateTime cancelledAt;
+    /**
+     * The seat was cancelled because of the rider's account (suspended or closed), not the trip - the driver is told a seat
+     * opened up, as when a rider cancels. False on older events.
+     */
+    private boolean riderAccountCancelled;
 }

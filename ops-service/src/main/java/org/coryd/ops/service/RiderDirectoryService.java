@@ -33,6 +33,7 @@ public class RiderDirectoryService {
     private final ProfileServiceClient profileServiceClient;
     private final TripServiceClient tripServiceClient;
     private final PaymentServiceClient paymentServiceClient;
+    private final AccountProfileParts accountProfileParts;
 
     public PagedResponse<RiderDirectoryItem> riders(RiderDirectoryStatus status, String search, RiderDirectorySort sort,
                                                     Sort.Direction direction, int page, int size) {
@@ -46,14 +47,23 @@ public class RiderDirectoryService {
         return profileServiceClient.riderIndexCounts(search);
     }
 
+    /** The whole profile in one call - see DriverDirectoryService.driver. */
     public RiderProfileView rider(String riderId) {
         ProfileServiceClient.IndexedRider r = profileServiceClient.indexedRider(riderId);
         RiderDirectoryItem row = row(r);
+        AccountProfileParts.Parts parts = accountProfileParts.load(riderId);
         return new RiderProfileView(row.rider(), row.status(),
-                r.suspendedAt() == null ? null : new DriverProfileView.Suspension(r.suspendedAt(), r.suspensionReason()),
-                new RiderProfileView.Account(row.rider().ref(), row.joinedAt()),
+                r.suspendedAt() == null ? null : new DriverProfileView.Suspension(r.suspendedAt(), r.suspensionReason(),
+                        DriverDirectoryService.suspendedBy(parts)),
+                accountProfileParts.account(parts, row.rider().ref(), row.joinedAt()),
                 new RiderProfileView.Activity(row.trips(), row.rating(), row.ratingCount(), row.totalSpent(), row.reliabilityPercent(),
-                        row.reportsFiled()));
+                        row.reportsFiled()),
+                AccountProfileParts.email(parts, "rider"),
+                accountProfileParts.riderVerification(parts),
+                parts.profileField("emergencyContacts"),
+                parts.accountField("suspensionHistory"),
+                parts.recentActions(),
+                parts.accountField("pendingDeletion"));
     }
 
     /** Checks the rider exists first, so an unknown id is a 404 rather than an empty history. */

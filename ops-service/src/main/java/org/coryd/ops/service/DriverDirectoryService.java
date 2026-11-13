@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 public class DriverDirectoryService {
 
     private final ProfileServiceClient profileServiceClient;
+    private final AccountProfileParts accountProfileParts;
 
     /** status null is "All". Newest sign-up first unless sorted. */
     public PagedResponse<DriverDirectoryItem> drivers(DriverDirectoryStatus status, String search, DriverDirectorySort sort,
@@ -37,16 +38,35 @@ public class DriverDirectoryService {
         return profileServiceClient.driverIndexCounts(search);
     }
 
-    /** The profile drawer: the row's numbers, plus the suspension and reports filed. */
+    /**
+     * The whole profile in one call: the row's numbers and reports filed (profile-service's index), the account, devices,
+     * suspension history and recent account history (identity-service), and email, verification, vehicles and emergency
+     * contacts (profile-service).
+     */
     public DriverProfileView driver(String driverId) {
         ProfileServiceClient.IndexedDriver d = profileServiceClient.indexedDriver(driverId);
         DriverDirectoryItem row = row(d);
+        AccountProfileParts.Parts parts = accountProfileParts.load(driverId);
         return new DriverProfileView(row.driver(), row.status(), row.verificationStatus(),
-                d.suspendedAt() == null ? null : new DriverProfileView.Suspension(d.suspendedAt(), d.suspensionReason()),
+                d.suspendedAt() == null ? null : new DriverProfileView.Suspension(d.suspendedAt(), d.suspensionReason(),
+                        suspendedBy(parts)),
                 row.vehicle(),
                 new DriverProfileView.Performance(row.trips(), row.rating(), row.ratingCount(), row.earnings(), row.grossEarnings(),
                         row.reliabilityPercent(), d.reportsFiled()),
-                new DriverProfileView.Account(row.driver().ref(), row.joinedAt()));
+                accountProfileParts.account(parts, row.driver().ref(), row.joinedAt()),
+                AccountProfileParts.email(parts, "driver"),
+                accountProfileParts.driverVerification(parts),
+                parts.profileField("vehicles"),
+                parts.profileField("emergencyContacts"),
+                parts.accountField("suspensionHistory"),
+                parts.recentActions(),
+                parts.accountField("pendingDeletion"));
+    }
+
+    static com.fasterxml.jackson.databind.JsonNode suspendedBy(AccountProfileParts.Parts parts) {
+        com.fasterxml.jackson.databind.JsonNode suspension = parts.accountField("suspension");
+        return suspension == null || suspension.get("suspendedBy") == null || suspension.get("suspendedBy").isNull()
+                ? null : suspension.get("suspendedBy");
     }
 
     private static DriverDirectoryItem row(ProfileServiceClient.IndexedDriver d) {

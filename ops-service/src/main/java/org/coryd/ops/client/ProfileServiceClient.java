@@ -271,6 +271,52 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** Gives a driver locked out of the licence check their tries back. Returns their licence tries now. */
+    public JsonNode resetLicenceAttempts(String driverId, String note, String reviewedBy) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("note", note);
+        body.put("reviewedBy", reviewedBy);
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
+                .uri("/drivers/{driverId}/verification/licence/reset-attempts", driverId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** Everything profile-service holds about one person, for the account profile screens. */
+    public JsonNode accountProfile(String userId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/internal/users/{userId}/ops-profile", userId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** Name / email. Returns {changes:[{field,before,after}], ...}. */
+    public JsonNode editDetails(String userId, String firstName, String lastName, String email) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("firstName", firstName);
+        body.put("lastName", lastName);
+        body.put("email", email);
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.patch()
+                .uri("/internal/users/{userId}/details", userId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** A driver's vehicle. Returns {changes, vehicle, sentBackToReview}. */
+    public JsonNode editVehicle(String driverId, String vehicleId, Map<String, Object> fields, String opsUserId, String opsUserName) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.patch()
+                .uri(b -> b.path("/internal/drivers/{driverId}/vehicles/{vehicleId}")
+                        .queryParam("opsUserId", opsUserId).queryParam("opsUserName", opsUserName).build(driverId, vehicleId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(fields)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
     /** Approve one driver document - including over Smile ID's failed licence check. */
     public VerificationStatusResponse approveVerificationItem(String driverId, ReviewableItem item, String note, String reviewedBy) {
         Map<String, Object> body = new HashMap<>();

@@ -67,6 +67,12 @@ public class User extends BaseEntity {
     @Column(length = 500)
     private String suspensionReason;
 
+    /**
+     * Access tokens issued before this are refused by every service (suspension, sign out everywhere). Only ever moves
+     * forward - a reinstate doesn't revive old tokens. Null when nothing was ever revoked.
+     */
+    private Instant tokensValidAfter;
+
     /** "How did you hear about us?" from signup - first answer wins. */
     @Enumerated(EnumType.STRING)
     @Column(length = 30)

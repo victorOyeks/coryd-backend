@@ -46,6 +46,9 @@ public class AccountDeletionService {
     private final BetaSignupRepository betaSignupRepository;
     private final DeletionBlockerClient deletionBlockerClient;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final AccountDeletionRecorder deletionRecorder;
+    private final SessionRevocationService sessionRevocationService;
+    private final org.coryd.identity.repository.AccountActionRepository accountActionRepository;
 
     /** The person deleting their own account. A suspended account can't - deleting must not be a way round a suspension. */
     @Transactional
@@ -67,8 +70,13 @@ public class AccountDeletionService {
         String userId = user.getId();
         List<String> blockers = deletionBlockerClient.blockers(userId, byOps);
         if (!blockers.isEmpty()) {
+            deletionRecorder.refused(user, deletedBy, blockers);
             throw new BadRequestException("This account can't be deleted yet: " + String.join("; ", blockers));
         }
+        deletionRecorder.completed(user, deletedBy);
+        // Every access token still out there dies now, not at its expiry.
+        sessionRevocationService.endAllSessionsOfDeleted(userId);
+        accountActionRepository.deleteByUserId(userId);
         refreshTokenRepository.deleteByUserId(userId);
         userDeviceRepository.deleteByUserId(userId);
         otpCodeRepository.deleteByPhone(user.getPhone());

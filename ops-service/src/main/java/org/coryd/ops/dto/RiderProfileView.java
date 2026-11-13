@@ -1,21 +1,28 @@
 package org.coryd.ops.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.coryd.common.enums.RiderDirectoryStatus;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 
-/** A rider's profile in the Ops Console. suspension is null unless the account is suspended. */
+/**
+ * A rider's profile in the Ops Console - everything in one call; see docs/ops-console/accounts.md section 3. suspension is
+ * null unless the account is suspended; a part whose owning service couldn't be reached is null.
+ */
 public record RiderProfileView(
         DriverSummary rider,
         RiderDirectoryStatus status,
         DriverProfileView.Suspension suspension,
-        Account account,
-        Activity activity
+        DriverProfileView.Account account,
+        Activity activity,
+        String email,
+        /** {identity: {status, submittedAt, decidedAt, rejectionReason}} - the identity (NIN) check. */
+        JsonNode verification,
+        JsonNode emergencyContacts,
+        JsonNode suspensionHistory,
+        JsonNode recentActions,
+        JsonNode pendingDeletion
 ) {
-    public record Account(String ref, Instant joinedAt) {
-    }
-
     public record Activity(Long totalTrips, Double rating, Long ratingCount, BigDecimal totalSpent, Integer reliabilityPercent,
                            Long reportsFiled) {
     }

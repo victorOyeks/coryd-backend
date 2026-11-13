@@ -3,6 +3,7 @@ package org.coryd.common.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.coryd.common.response.ApiResponse;
+import org.coryd.common.security.filter.JwtFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
@@ -30,10 +31,13 @@ public class SecurityBeans {
     @Bean
     public AuthenticationEntryPoint authenticationEntryPoint(ObjectMapper objectMapper) {
         return (request, response, authException) -> {
+            // A genuine token whose sessions ops ended: say so, so the app can sign the person out with the reason.
+            Object refusal = request.getAttribute(JwtFilter.REFUSAL_ATTRIBUTE);
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.getWriter().write(
-                    objectMapper.writeValueAsString(ApiResponse.error("Unauthorized: " + authException.getMessage()))
+                    objectMapper.writeValueAsString(ApiResponse.error(refusal instanceof String message
+                            ? message : "Unauthorized: " + authException.getMessage()))
             );
         };
     }

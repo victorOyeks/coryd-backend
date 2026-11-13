@@ -27,6 +27,7 @@ import org.coryd.common.kafka.events.TripCompletedEvent;
 import org.coryd.common.kafka.events.TripSafetyCheckEvent;
 import org.coryd.common.kafka.events.TripSafetyEscalatedEvent;
 import org.coryd.common.kafka.events.TripShareRequestedEvent;
+import org.coryd.common.kafka.events.UserTokensRevokedEvent;
 import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.notification.config.KafkaConfig;
 import org.coryd.notification.config.SosAlertProperties;
@@ -87,12 +88,17 @@ public class NotificationEventListener {
         dispatchService.sendPush(event.getRiderId(), "Booking cancelled", cancellationCopy(event.getCancelledBy(), event.isPaid()),
                 "BOOKING_CANCELLED", event.getBookingId());
 
-        // Only tell the driver when the RIDER was the one who cancelled - a seat just freed up on
+        // Only tell the driver when the RIDER was the one who cancelled (or CoRyd cancelled the rider's seat because of their account) - a seat just freed up on
         // their route and they'd otherwise have no way to know. A driver- or system-initiated
         // cancellation already means the driver knows (they did it, or ROUTE_CANCELLED told them).
         if ("RIDER".equals(event.getCancelledBy()) && event.getDriverId() != null) {
             dispatchService.sendPush(event.getDriverId(), "A seat opened up",
                     "A rider cancelled their booking on your route - the seat is available again.",
+                    "BOOKING_CANCELLED", event.getBookingId());
+        } else if (event.isRiderAccountCancelled() && event.getDriverId() != null) {
+            // The rider's account was suspended or closed - the driver is told the seat is free, never why.
+            dispatchService.sendPush(event.getDriverId(), "A seat opened up",
+                    "A rider's booking on your route was cancelled - the seat is available again.",
                     "BOOKING_CANCELLED", event.getBookingId());
         }
     }
@@ -398,6 +404,21 @@ public class NotificationEventListener {
     @KafkaListener(topics = KafkaTopics.VERIFICATION_ITEM_DECIDED, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onVerificationItemDecided(VerificationItemDecidedEvent event) {
         String label = event.getItemLabel();
+        if ("ATTEMPTS_RESET".equals(event.getAction())) {
+            dispatchService.sendPush(event.getDriverId(), "You can verify your " + label.toLowerCase(Locale.ROOT) + " again",
+                    "We've reset your " + label.toLowerCase(Locale.ROOT) + " check. Open the app to try again.",
+                    "VERIFICATION_ITEM_RETRY", null);
+            return;
+        }
+        if ("SENT_BACK_TO_REVIEW".equals(event.getAction())) {
+            String body = "We've updated your vehicle details and are checking your " + label.toLowerCase(Locale.ROOT)
+                    + " again. You can post trips once it's approved.";
+            dispatchService.sendPush(event.getDriverId(), label + " being re-checked", body, "VERIFICATION_ITEM_IN_REVIEW", null);
+            if (event.getEmail() != null) {
+                dispatchService.sendEmail(event.getEmail(), label + " being re-checked - CoRyd", body, "VERIFICATION_ITEM_IN_REVIEW");
+            }
+            return;
+        }
         boolean resubmit = "RESUBMISSION_REQUESTED".equals(event.getAction());
         String title = event.isApproved() ? label + " approved"
                 : resubmit ? "Please upload your " + label.toLowerCase() + " again" : label + " needs attention";
@@ -438,6 +459,27 @@ public class NotificationEventListener {
             default -> log.debug("Identity verification action {} for {} - nothing to tell them", action, event.getUserId());
         }
     }
+
+    /**
+     * Ops signed the account out everywhere: tell the person why their app asked them to sign in again. The topic is
+     * compacted and kept forever (every service replays it), so only fresh changes are acted on - a replay, or a new
+     * consumer group starting from the beginning, never re-sends old notices. Suspensions aren't pushed: the app shows the
+     * suspension message on its next call.
+     */
+    @KafkaListener(topics = KafkaTopics.USER_TOKENS_REVOKED, groupId = KafkaConfig.GROUP_ID_ACCOUNT)
+    public void onUserTokensRevoked(UserTokensRevokedEvent event) {
+        if (event.getUserId() == null || event.isSuspended() || !UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE.equals(event.getReason())) {
+            return;
+        }
+        if (event.getStateAt() == null || event.getStateAt().isBefore(Instant.now().minus(SIGN_OUT_NOTICE_WINDOW))) {
+            log.debug("Old sign-out of {} replayed - not notifying", event.getUserId());
+            return;
+        }
+        dispatchService.sendPush(event.getUserId(), "You've been signed out",
+                "For your security, CoRyd signed you out on all your devices. Sign in again to carry on.", "SIGNED_OUT_EVERYWHERE", null);
+    }
+
+    static final Duration SIGN_OUT_NOTICE_WINDOW = Duration.ofMinutes(15);
 
     @KafkaListener(topics = KafkaTopics.TRIP_SHARE_REQUESTED, groupId = KafkaConfig.GROUP_ID_SAFETY)
     public void onTripShareRequested(TripShareRequestedEvent event) {

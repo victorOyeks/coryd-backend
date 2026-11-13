@@ -39,6 +39,7 @@ public class DriverProfileController {
     private final VerificationAggregationService verificationAggregationService;
     private final org.coryd.profile.service.VerificationReviewService verificationReviewService;
     private final org.coryd.profile.service.LicenceReviewService licenceReviewService;
+    private final org.coryd.profile.service.LicenceAttemptsService licenceAttemptsService;
     private final FavoriteDriverService favoriteDriverService;
     private final SmileIdCheckService smileIdCheckService;
     private final NinLookupService ninLookupService;
@@ -189,6 +190,19 @@ public class DriverProfileController {
     public ApiResponse<org.coryd.profile.dto.LicenceReviewResponse> licenceReview(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                                 @PathVariable String driverId) {
         return ApiResponse.ok(licenceReviewService.licence(driverId, principal.getActiveRole()));
+    }
+
+    /**
+     * Give a driver locked out of the licence check (every try used) their tries back - the same rules as identity tries:
+     * not for a verified licence, and only when tries were used. Logged as ATTEMPTS_RESET; the driver is told. Ops only.
+     */
+    @PostMapping("/{driverId}/verification/licence/reset-attempts")
+    public ApiResponse<org.coryd.profile.dto.LicenceAttempts> resetLicenceAttempts(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                                   @PathVariable String driverId,
+                                                                                   @Valid @RequestBody(required = false) org.coryd.profile.dto.IdentityActionRequest request) {
+        return ApiResponse.ok("Tries reset", licenceAttemptsService.reset(driverId, request == null ? null : request.note(),
+                request != null && request.reviewedBy() != null && !request.reviewedBy().isBlank() ? request.reviewedBy() : reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
     }
 
     /** The audit log - every decision on this driver's items, newest first. */

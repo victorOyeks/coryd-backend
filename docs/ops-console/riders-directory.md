@@ -2,7 +2,7 @@
 
 Sidebar: **Riders → Riders Directory**.
 
-Every rider, with their trips, reliability, rating, spend, reports and status. From a row, ops opens the rider's profile, then their trip history and receipts. They can suspend or reinstate the rider.
+Every rider, with their trips, reliability, rating, spend, reports and status. From a row, ops opens the rider's profile, then their trip history and receipts. They can suspend or reinstate the rider, sign them out everywhere, and edit their name and email; see [accounts.md](accounts.md).
 
 **Basics:**
 - **Base URL:** `https://api-dev.coryd.ng/ops`.
@@ -17,8 +17,10 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
 |---|---|
 | Header "N registered riders" and the tab badges | `GET /riders/counts` |
 | Table: tabs, search, sorting, paging | `GET /riders` |
-| **View**: the rider's profile | `GET /riders/{riderId}` |
-| **Suspend Account** / reinstate | `POST /users/{riderId}/suspend` · `POST /users/{riderId}/reinstate` |
+| **View**: the rider's profile, with every section | `GET /riders/{riderId}`; see [accounts.md](accounts.md) section 3 |
+| **Suspend Account** / reinstate / sign out everywhere | `POST /users/{riderId}/suspend` · `/reinstate` · `/sign-out-everywhere`; see [accounts.md](accounts.md) section 2 |
+| Edit name / email | `PATCH /users/{riderId}/details` |
+| Account history | `GET /users/{riderId}/account-history` |
 | **View Trip History** | `GET /riders/{riderId}/trips` |
 | **Download receipt** | `GET /riders/{riderId}/trips/{bookingId}/receipt` |
 
@@ -112,6 +114,17 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
 
 An unknown rider gets `404 Rider not found`.
 
+**The same call also returns the rest of the profile:**
+- the account, with status, roles, last seen and devices;
+- `email`;
+- `verification.identity` (the NIN check);
+- emergency contacts;
+- suspension history;
+- recent account history;
+- any pending deletion.
+
+`account` gains fields and `suspension` gains `suspendedBy`. See [accounts.md](accounts.md) section 3.
+
 ---
 
 ## 4. Suspend and reinstate
@@ -126,10 +139,12 @@ These are the same calls as for drivers.
 
 - The reason is required (up to 500 characters). It's kept on the account and shown back in `suspension.reason`.
 - The rider can't sign in again, or book.
-- Their upcoming seats are cancelled and refunded in full. A trip already under way is left to finish.
+- Their sessions end on every device within seconds.
+- Their upcoming seats are cancelled and refunded in full, including a pickup the driver is already on the way to or waiting at. The driver is told the seat opened up, not why.
+- A trip already under way is left to finish.
 - **These cancellations don't count against their reliability.**
 
-**Reinstate:** `POST /users/{riderId}/reinstate`, with no body.
+**Reinstate:** `POST /users/{riderId}/reinstate`, with `{ "reason": "…" }`. **The reason is required.** The rider signs in again; old sessions aren't revived. See [accounts.md](accounts.md) section 2.
 
 **After either one,** refetch the profile and the counts.
 
@@ -262,6 +277,7 @@ Dates are matched in Lagos time. A word that is both a name and a date, like "Su
 - [ ] Table from `/riders`: tabs (`status`), search, sortable columns (`sort` + `direction`), page size and paging.
 - [ ] Retention bar from `reliabilityPercent`; dashes for `null` numbers; "₦157k" from `totalSpent`.
 - [ ] Profile from `/riders/{riderId}`: card, status badge, account, activity.
-- [ ] **Suspend Account** (with a reason dialog) and **Reinstate Account**, refreshing afterwards.
+- [ ] **Suspend Account** and **Reinstate Account**, both with a reason dialog, refreshing afterwards.
+- [ ] Profile sections, name and email edits, and account history; see [accounts.md](accounts.md) section 11.
 - [ ] Trip History from `/riders/{riderId}/trips`, with search and paging; "paid" or "refunded" from `payment`.
 - [ ] **Download receipt** from `/riders/{riderId}/trips/{bookingId}/receipt`, rendered and saved as a PDF in the console.
