@@ -1,6 +1,6 @@
 --liquibase formatted sql
 
---changeset coryd:074-profile-verification-decision-log-audit
+--changeset coryd:075-profile-verification-decision-log-audit
 -- The verification decision log becomes the audit trail for every ops verification action, on a driver's documents and
 -- on anyone's identity (NIN) check (item IDENTITY; driver_id holds the person's user id either way): what was done,
 -- the status before and after, who did it (their name in decided_by, their user id in decided_by_id), and whether an
@@ -14,7 +14,7 @@ ALTER TABLE profile.verification_decision_log ADD COLUMN IF NOT EXISTS decided_b
 CREATE INDEX IF NOT EXISTS idx_verification_decision_log_driver_item
     ON profile.verification_decision_log (driver_id, item, created_at);
 
---changeset coryd:075-profile-identity-ops-override
+--changeset coryd:076-profile-identity-ops-override
 -- An identity check ops approved over Smile ID's result: the note ops left, and that it was an override - shown on the
 -- ops identity screen next to the decision. Who and when are decided_by / decided_at, as for any decision.
 ALTER TABLE profile.identity_verifications ADD COLUMN IF NOT EXISTS decision_note VARCHAR(500);
