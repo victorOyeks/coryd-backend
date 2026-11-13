@@ -1,5 +1,12 @@
 # Ops Console: Trips & Live Trips API
 
+> **Superseded by [`docs/ops-console/trips-bookings.md`](ops-console/trips-bookings.md)**, which has the full contract:
+> trips filters (date range, driver, rider, route status), server-side sort, stuck trips, cancel trip / cancel booking /
+> resolve stuck trip, the Cancellations Log, and payments, refunds and a timeline on the trip detail. Everything below
+> still works unchanged - every field listed here is still returned, the newer ones are additions - and is kept only
+> for reference. Two corrections to it: sorting is now done on the server (`sort`, `direction`), and
+> `GET /trips/counts` also returns `published`, `full`, `inProgress` and `stuck`.
+
 Base URL: `https://api-dev.coryd.ng/ops`. Every endpoint needs an **`OPS_ADMIN`** token (`Authorization: Bearer …`).
 Responses use the standard envelope `{ responseId, timestamp, success, message, data }`; errors return `success: false`
 with a `message` you can show as-is.
