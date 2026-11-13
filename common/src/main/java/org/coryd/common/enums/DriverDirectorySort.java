@@ -10,5 +10,7 @@ public enum DriverDirectorySort {
     EARNINGS,
     RELIABILITY,
     STATUS,
-    JOINED
+    JOINED,
+    /** When they last completed a trip as the driver - drivers who never have go last. */
+    LAST_TRIP
 }
