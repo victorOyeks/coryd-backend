@@ -76,6 +76,20 @@ public class DriverVerificationOpsService {
         return withReview(driverId, withContact(driverId, status));
     }
 
+    /** One document approved on its own - over Smile ID's failed licence check too. Then the review page as it stands. */
+    public VerificationStatusResponse approveItem(String driverId, org.coryd.common.enums.ReviewableItem item, String note,
+                                                  CoRydUserDetails admin) {
+        VerificationStatusResponse status = profileServiceClient.approveVerificationItem(driverId, item, note, reviewer(admin));
+        return withReview(driverId, withContact(driverId, status));
+    }
+
+    /** One document sent back to the driver with the reason they'll see. Then the review page as it stands. */
+    public VerificationStatusResponse requestResubmission(String driverId, org.coryd.common.enums.ReviewableItem item, String reason,
+                                                          CoRydUserDetails admin) {
+        VerificationStatusResponse status = profileServiceClient.requestResubmission(driverId, item, reason, reviewer(admin));
+        return withReview(driverId, withContact(driverId, status));
+    }
+
     /** Save Changes: the marks as they stand - flagged rejected (an approved document loses its approval), verified approved. */
     public VerificationStatusResponse save(String driverId, CoRydUserDetails admin) {
         VerificationStatusResponse status = profileServiceClient.saveVerification(driverId, reviewer(admin));

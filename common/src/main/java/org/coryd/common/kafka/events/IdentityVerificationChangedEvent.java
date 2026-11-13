@@ -18,4 +18,11 @@ public class IdentityVerificationChangedEvent {
     /** SMILE_ID for an automatic match (PREMBLY on older events), otherwise the ops user who decided. */
     private String decidedBy;
     private Instant decidedAt;
+    /**
+     * Set only for an ops action: a VerificationDecisionAction name (APPROVED, OVERRIDE_APPROVED, REJECTED, ATTEMPTS_RESET).
+     * Null for Smile ID's own results. notification-service tells the person about ops actions.
+     */
+    private String action;
+    /** The reason the person sees, on a REJECTED action. */
+    private String reason;
 }

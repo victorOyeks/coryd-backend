@@ -13,7 +13,19 @@ import org.coryd.profile.dto.IdentityVerificationResponse;
 import org.coryd.profile.dto.StartIdentityCheckRequest;
 import org.coryd.profile.dto.SubmitIdentityVerificationRequest;
 import org.coryd.profile.entity.SmileIdCheckType;
+import org.coryd.common.enums.IdentityReviewRole;
+import org.coryd.common.enums.IdentityReviewSort;
+import org.coryd.common.enums.IdentityReviewTab;
+import org.coryd.profile.dto.IdentityActionRequest;
+import org.coryd.profile.dto.IdentityCheckImages;
+import org.coryd.profile.dto.IdentityReviewCounts;
+import org.coryd.profile.dto.IdentityReviewDetail;
+import org.coryd.profile.dto.IdentityReviewRow;
+import org.coryd.profile.dto.VerificationDecisionHistoryItem;
+import org.coryd.profile.service.IdentityReviewService;
 import org.coryd.profile.service.IdentityVerificationService;
+import org.springframework.data.domain.Sort;
+import java.util.List;
 import org.coryd.profile.service.SmileIdCheckService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -37,6 +49,7 @@ public class IdentityVerificationController {
 
     private final IdentityVerificationService identityVerificationService;
     private final SmileIdCheckService smileIdCheckService;
+    private final IdentityReviewService identityReviewService;
 
     /** Onboarding's identity step - opens a Smile ID check; the app runs Smile ID's SDK with what comes back, then polls GET /me. */
     @PostMapping("/session")
@@ -80,10 +93,88 @@ public class IdentityVerificationController {
         return ApiResponse.ok("Marked as reviewed", null);
     }
 
+    /**
+     * The original approve-or-reject call, kept for the console's queue. It follows the same rules as the endpoints below:
+     * on approve, reason is kept as the note (and is required to approve over a Smile ID failure); on reject it's the
+     * reason the person sees.
+     */
     @PatchMapping("/{userId}")
     public ApiResponse<IdentityVerificationResponse> decide(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String userId,
                                                             @Valid @RequestBody IdentityVerificationDecisionRequest request) {
-        return ApiResponse.ok(identityVerificationService.decide(userId, principal.getActiveRole(), principal.getUserId(),
-                request.approve(), request.reason()));
+        IdentityActionRequest action = request.approve()
+                ? new IdentityActionRequest(request.reason(), null, null)
+                : new IdentityActionRequest(null, request.reason(), null);
+        if (request.approve()) {
+            identityReviewService.approve(userId, action, reviewerName(principal), principal.getUserId(), principal.getActiveRole());
+        } else {
+            identityReviewService.reject(userId, action, reviewerName(principal), principal.getUserId(), principal.getActiveRole());
+        }
+        return ApiResponse.ok(identityVerificationService.mine(userId));
+    }
+
+    // ---- the ops identity screen: list, one person, approve / reject / reset tries ----------------------------------
+
+    /** Everyone who started an identity check, by tab - searched (name, or 4+ digits of a phone), sorted and paged in the database. */
+    @GetMapping("/people")
+    public ApiResponse<PagedResponse<IdentityReviewRow>> people(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                @RequestParam(required = false) IdentityReviewTab tab,
+                                                                @RequestParam(required = false) String search,
+                                                                @RequestParam(required = false) IdentityReviewRole role,
+                                                                @RequestParam(required = false) IdentityReviewSort sort,
+                                                                @RequestParam(required = false) Sort.Direction direction,
+                                                                @RequestParam(defaultValue = "0") int page,
+                                                                @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(identityReviewService.list(principal.getActiveRole(), tab, search, role, sort, direction, page, size));
+    }
+
+    @GetMapping("/people/counts")
+    public ApiResponse<IdentityReviewCounts> peopleCounts(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                          @RequestParam(required = false) String search,
+                                                          @RequestParam(required = false) IdentityReviewRole role) {
+        return ApiResponse.ok(identityReviewService.counts(principal.getActiveRole(), search, role));
+    }
+
+    @GetMapping("/people/{userId}")
+    public ApiResponse<IdentityReviewDetail> person(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String userId) {
+        return ApiResponse.ok(identityReviewService.detail(userId, principal.getActiveRole()));
+    }
+
+    @GetMapping("/people/{userId}/history")
+    public ApiResponse<List<VerificationDecisionHistoryItem>> personHistory(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                            @PathVariable String userId) {
+        return ApiResponse.ok(identityReviewService.history(userId, principal.getActiveRole()));
+    }
+
+    /** Fresh links to the selfie (and NIN photo) Smile ID captured for one check - fetch each time, never store. */
+    @GetMapping("/people/{userId}/checks/{checkId}/images")
+    public ApiResponse<IdentityCheckImages> checkImages(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String userId,
+                                                        @PathVariable String checkId) {
+        return ApiResponse.ok(identityReviewService.images(userId, checkId, principal.getActiveRole()));
+    }
+
+    @PostMapping("/people/{userId}/approve")
+    public ApiResponse<IdentityReviewDetail> approvePerson(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String userId,
+                                                           @Valid @RequestBody(required = false) IdentityActionRequest request) {
+        return ApiResponse.ok("Identity approved", identityReviewService.approve(userId, request, reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
+    }
+
+    @PostMapping("/people/{userId}/reject")
+    public ApiResponse<IdentityReviewDetail> rejectPerson(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String userId,
+                                                          @Valid @RequestBody(required = false) IdentityActionRequest request) {
+        return ApiResponse.ok("Identity rejected", identityReviewService.reject(userId, request, reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
+    }
+
+    @PostMapping("/people/{userId}/reset-attempts")
+    public ApiResponse<IdentityReviewDetail> resetAttempts(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String userId,
+                                                           @Valid @RequestBody(required = false) IdentityActionRequest request) {
+        return ApiResponse.ok("Tries reset", identityReviewService.resetAttempts(userId, request, reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
+    }
+
+    private static String reviewerName(CoRydUserDetails principal) {
+        String name = principal.getFullName();
+        return name == null || name.isBlank() ? principal.getUserId() : name;
     }
 }

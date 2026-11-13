@@ -70,6 +70,15 @@ public class IdentityVerification extends BaseEntity {
     @Builder.Default
     private int attempts = 0;
 
+    /** The note ops left with their decision - why they approved, especially over Smile ID's result. */
+    @Column(length = 500)
+    private String decisionNote;
+
+    /** Ops approved this although Smile ID hadn't (it failed, flagged or asked for a retry) - see the audit log for what it said. */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean providerOverridden = false;
+
     /** The name and date of birth on the NIMC record, kept when the NIN check is approved - for ops to refer to; the
      * profile keeps the name the person typed. Null until then, and always null in the Smile ID sandbox. */
     @Column(length = 100)

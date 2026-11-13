@@ -18,6 +18,8 @@ public interface VerificationCheckRepository extends JpaRepository<VerificationC
 
     List<VerificationCheck> findByDriverId(String driverId);
 
+    List<VerificationCheck> findByDriverIdInAndCheckTypeIn(java.util.Collection<String> driverIds, java.util.Collection<VerificationCheckType> checkTypes);
+
     /** Ops' review list - approvals on a partial name match nobody has looked at yet, oldest first. */
     Page<VerificationCheck> findByOutcomeAndReviewedAtIsNullOrderByCreatedAtAsc(VerificationCheckOutcome outcome, Pageable pageable);
 }

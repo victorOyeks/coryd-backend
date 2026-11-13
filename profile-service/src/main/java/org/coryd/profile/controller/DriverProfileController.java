@@ -84,7 +84,8 @@ public class DriverProfileController {
     public ApiResponse<VerificationStatusResponse> decideVerification(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                         @PathVariable String driverId,
                                                                         @Valid @RequestBody VerificationDecisionBatchRequest request) {
-        return ApiResponse.ok(verificationAggregationService.decide(driverId, principal.getActiveRole(), request));
+        return ApiResponse.ok(verificationAggregationService.decide(driverId, principal.getActiveRole(), request,
+                principal.getUserId(), java.util.Map.of()));
     }
 
     @GetMapping("/{driverId}/verification-status")
@@ -138,7 +139,31 @@ public class DriverProfileController {
     public ApiResponse<VerificationStatusResponse> approveVerification(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                        @PathVariable String driverId,
                                                                        @Valid @RequestBody(required = false) ReviewDecisionRequest request) {
-        return ApiResponse.ok("Driver approved", verificationReviewService.approve(driverId, request, reviewerName(principal), principal.getActiveRole()));
+        return ApiResponse.ok("Driver approved", verificationReviewService.approve(driverId, request, reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
+    }
+
+    /**
+     * Approve one document on its own - including a licence Smile ID failed, which ops may approve over its result (a note
+     * is then required). Returns the driver's verification status.
+     */
+    @PostMapping("/{driverId}/verification/items/{item}/approve")
+    public ApiResponse<VerificationStatusResponse> approveVerificationItem(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                           @PathVariable String driverId,
+                                                                           @PathVariable ReviewableItem item,
+                                                                           @Valid @RequestBody(required = false) ItemApprovalRequest request) {
+        return ApiResponse.ok(item.label() + " approved", verificationReviewService.approveItem(driverId, item, request,
+                reviewerName(principal), principal.getUserId(), principal.getActiveRole()));
+    }
+
+    /** Ask the driver to upload one document again, with the reason they'll see. Returns the driver's verification status. */
+    @PostMapping("/{driverId}/verification/items/{item}/request-resubmission")
+    public ApiResponse<VerificationStatusResponse> requestResubmission(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                       @PathVariable String driverId,
+                                                                       @PathVariable ReviewableItem item,
+                                                                       @Valid @RequestBody(required = false) ItemResubmissionRequest request) {
+        return ApiResponse.ok("Resubmission requested", verificationReviewService.requestResubmission(driverId, item, request,
+                reviewerName(principal), principal.getUserId(), principal.getActiveRole()));
     }
 
     /** Reject - flagged items are rejected with their notes, items marked Verified are approved, the rest keep waiting. */
@@ -146,7 +171,8 @@ public class DriverProfileController {
     public ApiResponse<VerificationStatusResponse> rejectVerification(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                       @PathVariable String driverId,
                                                                       @Valid @RequestBody(required = false) ReviewDecisionRequest request) {
-        return ApiResponse.ok("Driver rejected", verificationReviewService.reject(driverId, request, reviewerName(principal), principal.getActiveRole()));
+        return ApiResponse.ok("Driver rejected", verificationReviewService.reject(driverId, request, reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
     }
 
     /** Save Changes (Drivers Directory): apply the marks as they stand - flagged rejected, verified approved, the rest left alone. */
@@ -154,7 +180,8 @@ public class DriverProfileController {
     public ApiResponse<VerificationStatusResponse> saveVerification(@AuthenticationPrincipal CoRydUserDetails principal,
                                                                     @PathVariable String driverId,
                                                                     @Valid @RequestBody(required = false) org.coryd.profile.dto.ReviewDecisionRequest request) {
-        return ApiResponse.ok("Changes saved", verificationReviewService.save(driverId, request, reviewerName(principal), principal.getActiveRole()));
+        return ApiResponse.ok("Changes saved", verificationReviewService.save(driverId, request, reviewerName(principal),
+                principal.getUserId(), principal.getActiveRole()));
     }
 
     /** The licence as Smile ID saw it: what it read, and fresh links to the images it captured. Ops only. */

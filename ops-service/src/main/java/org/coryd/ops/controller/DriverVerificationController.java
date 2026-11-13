@@ -68,6 +68,29 @@ public class DriverVerificationController {
         return ApiResponse.ok(driverVerificationOpsService.reset(driverId, item));
     }
 
+    /**
+     * Approve one document on its own - including a licence Smile ID failed, which ops may approve over its result (a note
+     * is then required). Returns the review page.
+     */
+    @PostMapping("/{driverId}/verification/items/{item}/approve")
+    public ApiResponse<VerificationStatusResponse> approveItem(@AuthenticationPrincipal CoRydUserDetails admin,
+                                                               @PathVariable String driverId,
+                                                               @PathVariable org.coryd.common.enums.ReviewableItem item,
+                                                               @Valid @RequestBody(required = false) OpsNoteRequest request) {
+        return ApiResponse.ok(item.label() + " approved",
+                driverVerificationOpsService.approveItem(driverId, item, request == null ? null : request.note(), admin));
+    }
+
+    /** Ask the driver to upload one document again, with the reason they'll see. Returns the review page. */
+    @PostMapping("/{driverId}/verification/items/{item}/request-resubmission")
+    public ApiResponse<VerificationStatusResponse> requestResubmission(@AuthenticationPrincipal CoRydUserDetails admin,
+                                                                       @PathVariable String driverId,
+                                                                       @PathVariable org.coryd.common.enums.ReviewableItem item,
+                                                                       @Valid @RequestBody OpsReasonRequest request) {
+        return ApiResponse.ok("Resubmission requested",
+                driverVerificationOpsService.requestResubmission(driverId, item, request.reason(), admin));
+    }
+
     /** Approve Driver - every item approved or marked Verified, nothing flagged. */
     @PostMapping("/{driverId}/verification/approve")
     public ApiResponse<VerificationStatusResponse> approve(@AuthenticationPrincipal CoRydUserDetails admin,

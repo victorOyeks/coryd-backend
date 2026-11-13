@@ -20,4 +20,6 @@ public class VerificationItemDecidedEvent {
     private String rejectionReason;
     private String reviewedBy;
     private LocalDateTime decidedAt;
+    /** A VerificationDecisionAction name: RESUBMISSION_REQUESTED when ops asked for this document again. Null on older events. */
+    private String action;
 }

@@ -20,9 +20,15 @@ public record VerificationStatusResponse(
         VerificationStatus overallStatus,
         Instant verifiedSince,
         List<ProviderCheck> providerChecks,
+        /** Documents ops asked the driver to upload again, still waiting for the new upload. */
+        List<ResubmissionRequest> resubmissionRequests,
         /** The reviewer's marks and whether Approve Driver / Reject can be pressed - null if it couldn't be loaded. */
         VerificationReview review
 ) {
+    /** One document ops asked for again: reason is what the driver was told; requestedAt when. */
+    public record ResubmissionRequest(org.coryd.common.enums.ReviewableItem item, String label, String reason, Instant requestedAt) {
+    }
+
     /** The earliest submission among the four items - "Submitted" in the review summary. */
     @com.fasterxml.jackson.annotation.JsonProperty("submittedAt")
     public Instant submittedAt() {
@@ -93,11 +99,11 @@ public record VerificationStatusResponse(
 
     public VerificationStatusResponse withDriver(DriverDetails details) {
         return new VerificationStatusResponse(details, waitingSince, governmentId, vehicleRegistration, documents,
-                overallStatus, verifiedSince, providerChecks, review);
+                overallStatus, verifiedSince, providerChecks, resubmissionRequests, review);
     }
 
     public VerificationStatusResponse withReview(VerificationReview review) {
         return new VerificationStatusResponse(driver, waitingSince, governmentId, vehicleRegistration, documents,
-                overallStatus, verifiedSince, providerChecks, review);
+                overallStatus, verifiedSince, providerChecks, resubmissionRequests, review);
     }
 }

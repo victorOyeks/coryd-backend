@@ -56,7 +56,9 @@ Name matching accepts either name order. For the NIN, either of the person's pro
 **Partial name matches.** A name below `SMILE_ID_NAME_MATCH_THRESHOLD` that still shares at least one name with the record - any of the person's names against any on the record, middle names included, spelling drift allowed, initials not counted - is approved with `SMILE_ID_PARTIAL_NAME_MATCH=APPROVE` (default) instead of waiting for ops. Example: profile *Grace Oyekanmi*, NIMC *Grace Oluwafunmilola Dare*. The same applies to a lookup driver's NIN against their licence (a `NIN_LOOKUP` check with subject `partial-cross-check-…`); a date of birth that differs still goes to ops. Each one is listed for ops until reviewed:
 - `GET /ops/identity-verification/partial-name-matches?page=&size=` - oldest first: `checkId`, `userId`, profile name, `checkType` (`NIN_FACE`, `DRIVERS_LICENCE` or `NIN_LOOKUP`), `nameMatchScore`, `summary` (both names and the Smile ID job), `approvedAt`.
 - `POST /ops/identity-verification/partial-name-matches/{checkId}/reviewed` - same person, take it off the list.
-- Not the same person: reject with `POST /ops/identity-verification/{userId}/decision` (`{"approve": false, "reason": "..."}`) for `NIN_FACE` / `NIN_LOOKUP`, or the driver's `GOVERNMENT_ID` decision for `DRIVERS_LICENCE`, then mark it reviewed.
+- Not the same person: reject with `POST /ops/identity-verification/people/{userId}/reject` (or the older `…/{userId}/decision`) for `NIN_FACE` / `NIN_LOOKUP` - this also marks it reviewed - or flag / request resubmission of the driver's `GOVERNMENT_ID` for `DRIVERS_LICENCE`, then mark it reviewed.
+
+**What Smile ID approved stays approved.** Apart from these partial name matches (while still on the review list), ops can't reject a NIN check or a licence Smile ID approved. Ops can approve what Smile ID failed or sent for review; that's recorded as an override in the audit log. See [ops-console/rider-identity.md](ops-console/rider-identity.md) and [ops-console/verification-queue.md](ops-console/verification-queue.md).
 
 `SMILE_ID_PARTIAL_NAME_MATCH=OPS` puts these back in the ops queue as `NAME_MISMATCH`.
 

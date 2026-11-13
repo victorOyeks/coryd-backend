@@ -18,8 +18,17 @@ public record VerificationStatusResponse(
         List<DocumentStatus> documents,
         VerificationStatus overallStatus,
         Instant verifiedSince,
-        List<ProviderCheck> providerChecks
+        List<ProviderCheck> providerChecks,
+        /** Documents ops asked the driver to upload again and that are still waiting for it - empty when there are none. */
+        List<ResubmissionRequest> resubmissionRequests
 ) {
+    /**
+     * Ops asked the driver to upload this document again: reason is what they're told (also the item's rejectionReason);
+     * the item's status is REJECTED until the new upload lands, which puts it back in review and removes it from here.
+     */
+    public record ResubmissionRequest(org.coryd.common.enums.ReviewableItem item, String label, String reason, Instant requestedAt) {
+    }
+
     /** What an identity provider said about this driver, and when. Empty when the provider is off
      * or has not been asked yet. Advisory only: ops still decides, this is the evidence. */
     /** providerReference: the provider's own id for the check - for a Smile ID check, the job ID to open in its portal. */

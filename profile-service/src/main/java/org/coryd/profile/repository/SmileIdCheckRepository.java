@@ -16,4 +16,6 @@ public interface SmileIdCheckRepository extends JpaRepository<SmileIdCheck, Stri
     java.util.List<SmileIdCheck> findByCheckTypeAndStartedAtIsNotNull(SmileIdCheckType checkType);
 
     java.util.List<SmileIdCheck> findByCheckTypeAndUserIdIn(SmileIdCheckType checkType, java.util.Collection<String> userIds);
+
+    java.util.List<SmileIdCheck> findByCheckTypeInAndUserIdIn(java.util.Collection<SmileIdCheckType> checkTypes, java.util.Collection<String> userIds);
 }

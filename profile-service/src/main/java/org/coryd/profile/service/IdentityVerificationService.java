@@ -161,41 +161,6 @@ public class IdentityVerificationService {
         }
     }
 
-    @Transactional
-    public IdentityVerificationResponse decide(String riderId, UserRole callerRole, String callerId, boolean approve, String reason) {
-        requireOps(callerRole);
-        IdentityVerification verification = identityVerificationRepository.findByUserId(riderId)
-                .orElseThrow(() -> new ResourceNotFoundException("This rider hasn't submitted their identity yet"));
-        DriverProfile lookingUp = driverProfileRepository.findByUserId(riderId)
-                .filter(d -> d.getNinStatus() == VerificationStatus.IN_REVIEW).orElse(null);
-        if (approve) {
-            verifiedIdentityService.applyFromLatestCheck(riderId);
-            if (lookingUp != null) {
-                // Ops accepted a driver's NIN lookup - verified once their licence is too (already, or when it lands).
-                lookingUp.setNinStatus(VerificationStatus.APPROVED);
-                driverProfileRepository.save(lookingUp);
-                if (lookingUp.getGovernmentIdStatus() == VerificationStatus.APPROVED) {
-                    decider.approve(verification, callerId);
-                } else {
-                    verification.setStatus(VerificationStatus.PENDING);
-                    identityVerificationRepository.save(verification);
-                }
-            } else {
-                decider.approve(verification, callerId);
-            }
-        } else {
-            if (isBlank(reason)) {
-                throw new BadRequestException("Give the rider a reason so they can fix it");
-            }
-            decider.reject(verification, reason.trim(), callerId);
-            if (lookingUp != null) {
-                lookingUp.setNinStatus(VerificationStatus.REJECTED);
-                driverProfileRepository.save(lookingUp);
-            }
-        }
-        return IdentityVerificationResponse.from(verification, ninCheck(riderId));
-    }
-
     private VerificationCheck latestCheck(String userId) {
         return verificationCheckRepository.findByDriverId(userId).stream()
                 .filter(c -> c.getCheckType() == VerificationCheckType.NIN_FACE || c.getCheckType() == VerificationCheckType.NIN_LOOKUP)

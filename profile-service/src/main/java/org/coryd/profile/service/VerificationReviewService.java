@@ -7,7 +7,9 @@ import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.UnauthorizedException;
+import org.coryd.profile.dto.ItemApprovalRequest;
 import org.coryd.profile.dto.ItemDecision;
+import org.coryd.profile.dto.ItemResubmissionRequest;
 import org.coryd.profile.dto.ReviewDecisionRequest;
 import org.coryd.profile.dto.ReviewMarkRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
@@ -60,6 +62,12 @@ public class VerificationReviewService {
         }
         String note = blankToNull(request.note());
         if (request.mark() == ReviewMark.FLAGGED) {
+            if (item == ReviewableItem.GOVERNMENT_ID) {
+                String locked = verificationAggregationService.licenceLockedBySmileId(driverId);
+                if (locked != null) {
+                    throw new BadRequestException(locked);
+                }
+            }
             if (note == null) {
                 throw new BadRequestException("Add a note to flag the " + item.label().toLowerCase(Locale.ROOT) + " - it's the reason the driver will see");
             }
@@ -85,9 +93,102 @@ public class VerificationReviewService {
         return build(driverId);
     }
 
+    /**
+     * Approve one document on its own - including a licence Smile ID failed (it asked the driver to try again), which ops
+     * may approve over Smile ID's result. A note is required when the approval goes against a result that stands: Smile
+     * ID's failed check, or an earlier rejection. The audit log records it as an override, with what Smile ID said.
+     */
+    @Transactional
+    public VerificationStatusResponse approveItem(String driverId, ReviewableItem item, ItemApprovalRequest request, String fallbackReviewer,
+                                                  String reviewerId, UserRole callerRole) {
+        requireOps(callerRole);
+        VerificationQueueItem.Entry current = entry(driverId, item);
+        String providerOutcome = item == ReviewableItem.GOVERNMENT_ID ? verificationAggregationService.licenceProviderOutcome(driverId) : null;
+        String blocked = approveItemBlockedReason(current, providerOutcome);
+        if (blocked != null) {
+            throw new BadRequestException(blocked);
+        }
+        String note = blankToNull(request == null ? null : request.note());
+        if (note == null && approveItemNeedsNote(current, providerOutcome)) {
+            throw new BadRequestException("Add a note saying why you're approving the " + item.label().toLowerCase(Locale.ROOT)
+                    + " - it goes against " + (current.status() == VerificationStatus.REJECTED ? "its rejection" : "Smile ID's result"));
+        }
+        VerificationStatusResponse status = verificationAggregationService.decide(driverId, callerRole,
+                new VerificationDecisionBatchRequest(List.of(new ItemDecision(item, VerificationStatus.APPROVED, null, note)),
+                        reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer)),
+                reviewerId, Map.of());
+        markRepository.deleteByDriverIdAndItemIn(driverId, List.of(item));
+        return status;
+    }
+
+    /**
+     * Ask the driver to upload one document again, with the reason they'll see. The document becomes REJECTED at once (an
+     * approved one loses its approval, as a flag + Save Changes does) and goes back in review when the new upload lands.
+     * A licence Smile ID approved can't be sent back, unless it was approved on a partial name match ops hasn't reviewed.
+     */
+    @Transactional
+    public VerificationStatusResponse requestResubmission(String driverId, ReviewableItem item, ItemResubmissionRequest request,
+                                                          String fallbackReviewer, String reviewerId, UserRole callerRole) {
+        requireOps(callerRole);
+        String reason = blankToNull(request == null ? null : request.reason());
+        if (reason == null) {
+            throw new BadRequestException("Give the driver a reason so they know what to fix in the " + item.label().toLowerCase(Locale.ROOT));
+        }
+        if (reason.length() > REASON_MAX) {
+            throw new BadRequestException("Keep the reason to " + REASON_MAX + " characters - the driver sees it");
+        }
+        VerificationQueueItem.Entry current = entry(driverId, item);
+        String blocked = resubmissionBlockedReason(current,
+                item == ReviewableItem.GOVERNMENT_ID ? verificationAggregationService.licenceLockedBySmileId(driverId) : null);
+        if (blocked != null) {
+            throw new BadRequestException(blocked);
+        }
+        VerificationStatusResponse status = verificationAggregationService.decide(driverId, callerRole,
+                new VerificationDecisionBatchRequest(List.of(new ItemDecision(item, VerificationStatus.REJECTED, reason)),
+                        reviewer(request.reviewedBy(), fallbackReviewer)),
+                reviewerId, Map.of(item, org.coryd.common.enums.VerificationDecisionAction.RESUBMISSION_REQUESTED));
+        markRepository.deleteByDriverIdAndItemIn(driverId, List.of(item));
+        return status;
+    }
+
+    /** Null when ops can approve this document on its own; otherwise why not. */
+    static String approveItemBlockedReason(VerificationQueueItem.Entry e, String providerOutcome) {
+        String label = e.item().label().toLowerCase(Locale.ROOT);
+        return switch (e.status()) {
+            case APPROVED -> "The " + label + " is already approved";
+            case EXPIRED -> "The " + label + " has expired - the driver must upload a current one";
+            case PENDING -> e.awaitingProvider() || providerOutcome != null ? null : "The " + label + " hasn't been uploaded yet";
+            case IN_REVIEW, REJECTED -> null;
+        };
+    }
+
+    /** Approving over a standing result needs a note: Smile ID's failed check (the driver was asked to retry), or a rejection. */
+    static boolean approveItemNeedsNote(VerificationQueueItem.Entry e, String providerOutcome) {
+        return e.status() == VerificationStatus.REJECTED
+                || (e.status() == VerificationStatus.PENDING && !e.awaitingProvider() && providerOutcome != null);
+    }
+
+    /** Null when ops can ask for this document again; otherwise why not. lockedBySmileId: licenceLockedBySmileId's answer. */
+    static String resubmissionBlockedReason(VerificationQueueItem.Entry e, String lockedBySmileId) {
+        String label = e.item().label().toLowerCase(Locale.ROOT);
+        if (e.status() == VerificationStatus.REJECTED) {
+            return "The " + label + " is already waiting for the driver to upload it again";
+        }
+        if (e.status() == VerificationStatus.PENDING && !e.awaitingProvider()) {
+            return "The " + label + " hasn't been uploaded yet - there's nothing to send back";
+        }
+        return lockedBySmileId;
+    }
+
     /** Approve Driver: every item is already approved or marked Verified on its current upload, and nothing is flagged. */
     @Transactional
     public VerificationStatusResponse approve(String driverId, ReviewDecisionRequest request, String fallbackReviewer, UserRole callerRole) {
+        return approve(driverId, request, fallbackReviewer, null, callerRole);
+    }
+
+    @Transactional
+    public VerificationStatusResponse approve(String driverId, ReviewDecisionRequest request, String fallbackReviewer, String reviewerId,
+                                              UserRole callerRole) {
         requireOps(callerRole);
         List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
         Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
@@ -100,7 +201,7 @@ public class VerificationReviewService {
                 .filter(VerificationQueueItem.Entry::awaitingOps)
                 .map(e -> new ItemDecision(e.item(), VerificationStatus.APPROVED, null, firstNonNull(marks.get(e.item()).getNote(), note)))
                 .toList();
-        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole, marks.keySet());
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), reviewerId, callerRole, marks.keySet());
     }
 
     /**
@@ -109,6 +210,12 @@ public class VerificationReviewService {
      */
     @Transactional
     public VerificationStatusResponse reject(String driverId, ReviewDecisionRequest request, String fallbackReviewer, UserRole callerRole) {
+        return reject(driverId, request, fallbackReviewer, null, callerRole);
+    }
+
+    @Transactional
+    public VerificationStatusResponse reject(String driverId, ReviewDecisionRequest request, String fallbackReviewer, String reviewerId,
+                                             UserRole callerRole) {
         requireOps(callerRole);
         List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
         Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
@@ -126,7 +233,7 @@ public class VerificationReviewService {
                 decisions.add(decision);
             }
         }
-        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole, marks.keySet());
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), reviewerId, callerRole, marks.keySet());
     }
 
     /**
@@ -136,6 +243,12 @@ public class VerificationReviewService {
      */
     @Transactional
     public VerificationStatusResponse save(String driverId, ReviewDecisionRequest request, String fallbackReviewer, UserRole callerRole) {
+        return save(driverId, request, fallbackReviewer, null, callerRole);
+    }
+
+    @Transactional
+    public VerificationStatusResponse save(String driverId, ReviewDecisionRequest request, String fallbackReviewer, String reviewerId,
+                                           UserRole callerRole) {
         requireOps(callerRole);
         List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
         Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
@@ -147,7 +260,7 @@ public class VerificationReviewService {
         if (decisions.isEmpty()) {
             throw new BadRequestException("Nothing to save - verify or flag a document first");
         }
-        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), callerRole, marks.keySet());
+        return decide(driverId, decisions, reviewer(request == null ? null : request.reviewedBy(), fallbackReviewer), reviewerId, callerRole, marks.keySet());
     }
 
     /** A flag rejects; Verified approves only what isn't approved already. */
@@ -162,16 +275,16 @@ public class VerificationReviewService {
     public List<VerificationDecisionHistoryItem> history(String driverId, UserRole callerRole) {
         requireOps(callerRole);
         return decisionLogRepository.findByDriverIdOrderByCreatedAtDesc(driverId).stream()
-                .map(l -> new VerificationDecisionHistoryItem(l.getItem(), l.getItem().label(), l.getStatus(), l.getNote(),
-                        l.getDecidedBy(), l.getCreatedAt()))
+                .map(VerificationDecisionHistoryItem::from)
                 .toList();
     }
 
     /** Every mark that was in play is cleared once the decision lands - including Verified on items left as they were. */
-    private VerificationStatusResponse decide(String driverId, List<ItemDecision> decisions, String reviewer, UserRole callerRole,
-                                              java.util.Collection<ReviewableItem> markedItems) {
+    private VerificationStatusResponse decide(String driverId, List<ItemDecision> decisions, String reviewer, String reviewerId,
+                                              UserRole callerRole, java.util.Collection<ReviewableItem> markedItems) {
         VerificationStatusResponse status = decisions.isEmpty() ? verificationAggregationService.getStatus(driverId)
-                : verificationAggregationService.decide(driverId, callerRole, new VerificationDecisionBatchRequest(decisions, reviewer));
+                : verificationAggregationService.decide(driverId, callerRole, new VerificationDecisionBatchRequest(decisions, reviewer),
+                        reviewerId, Map.of());
         java.util.Set<ReviewableItem> clear = new java.util.HashSet<>(markedItems);
         decisions.forEach(d -> clear.add(d.item()));
         if (!clear.isEmpty()) {
@@ -183,11 +296,19 @@ public class VerificationReviewService {
     private VerificationReviewResponse build(String driverId) {
         List<VerificationQueueItem.Entry> items = verificationAggregationService.currentItems(driverId);
         Map<ReviewableItem, VerificationReviewMark> marks = currentMarks(driverId, items);
+        String licenceOutcome = verificationAggregationService.licenceProviderOutcome(driverId);
+        String licenceLocked = verificationAggregationService.licenceLockedBySmileId(driverId);
         List<VerificationReviewResponse.ItemReview> reviews = items.stream().map(e -> {
             VerificationReviewMark m = marks.get(e.item());
+            boolean licence = e.item() == ReviewableItem.GOVERNMENT_ID;
+            String providerOutcome = licence ? licenceOutcome : null;
+            String approveBlocked = approveItemBlockedReason(e, providerOutcome);
+            String resubmissionBlocked = resubmissionBlockedReason(e, licence ? licenceLocked : null);
             return new VerificationReviewResponse.ItemReview(e.item(), e.item().label(), e.status(), e.submittedAt(), e.resubmitted(),
                     m == null ? null : m.getMark(), m == null ? null : m.getNote(), m == null ? null : m.getMarkedBy(),
-                    m == null ? null : m.getUpdatedAt(), e.awaitingProvider());
+                    m == null ? null : m.getUpdatedAt(), e.awaitingProvider(),
+                    approveBlocked == null, approveBlocked, approveBlocked == null && approveItemNeedsNote(e, providerOutcome),
+                    resubmissionBlocked == null, resubmissionBlocked, providerOutcome, licence && licenceLocked != null);
         }).toList();
         String blocked = approveBlockedReason(items, marks);
         boolean canReject = marks.values().stream().anyMatch(m -> m.getMark() == ReviewMark.FLAGGED);

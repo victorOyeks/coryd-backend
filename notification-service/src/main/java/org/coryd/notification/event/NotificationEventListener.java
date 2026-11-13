@@ -12,6 +12,7 @@ import org.coryd.common.kafka.events.DriverDemandAlertEvent;
 import org.coryd.common.kafka.events.DriverEnRouteEvent;
 import org.coryd.common.kafka.events.DriverOwedChangedEvent;
 import org.coryd.common.kafka.events.EmergencyContactPayload;
+import org.coryd.common.kafka.events.IdentityVerificationChangedEvent;
 import org.coryd.common.kafka.events.NotifyMeMatchedEvent;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
 import org.coryd.common.kafka.events.PaymentFailedEvent;
@@ -394,7 +395,9 @@ public class NotificationEventListener {
     @KafkaListener(topics = KafkaTopics.VERIFICATION_ITEM_DECIDED, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onVerificationItemDecided(VerificationItemDecidedEvent event) {
         String label = event.getItemLabel();
-        String title = event.isApproved() ? label + " approved" : label + " needs attention";
+        boolean resubmit = "RESUBMISSION_REQUESTED".equals(event.getAction());
+        String title = event.isApproved() ? label + " approved"
+                : resubmit ? "Please upload your " + label.toLowerCase() + " again" : label + " needs attention";
         String body = event.isApproved()
                 ? "Your " + label.toLowerCase() + " has been approved."
                 : (event.getRejectionReason() == null
@@ -405,6 +408,31 @@ public class NotificationEventListener {
         dispatchService.sendPush(event.getDriverId(), title, body, type, null);
         if (event.getEmail() != null) {
             dispatchService.sendEmail(event.getEmail(), title + " - CoRyd", body, type);
+        }
+    }
+
+    /**
+     * An ops decision on someone's identity (NIN) check - approved, rejected with a reason, or their tries given back.
+     * Smile ID's own results carry no action and stay silent here, as before: the app shows those as they land.
+     */
+    @KafkaListener(topics = KafkaTopics.IDENTITY_VERIFICATION_CHANGED, groupId = KafkaConfig.GROUP_ID_ADMIN)
+    public void onIdentityVerificationChanged(IdentityVerificationChangedEvent event) {
+        String action = event.getAction();
+        if (action == null || event.getUserId() == null) {
+            return;
+        }
+        switch (action) {
+            case "APPROVED", "OVERRIDE_APPROVED" -> dispatchService.sendPush(event.getUserId(),
+                    event.isVerified() ? "Identity verified" : "NIN confirmed",
+                    event.isVerified() ? "Your identity has been verified. You're all set."
+                            : "Your NIN has been confirmed. Finish verifying your licence to complete your identity check.",
+                    "IDENTITY_VERIFICATION_APPROVED", null);
+            case "REJECTED" -> dispatchService.sendPush(event.getUserId(), "Identity check needs attention",
+                    event.getReason() == null ? "We couldn't verify your identity. Open the app to see what to do next." : event.getReason(),
+                    "IDENTITY_VERIFICATION_REJECTED", null);
+            case "ATTEMPTS_RESET" -> dispatchService.sendPush(event.getUserId(), "You can verify your identity again",
+                    "We've reset your identity check. Open the app to try again.", "IDENTITY_VERIFICATION_RETRY", null);
+            default -> log.debug("Identity verification action {} for {} - nothing to tell them", action, event.getUserId());
         }
     }
 

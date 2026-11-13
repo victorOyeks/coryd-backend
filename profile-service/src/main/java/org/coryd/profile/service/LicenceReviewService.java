@@ -44,14 +44,26 @@ public class LicenceReviewService {
                 .orElseThrow(() -> new ResourceNotFoundException("This driver has no licence check yet"));
 
         JsonNode result = read(check.getRawResponse());
-        JsonNode params = result == null ? null : field(result, "partner_params", "partnerParams");
-        String smileUserId = text(params, "user_id", "userId");
-        String smileJobId = check.getProviderReference() != null ? check.getProviderReference() : text(params, "job_id", "jobId");
         JsonNode idFields = result == null ? null : field(result, "id_fields", "idFields");
         LicenceReviewResponse.LicenceDetails licence = idFields == null ? null : new LicenceReviewResponse.LicenceDetails(
                 fullName(idFields), text(idFields, "id_number", "idNumber"), text(idFields, "date_of_birth", "dateOfBirth"),
                 text(idFields, "expiration_date", "expirationDate"));
 
+        JobImages fetched = images(check, LicenceReviewService::kind);
+        return new LicenceReviewResponse(fetched.smileJobId(), check.getUpdatedAt(), check.getOutcome() == null ? null : check.getOutcome().name(),
+                check.getProviderSummary(), licence, fetched.images(), fetched.unavailableReason());
+    }
+
+    /** Fresh links to the images Smile ID captured for a check's job (they expire within hours), or why there are none. */
+    public record JobImages(String smileJobId, List<LicenceReviewResponse.Image> images, String unavailableReason) {
+    }
+
+    /** Any Smile ID check's images - kind names each one (LICENCE_FRONT, SELFIE...) and sets the order they're listed in. */
+    JobImages images(VerificationCheck check, java.util.function.Function<String, String> kind) {
+        JsonNode result = read(check.getRawResponse());
+        JsonNode params = result == null ? null : field(result, "partner_params", "partnerParams");
+        String smileUserId = text(params, "user_id", "userId");
+        String smileJobId = check.getProviderReference() != null ? check.getProviderReference() : text(params, "job_id", "jobId");
         List<LicenceReviewResponse.Image> images = List.of();
         String unavailable = null;
         if (!smileIdProperties.isConfigured()) {
@@ -61,7 +73,7 @@ public class LicenceReviewService {
         } else {
             try {
                 images = smileIdClient.jobImages(smileUserId, smileJobId).entrySet().stream()
-                        .map(e -> new LicenceReviewResponse.Image(kind(e.getKey()), e.getKey(), e.getValue()))
+                        .map(e -> new LicenceReviewResponse.Image(kind.apply(e.getKey()), e.getKey(), e.getValue()))
                         .sorted(Comparator.comparingInt(i -> order(i.kind())))
                         .toList();
                 if (images.isEmpty()) {
@@ -71,8 +83,7 @@ public class LicenceReviewService {
                 unavailable = e.getMessage();
             }
         }
-        return new LicenceReviewResponse(smileJobId, check.getUpdatedAt(), check.getOutcome() == null ? null : check.getOutcome().name(),
-                check.getProviderSummary(), licence, images, unavailable);
+        return new JobImages(smileJobId, images, unavailable);
     }
 
     /** Smile ID's names vary by product - id_card_image, id_card_back, selfie_image... */
@@ -90,12 +101,25 @@ public class LicenceReviewService {
         return "OTHER";
     }
 
+    /** A NIN check's images: the live selfie, and the photo on the NIN record when Smile ID returns it. */
+    static String ninKind(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        if (n.contains("selfie") || n.contains("liveness")) {
+            return "SELFIE";
+        }
+        if (n.contains("id") || n.contains("photo") || n.contains("nimc")) {
+            return "ID_PHOTO";
+        }
+        return "OTHER";
+    }
+
     private static int order(String kind) {
         return switch (kind) {
             case "LICENCE_FRONT" -> 0;
             case "LICENCE_BACK" -> 1;
             case "SELFIE" -> 2;
-            default -> 3;
+            case "ID_PHOTO" -> 3;
+            default -> 4;
         };
     }
 

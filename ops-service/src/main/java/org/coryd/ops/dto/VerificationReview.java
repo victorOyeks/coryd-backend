@@ -21,9 +21,18 @@ public record VerificationReview(
         /** Save Changes (Drivers Directory) would change something: a flag, or Verified on a document waiting for ops. */
         boolean canSave
 ) {
+    /**
+     * awaitingProvider: still out with Smile ID - it can be decided now, and Smile ID's result overrides that when it comes.
+     * Per-document actions: canApproveItem (approveItemBlockedReason when not; approveItemNeedsNote when approving overrides
+     * Smile ID's failed check or a rejection) and canRequestResubmission (resubmissionBlockedReason when not).
+     * providerOutcome: Smile ID's last word on the licence when it didn't approve it. lockedBySmileId: a licence Smile ID
+     * approved, which stays approved.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    /** awaitingProvider: still out with Smile ID - it can be decided now, and Smile ID's result overrides that when it comes. */
     public record ItemReview(ReviewableItem item, String label, VerificationStatus status, Instant submittedAt, boolean resubmitted,
-                             ReviewMark mark, String note, String markedBy, Instant markedAt, boolean awaitingProvider) {
+                             ReviewMark mark, String note, String markedBy, Instant markedAt, boolean awaitingProvider,
+                             boolean canApproveItem, String approveItemBlockedReason, boolean approveItemNeedsNote,
+                             boolean canRequestResubmission, String resubmissionBlockedReason, String providerOutcome,
+                             boolean lockedBySmileId) {
     }
 }

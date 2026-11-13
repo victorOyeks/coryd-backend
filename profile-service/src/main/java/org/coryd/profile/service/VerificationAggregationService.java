@@ -41,7 +41,9 @@ import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import org.coryd.common.enums.VerificationDecisionAction;
 import java.util.stream.Collectors;
 
 /** Combines every independently-reviewable driver item (identity, vehicle registration, documents) into one aggregate status - the single source of truth for both the driver-facing verification-status screen and the route-posting gate. Also the single place an ops admin decides any of those items, via decide() below - one call, keyed by driverId alone, instead of a separate endpoint (and a separate id to look up first) per item type. */
@@ -93,28 +95,146 @@ public class VerificationAggregationService {
                 documentStatuses(documents),
                 computeOverallStatus(profile, vehicle, documents),
                 profile == null ? null : profile.getVerifiedSince(),
-                providerChecks(driverId)
+                providerChecks(driverId),
+                resubmissionRequests(driverId, profile, vehicle, documents)
         );
     }
 
     /** Ops admin's single decision call - approve/reject any/all of a driver's reviewable items in one request. Each item notifies the driver on its own, then the aggregate is re-evaluated once at the end so the overall status only moves after every decision has landed. Returns the resulting status so the ops screen doesn't need a second call to refresh. */
     @Transactional
     public VerificationStatusResponse decide(String driverId, UserRole callerRole, VerificationDecisionBatchRequest request) {
+        return decide(driverId, callerRole, request, null, Map.of());
+    }
+
+    /**
+     * decide, with the reviewer's user id for the audit log and, per item, what the decision is when it isn't a plain
+     * approve or reject (a resubmission request). An approval of a licence Smile ID hadn't approved is recorded as an
+     * override, with what Smile ID said, whichever screen it came from.
+     */
+    @Transactional
+    public VerificationStatusResponse decide(String driverId, UserRole callerRole, VerificationDecisionBatchRequest request,
+                                             String reviewerId, Map<ReviewableItem, VerificationDecisionAction> actions) {
         if (callerRole != UserRole.OPS_ADMIN) {
             throw new UnauthorizedException("Only an ops admin can decide driver verification items");
         }
 
         validate(request.decisions());
+        for (ItemDecision decision : request.decisions()) {
+            if (decision.status() == VerificationStatus.REJECTED && decision.item() == ReviewableItem.GOVERNMENT_ID) {
+                requireLicenceCanBeTakenBack(driverId);
+            }
+        }
         VerificationStatus before = overallStatus(driverId);
+        Map<ReviewableItem, VerificationStatus> previous = currentItems(driverId).stream()
+                .collect(Collectors.toMap(VerificationQueueItem.Entry::item, VerificationQueueItem.Entry::status));
+        String licenceOutcome = licenceProviderOutcome(driverId);
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         for (ItemDecision decision : request.decisions()) {
+            boolean approved = decision.status() == VerificationStatus.APPROVED;
+            String providerOutcome = decision.item() == ReviewableItem.GOVERNMENT_ID ? licenceOutcome : null;
+            boolean override = approved && providerOutcome != null;
+            VerificationDecisionAction action = actions.getOrDefault(decision.item(),
+                    approved ? (override ? VerificationDecisionAction.OVERRIDE_APPROVED : VerificationDecisionAction.APPROVED)
+                            : VerificationDecisionAction.REJECTED);
             applyDecision(driverId, decision);
-            recordDecision(driverId, decision, request.reviewedBy());
-            publishItemDecision(driverId, email, decision, request.reviewedBy());
+            recordDecision(driverId, decision, request.reviewedBy(), reviewerId, action, previous.get(decision.item()), override, providerOutcome);
+            publishItemDecision(driverId, email, decision, request.reviewedBy(), action);
         }
 
         reevaluateAndPublish(driverId, request.reviewedBy(), before);
         return getStatus(driverId);
+    }
+
+    /**
+     * What Smile ID last said about the driver's licence when it wasn't an approval: the retry it asked for (FACE_MISMATCH,
+     * NOT_A_LICENCE...) or the finding it sent to ops (NAME_MISMATCH, DETAILS_MISMATCH...). Null when it approved the
+     * licence, never checked it, or is checking it right now. An ops approval while this is set overrides Smile ID.
+     */
+    public String licenceProviderOutcome(String driverId) {
+        org.coryd.profile.entity.SmileIdCheck check = licenceCheck(driverId);
+        if (check != null && check.getStartedAt() != null) {
+            return null;
+        }
+        if (check != null && check.getRetryReason() != null) {
+            return check.getRetryReason().name();
+        }
+        return latestLicenceCheck(driverId)
+                .map(VerificationCheck::getOutcome)
+                .filter(o -> o != org.coryd.common.enums.VerificationCheckOutcome.MATCH
+                        && o != org.coryd.common.enums.VerificationCheckOutcome.PARTIAL_NAME_MATCH)
+                .map(Enum::name)
+                .orElse(null);
+    }
+
+    /**
+     * A licence Smile ID approved stays approved: ops can't reject it, flag it or ask for it again. The one exception is an
+     * approval on a partial name match still on ops' review list - ops may decide it isn't the same person after all.
+     * Null when ops may take the licence back; otherwise the reason it can't.
+     */
+    public String licenceLockedBySmileId(String driverId) {
+        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
+        if (profile == null || profile.getGovernmentIdStatus() != VerificationStatus.APPROVED) {
+            return null;
+        }
+        Optional<VerificationCheck> latest = latestLicenceCheck(driverId);
+        boolean partialOnReviewList = latest.map(c -> c.getOutcome() == org.coryd.common.enums.VerificationCheckOutcome.PARTIAL_NAME_MATCH
+                && c.getReviewedAt() == null).orElse(false);
+        if (partialOnReviewList) {
+            return null;
+        }
+        Optional<org.coryd.profile.entity.VerificationDecisionLog> lastDecision = decisionLogRepository
+                .findFirstByDriverIdAndItemOrderByCreatedAtDesc(driverId, org.coryd.common.enums.DecisionSubject.GOVERNMENT_ID);
+        boolean bySmileId = lastDecision
+                .map(l -> l.getStatus() == VerificationStatus.APPROVED && LicenceCheck.DECIDED_BY.equals(l.getDecidedBy()))
+                // approved before decisions were logged: Smile ID's if its own check matched
+                .orElseGet(() -> latest.map(c -> c.getOutcome() == org.coryd.common.enums.VerificationCheckOutcome.MATCH
+                        || c.getOutcome() == org.coryd.common.enums.VerificationCheckOutcome.PARTIAL_NAME_MATCH).orElse(false));
+        return bySmileId ? "Smile ID verified this driver's licence, so it stays approved - only a licence approved on a "
+                + "partial name match that ops hasn't reviewed yet can be rejected or sent back" : null;
+    }
+
+    private void requireLicenceCanBeTakenBack(String driverId) {
+        String locked = licenceLockedBySmileId(driverId);
+        if (locked != null) {
+            throw new BadRequestException(locked);
+        }
+    }
+
+    private Optional<VerificationCheck> latestLicenceCheck(String driverId) {
+        return verificationCheckRepository.findByDriverId(driverId).stream()
+                .filter(c -> c.getCheckType() == org.coryd.common.enums.VerificationCheckType.DRIVERS_LICENCE)
+                .max(Comparator.comparing(VerificationCheck::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())));
+    }
+
+    /** Documents ops asked the driver to upload again, still waiting for it: which, and why - for the driver app. */
+    private List<VerificationStatusResponse.ResubmissionRequest> resubmissionRequests(String driverId, DriverProfile profile, Vehicle vehicle,
+                                                                                   List<DriverDocument> documents) {
+        Map<ReviewableItem, String> rejected = new LinkedHashMap<>();
+        if (profile != null && profile.getGovernmentIdStatus() == VerificationStatus.REJECTED) {
+            rejected.put(ReviewableItem.GOVERNMENT_ID, profile.getGovernmentIdRejectionReason());
+        }
+        if (vehicle != null && vehicle.getVerificationStatus() == VerificationStatus.REJECTED) {
+            rejected.put(ReviewableItem.VEHICLE, vehicle.getRejectionReason());
+        }
+        for (DocumentType type : List.of(DocumentType.INSURANCE, DocumentType.ROADWORTHINESS_CERT)) {
+            DriverDocument doc = findByType(documents, type);
+            if (doc != null && doc.getStatus() == VerificationStatus.REJECTED) {
+                rejected.put(type == DocumentType.INSURANCE ? ReviewableItem.INSURANCE : ReviewableItem.ROADWORTHINESS_CERT, doc.getRejectionReason());
+            }
+        }
+        if (rejected.isEmpty()) {
+            return List.of();
+        }
+        Map<org.coryd.common.enums.DecisionSubject, org.coryd.profile.entity.VerificationDecisionLog> latest = new LinkedHashMap<>();
+        decisionLogRepository.findByDriverIdOrderByCreatedAtDesc(driverId).forEach(l -> latest.putIfAbsent(l.getItem(), l));
+        List<VerificationStatusResponse.ResubmissionRequest> requests = new ArrayList<>();
+        rejected.forEach((item, reason) -> {
+            org.coryd.profile.entity.VerificationDecisionLog last = latest.get(org.coryd.common.enums.DecisionSubject.of(item));
+            if (last != null && last.getAction() == VerificationDecisionAction.RESUBMISSION_REQUESTED) {
+                requests.add(new VerificationStatusResponse.ResubmissionRequest(item, item.label(), reason, last.getCreatedAt()));
+            }
+        });
+        return requests;
     }
 
     /**
@@ -126,22 +246,30 @@ public class VerificationAggregationService {
         ItemDecision decision = new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null);
         VerificationStatus before = overallStatus(driverId);
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
+        VerificationStatus previous = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getGovernmentIdStatus).orElse(null);
         applyDecision(driverId, decision);
-        recordDecision(driverId, decision, decidedBy);
-        publishItemDecision(driverId, email, decision, decidedBy);
+        recordDecision(driverId, decision, decidedBy, null, VerificationDecisionAction.APPROVED, previous, false, null);
+        publishItemDecision(driverId, email, decision, decidedBy, VerificationDecisionAction.APPROVED);
         reevaluateAndPublish(driverId, decidedBy, before);
         log.info("Driver {} licence approved by {}", driverId, decidedBy);
     }
 
     /** The audit log - the reason the driver was shown on a rejection, the reviewer's note on an approval. */
-    private void recordDecision(String driverId, ItemDecision decision, String decidedBy) {
+    private void recordDecision(String driverId, ItemDecision decision, String decidedBy, String decidedById,
+                                VerificationDecisionAction action, VerificationStatus previousStatus, boolean overrodeProvider,
+                                String providerOutcome) {
         boolean rejected = decision.status() == VerificationStatus.REJECTED;
         decisionLogRepository.save(org.coryd.profile.entity.VerificationDecisionLog.builder()
                 .driverId(driverId)
-                .item(decision.item())
+                .item(org.coryd.common.enums.DecisionSubject.of(decision.item()))
                 .status(decision.status())
                 .note(rejected ? decision.rejectionReason() : blankToNull(decision.note()))
                 .decidedBy(decidedBy == null || decidedBy.isBlank() ? "ops" : decidedBy)
+                .decidedById(decidedById)
+                .action(action)
+                .previousStatus(previousStatus)
+                .overrodeProvider(overrodeProvider)
+                .providerOutcome(providerOutcome)
                 .build());
     }
 
@@ -213,7 +341,8 @@ public class VerificationAggregationService {
     public void recordProviderOutcome(String driverId, VerificationStatus status, String note, String decidedBy) {
         decisionLogRepository.save(org.coryd.profile.entity.VerificationDecisionLog.builder()
                 .driverId(driverId)
-                .item(ReviewableItem.GOVERNMENT_ID)
+                .item(org.coryd.common.enums.DecisionSubject.GOVERNMENT_ID)
+                .action(VerificationDecisionAction.PROVIDER_RESULT)
                 .status(status)
                 .note(note == null ? null : note.length() > 500 ? note.substring(0, 500) : note)
                 .decidedBy(decidedBy)
@@ -225,7 +354,7 @@ public class VerificationAggregationService {
     }
 
     /** Per-item, because the aggregate events only fire on full approval or overall rejection - a driver whose insurance was approved while a document is still outstanding would otherwise hear nothing. */
-    private void publishItemDecision(String driverId, String email, ItemDecision decision, String reviewedBy) {
+    private void publishItemDecision(String driverId, String email, ItemDecision decision, String reviewedBy, VerificationDecisionAction action) {
         boolean approved = decision.status() == VerificationStatus.APPROVED;
         logKafkaResult(driverId, KafkaTopics.VERIFICATION_ITEM_DECIDED,
                 kafkaTemplate.send(KafkaTopics.VERIFICATION_ITEM_DECIDED, VerificationItemDecidedEvent.builder()
@@ -237,6 +366,7 @@ public class VerificationAggregationService {
                         .rejectionReason(approved ? null : decision.rejectionReason())
                         .reviewedBy(reviewedBy)
                         .decidedAt(LocalDateTime.now())
+                        .action(action == null ? null : action.name())
                         .build()));
     }
 

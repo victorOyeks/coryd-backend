@@ -2,6 +2,7 @@ package org.coryd.profile.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.VerificationDecisionAction;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.IdentityVerificationChangedEvent;
@@ -29,14 +30,40 @@ public class IdentityVerificationDecider {
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     public void approve(IdentityVerification verification, String decidedBy) {
-        decide(verification, VerificationStatus.APPROVED, null, decidedBy);
+        decide(verification, VerificationStatus.APPROVED, null, decidedBy, null);
     }
 
     public void reject(IdentityVerification verification, String reason, String decidedBy) {
-        decide(verification, VerificationStatus.REJECTED, reason, decidedBy);
+        decide(verification, VerificationStatus.REJECTED, reason, decidedBy, null);
     }
 
-    private void decide(IdentityVerification verification, VerificationStatus status, String reason, String decidedBy) {
+    /** An ops decision - the event carries the action, so the person is told (notification-service). */
+    public void approveByOps(IdentityVerification verification, String decidedBy, VerificationDecisionAction action) {
+        decide(verification, VerificationStatus.APPROVED, null, decidedBy, action);
+    }
+
+    public void rejectByOps(IdentityVerification verification, String reason, String decidedBy) {
+        decide(verification, VerificationStatus.REJECTED, reason, decidedBy, VerificationDecisionAction.REJECTED);
+    }
+
+    /**
+     * An ops action that doesn't decide the identity check itself - tries given back, or a driver's NIN accepted while their
+     * licence is still outstanding - so the person is told. verified is whether they count as verified right now, so
+     * trip-service's copy stays true to it.
+     */
+    public void publishOpsAction(String userId, boolean verified, String decidedBy, VerificationDecisionAction action, String reason) {
+        kafkaTemplate.send(KafkaTopics.IDENTITY_VERIFICATION_CHANGED, IdentityVerificationChangedEvent.builder()
+                .userId(userId)
+                .verified(verified)
+                .decidedBy(decidedBy)
+                .decidedAt(Instant.now())
+                .action(action.name())
+                .reason(reason)
+                .build());
+    }
+
+    private void decide(IdentityVerification verification, VerificationStatus status, String reason, String decidedBy,
+                        VerificationDecisionAction action) {
         Instant now = Instant.now();
         verification.setStatus(status);
         verification.setRejectionReason(reason);
@@ -51,6 +78,8 @@ public class IdentityVerificationDecider {
                 .verified(status == VerificationStatus.APPROVED)
                 .decidedBy(decidedBy)
                 .decidedAt(now)
+                .action(action == null ? null : action.name())
+                .reason(reason)
                 .build());
     }
 

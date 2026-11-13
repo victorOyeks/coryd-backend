@@ -869,6 +869,178 @@ class OpsServiceIntegrationTest {
         assertThat(paths).isEmpty();
     }
 
+    // ---- identity (NIN) screen ---------------------------------------------------------------------------------
+
+    private static final String PERSON_JSON = "{\"success\":true,\"data\":{\"person\":{\"userId\":\"7c1e22aa-0000\",\"firstName\":\"Bola\","
+            + "\"lastName\":\"Ige\",\"rider\":true,\"driver\":false},\"tab\":\"APPROVED\",\"status\":\"APPROVED\",\"providerOverridden\":true,"
+            + "\"actions\":{\"canApprove\":false,\"approveBlockedReason\":\"This person's identity is already verified\"},\"history\":[]}}";
+
+    @Test
+    void identityListForwardsTabSearchSortAndPagingAndAddsEachPersonsRef() throws Exception {
+        replies.put("/profile/identity-verification/people", new Reply(200, "{\"success\":true,\"data\":{\"content\":["
+                + "{\"userId\":\"7c1e22aa-0000\",\"firstName\":\"Bola\",\"rider\":true,\"driver\":false,\"tab\":\"FAILED\"},"
+                + "{\"userId\":\"d0d0d0d0-1111\",\"firstName\":\"Gbenga\",\"rider\":false,\"driver\":true,\"tab\":\"FAILED\"}],"
+                + "\"page\":1,\"size\":10,\"totalElements\":12,\"totalPages\":2,\"last\":true}}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/identity-verification/people?tab=FAILED&search=bola&role=RIDER&sort=ATTEMPTS&direction=DESC&page=1&size=10")
+                        .header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[0].ref").value("R-7C1E22"))
+                .andExpect(jsonPath("$.data.content[1].ref").value("D-D0D0D0"))
+                .andExpect(jsonPath("$.data.totalElements").value(12));
+
+        assertThat(paths).anyMatch(p -> p.startsWith("/profile/identity-verification/people?") && p.contains("tab=FAILED")
+                && p.contains("search=bola") && p.contains("role=RIDER") && p.contains("sort=ATTEMPTS") && p.contains("direction=DESC")
+                && p.contains("page=1") && p.contains("size=10"));
+        assertThat(lastAuth.get()).isEqualTo(token);
+        mockMvc.perform(get("/identity-verification/people?tab=DONE").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/identity-verification/people?sort=AGE").header("Authorization", token)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void identityCountsDetailHistoryAndImagesArePassedThrough() throws Exception {
+        replies.put("/profile/identity-verification/people/counts", new Reply(200,
+                "{\"data\":{\"all\":7,\"pending\":1,\"inReview\":1,\"failed\":2,\"approved\":1,\"lockedOut\":2}}"));
+        replies.put("/profile/identity-verification/people/7c1e22aa-0000", new Reply(200, PERSON_JSON));
+        replies.put("/profile/identity-verification/people/7c1e22aa-0000/history", new Reply(200,
+                "{\"data\":[{\"subject\":\"IDENTITY\",\"label\":\"Identity (NIN)\",\"action\":\"OVERRIDE_APPROVED\"}]}"));
+        replies.put("/profile/identity-verification/people/7c1e22aa-0000/checks/chk-1/images", new Reply(200,
+                "{\"data\":{\"checkId\":\"chk-1\",\"smileJobId\":\"job-9\",\"images\":[{\"kind\":\"SELFIE\",\"url\":\"https://smile/s.jpg\"}]}}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/identity-verification/people/counts?search=0803").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.lockedOut").value(2));
+        mockMvc.perform(get("/identity-verification/people/7c1e22aa-0000").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.person.ref").value("R-7C1E22"))
+                .andExpect(jsonPath("$.data.providerOverridden").value(true));
+        mockMvc.perform(get("/identity-verification/people/7c1e22aa-0000/history").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data[0].action").value("OVERRIDE_APPROVED"));
+        mockMvc.perform(get("/identity-verification/people/7c1e22aa-0000/checks/chk-1/images").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.images[0].kind").value("SELFIE"));
+        assertThat(paths).anyMatch(p -> p.equals("/profile/identity-verification/people/counts?search=0803"));
+    }
+
+    @Test
+    void identityActionsAreSignedByTheSignedInAdmin() throws Exception {
+        replies.put("/profile/identity-verification/people/7c1e22aa-0000/approve", new Reply(200, PERSON_JSON));
+        replies.put("/profile/identity-verification/people/7c1e22aa-0000/reject", new Reply(200, PERSON_JSON));
+        replies.put("/profile/identity-verification/people/7c1e22aa-0000/reset-attempts", new Reply(200, PERSON_JSON));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(post("/identity-verification/people/7c1e22aa-0000/approve").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"Checked on a video call\",\"reviewedBy\":\"someone-else\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Identity approved"))
+                .andExpect(jsonPath("$.data.person.ref").value("R-7C1E22"));
+        JsonNode approve = objectMapper.readTree(lastBody.get());
+        assertThat(approve.get("note").asText()).isEqualTo("Checked on a video call");
+        assertThat(approve.get("reviewedBy").asText()).isEqualTo("Ada Ops");
+        assertThat(lastMethod.get()).isEqualTo("POST");
+
+        mockMvc.perform(post("/identity-verification/people/7c1e22aa-0000/reject").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"The NIN is someone else's\"}"))
+                .andExpect(status().isOk());
+        assertThat(objectMapper.readTree(lastBody.get()).get("reason").asText()).isEqualTo("The NIN is someone else's");
+
+        mockMvc.perform(post("/identity-verification/people/7c1e22aa-0000/reset-attempts").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.message").value("Tries reset"));
+        assertThat(lastPath.get()).isEqualTo("/profile/identity-verification/people/7c1e22aa-0000/reset-attempts");
+    }
+
+    @Test
+    void aRejectionWithoutAReasonNeverLeavesTheConsole() throws Exception {
+        String token = bearer(UserRole.OPS_ADMIN);
+        mockMvc.perform(post("/identity-verification/people/u-1/reject").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"  \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("reason: is required - the person sees it"));
+        mockMvc.perform(post("/identity-verification/people/u-1/reject").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/drivers/d-1/verification/items/INSURANCE/request-resubmission").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        assertThat(lastPath.get()).isNull();
+    }
+
+    @Test
+    void rejectingWhatSmileIdApprovedComesBackAsTheOwningServicesFourHundred() throws Exception {
+        replies.put("/profile/identity-verification/people/u-1/reject", new Reply(400, "{\"success\":false,\"message\":"
+                + "\"Smile ID verified this identity, so it stays approved - only an approval on a partial name match that hasn't been reviewed yet can be rejected\"}"));
+        replies.put("/profile/drivers/d-1/verification/items/GOVERNMENT_ID/request-resubmission", new Reply(400, "{\"success\":false,"
+                + "\"message\":\"Smile ID verified this driver's licence, so it stays approved\"}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(post("/identity-verification/people/u-1/reject").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"Looks wrong\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.startsWith("Smile ID verified this identity")));
+        mockMvc.perform(post("/drivers/d-1/verification/items/GOVERNMENT_ID/request-resubmission").header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"Blurry\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Smile ID verified this driver's licence, so it stays approved"));
+    }
+
+    @Test
+    void identityAndDocumentActionsAreForOpsAdminsOnly() throws Exception {
+        mockMvc.perform(get("/identity-verification/people")).andExpect(status().isUnauthorized());
+        for (UserRole role : List.of(UserRole.RIDER, UserRole.DRIVER)) {
+            String token = bearer(role);
+            mockMvc.perform(get("/identity-verification/people").header("Authorization", token)).andExpect(status().isForbidden());
+            mockMvc.perform(get("/identity-verification/people/u-1").header("Authorization", token)).andExpect(status().isForbidden());
+            mockMvc.perform(post("/identity-verification/people/u-1/approve").header("Authorization", token)).andExpect(status().isForbidden());
+            mockMvc.perform(post("/identity-verification/people/u-1/reject").header("Authorization", token)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"x\"}")).andExpect(status().isForbidden());
+            mockMvc.perform(post("/identity-verification/people/u-1/reset-attempts").header("Authorization", token)).andExpect(status().isForbidden());
+            mockMvc.perform(post("/drivers/d-1/verification/items/INSURANCE/approve").header("Authorization", token)).andExpect(status().isForbidden());
+            mockMvc.perform(post("/drivers/d-1/verification/items/INSURANCE/request-resubmission").header("Authorization", token)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"x\"}")).andExpect(status().isForbidden());
+        }
+        assertThat(paths).as("a refused caller never reaches profile-service").isEmpty();
+    }
+
+    // ---- per-document approve / request resubmission ------------------------------------------------------------
+
+    @Test
+    void approvingOneDocumentReturnsTheReviewPageAndIsSignedByTheAdmin() throws Exception {
+        replies.put("/profile/drivers/d-1/verification/items/GOVERNMENT_ID/approve", new Reply(200, STATUS_JSON));
+        replies.put("/profile/drivers/d-1/verification/review", new Reply(200, REVIEW_JSON));
+
+        mockMvc.perform(post("/drivers/d-1/verification/items/GOVERNMENT_ID/approve").header("Authorization", bearer(UserRole.OPS_ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"Matched the licence in person\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Driver's licence approved"))
+                .andExpect(jsonPath("$.data.review.items[0].mark").value("FLAGGED"))
+                .andExpect(jsonPath("$.data.driver.ref").value("D-D1"));
+
+        Request sent = requests.stream().filter(r -> r.path().endsWith("/approve")).findFirst().orElseThrow();
+        JsonNode body = objectMapper.readTree(sent.body());
+        assertThat(body.get("note").asText()).isEqualTo("Matched the licence in person");
+        assertThat(body.get("reviewedBy").asText()).isEqualTo("Ada Ops");
+        mockMvc.perform(post("/drivers/d-1/verification/items/PASSPORT/approve").header("Authorization", bearer(UserRole.OPS_ADMIN)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void askingForADocumentAgainForwardsTheReasonAndShowsTheRequest() throws Exception {
+        replies.put("/profile/drivers/d-1/verification/items/INSURANCE/request-resubmission", new Reply(200,
+                STATUS_JSON.replace("\"overallStatus\":\"IN_REVIEW\"", "\"overallStatus\":\"REJECTED\",\"resubmissionRequests\":[{"
+                        + "\"item\":\"INSURANCE\",\"label\":\"Insurance certificate\",\"reason\":\"Cut off\",\"requestedAt\":\"2026-10-04T09:00:00Z\"}]")));
+        replies.put("/profile/drivers/d-1/verification/review", new Reply(200, REVIEW_JSON));
+
+        mockMvc.perform(post("/drivers/d-1/verification/items/INSURANCE/request-resubmission").header("Authorization", bearer(UserRole.OPS_ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"Cut off\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Resubmission requested"))
+                .andExpect(jsonPath("$.data.resubmissionRequests[0].item").value("INSURANCE"))
+                .andExpect(jsonPath("$.data.resubmissionRequests[0].reason").value("Cut off"));
+
+        Request sent = requests.stream().filter(r -> r.path().endsWith("/request-resubmission")).findFirst().orElseThrow();
+        assertThat(objectMapper.readTree(sent.body()).get("reviewedBy").asText()).isEqualTo("Ada Ops");
+    }
+
     private String bearer(UserRole role) {
         return "Bearer " + jwtUtil.generateToken("admin-1", "08000000000", "Ada", "Ops", role);
     }

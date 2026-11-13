@@ -9,7 +9,17 @@ Everything the **Drivers → Verification Queue** screens need:
 - **Verify / Flag / Reset to Default**,
 - **Approve Driver / Reject**,
 - the audit log,
-- licences still waiting for Smile ID.
+- licences still waiting for Smile ID,
+- **per-document actions**: approve one document on its own (including a licence Smile ID failed), and **Request resubmission** of one document with a reason,
+- what the driver app sees after each action (section 13).
+
+**The rules (enforced by the server):**
+1. **A licence Smile ID approved stays approved.** It can't be flagged, rejected or sent back; you get a `400`. The one exception: a licence approved on a **partial name match** that ops hasn't reviewed yet. A licence **ops** approved can still be flagged or sent back.
+2. **Ops can approve a licence Smile ID failed** (it asked the driver to try again) or sent for review, and any document that's waiting. Approving over Smile ID's failed check, or over a rejection, needs a **note**. Every approval over a Smile ID result is recorded as an **override** in the audit log: who, when, the note, and what Smile ID said.
+3. **A rejection or resubmission request always has a reason** the driver sees.
+4. **Every decision is in the audit log**, with the status before and after (section 8).
+
+The driver's **NIN** (the NIN lookup) isn't one of the four documents. Decide it on the identity screen: see [rider-identity.md](rider-identity.md) (`role=DRIVER`).
 
 **Basics:**
 - **Base URL:** `https://api-dev.coryd.ng/ops`.
@@ -53,9 +63,11 @@ A driver goes live once all four items are approved:
 | **Approve Driver** | `POST /drivers/{driverId}/verification/approve` |
 | **Reject** | `POST /drivers/{driverId}/verification/reject` |
 | **Save Changes** (used by the [Drivers Directory](drivers-directory.md)) | `POST /drivers/{driverId}/verification/save` |
+| **Approve** one document (incl. over Smile ID) | `POST /drivers/{driverId}/verification/items/{item}/approve` |
+| **Request resubmission** of one document | `POST /drivers/{driverId}/verification/items/{item}/request-resubmission` |
 | Audit log | `GET /drivers/{driverId}/verification/history` |
 
-**Every action returns the whole review page**, so the screen refreshes from the response with no second call. The actions are mark, reset, approve and reject.
+**Every action returns the whole review page**, so the screen refreshes from the response with no second call. The actions are mark, reset, approve, reject, save, approve one document and request resubmission.
 
 ---
 
@@ -192,16 +204,27 @@ Send the same `search` as the list, so the badges match what's listed.
       "checkedAt": "…", "providerReference": "job-9" }
   ],
 
+  "resubmissionRequests": [],
+
   "review": {
     "items": [
       { "item": "GOVERNMENT_ID", "label": "Driver's licence", "status": "IN_REVIEW", "submittedAt": "…", "resubmitted": false,
-        "awaitingProvider": false, "mark": "VERIFIED", "note": null, "markedBy": "Ada Ops", "markedAt": "…" },
+        "awaitingProvider": false, "mark": "VERIFIED", "note": null, "markedBy": "Ada Ops", "markedAt": "…",
+        "canApproveItem": true, "approveItemBlockedReason": null, "approveItemNeedsNote": false,
+        "canRequestResubmission": true, "resubmissionBlockedReason": null,
+        "providerOutcome": "NAME_MISMATCH", "lockedBySmileId": false },
       { "item": "VEHICLE", "label": "Vehicle registration", "status": "IN_REVIEW", "submittedAt": "…", "resubmitted": true,
-        "awaitingProvider": false, "mark": "FLAGGED", "note": "Blurry document", "markedBy": "Ada Ops", "markedAt": "…" },
+        "awaitingProvider": false, "mark": "FLAGGED", "note": "Blurry document", "markedBy": "Ada Ops", "markedAt": "…",
+        "canApproveItem": true, "approveItemBlockedReason": null, "approveItemNeedsNote": false,
+        "canRequestResubmission": true, "resubmissionBlockedReason": null, "providerOutcome": null, "lockedBySmileId": false },
       { "item": "INSURANCE", "label": "Insurance certificate", "status": "IN_REVIEW", "submittedAt": "…", "resubmitted": false,
-        "awaitingProvider": false, "mark": null, "note": null, "markedBy": null, "markedAt": null },
+        "awaitingProvider": false, "mark": null, "note": null, "markedBy": null, "markedAt": null,
+        "canApproveItem": true, "approveItemBlockedReason": null, "approveItemNeedsNote": false,
+        "canRequestResubmission": true, "resubmissionBlockedReason": null, "providerOutcome": null, "lockedBySmileId": false },
       { "item": "ROADWORTHINESS_CERT", "label": "Roadworthiness certificate", "status": "IN_REVIEW", "submittedAt": "…",
-        "resubmitted": false, "awaitingProvider": false, "mark": null, "note": null, "markedBy": null, "markedAt": null }
+        "resubmitted": false, "awaitingProvider": false, "mark": null, "note": null, "markedBy": null, "markedAt": null,
+        "canApproveItem": true, "approveItemBlockedReason": null, "approveItemNeedsNote": false,
+        "canRequestResubmission": true, "resubmissionBlockedReason": null, "providerOutcome": null, "lockedBySmileId": false }
     ],
     "canApprove": false,
     "approveBlockedReason": "Flagged: Vehicle registration - reject, or reset the flag",
@@ -229,6 +252,26 @@ Send the same `search` as the list, so the badges match what's listed.
 - **Reject** is enabled when `review.canReject`.
 - `review.canSave` says whether **Save Changes** would change anything. It's used on the Drivers Directory's Documents list.
 - If `review` is missing, the marks couldn't be loaded. The rest of the page still works; offer a retry.
+
+### Per-document buttons (each `review.items[]`)
+
+| Field | Use |
+|---|---|
+| `canApproveItem` / `approveItemBlockedReason` | Enable the document's own **Approve** button; when disabled, show the reason (it's the exact `400` message) |
+| `approveItemNeedsNote` | Approving goes against Smile ID's failed check or a rejection: make the note box required |
+| `canRequestResubmission` / `resubmissionBlockedReason` | Enable **Request resubmission** |
+| `providerOutcome` | Licence only: what Smile ID last said when it didn't approve it - a retry it asked for (`FACE_MISMATCH`, `NOT_A_LICENCE`, `UNREADABLE`, `TRY_LATER`) or a finding (`NAME_MISMATCH`, `DETAILS_MISMATCH`, …). `null` when Smile ID approved it, never checked it, or is checking now. Show it as "Smile ID: …" |
+| `lockedBySmileId` | Licence only: Smile ID approved it, so it stays approved. Hide **Flag** and **Request resubmission**; show "Verified by Smile ID". |
+
+### `resubmissionRequests`
+Documents ops asked the driver to upload again and that haven't been re-uploaded yet. Show a "Waiting for the driver to re-upload" banner on each.
+
+```json
+"resubmissionRequests": [
+  { "item": "INSURANCE", "label": "Insurance certificate",
+    "reason": "The policy number is cut off - upload the full page", "requestedAt": "2026-10-04T09:00:00Z" }
+]
+```
 
 ### Files (every document)
 Each file comes as `{ url, downloadUrl, fileType }`:
@@ -317,6 +360,7 @@ All four screens share:
   - anything **waiting for ops**: `status: IN_REVIEW`, or `awaitingProvider: true`;
   - a document that's already **approved** (or `EXPIRED`). Flagging one and pressing **Reject** or **Save Changes** takes the approval back; the driver must re-upload it.
 - A `REJECTED` item (waiting for the driver) and a `PENDING` one (never uploaded) can't be marked.
+- A licence **Smile ID approved** can't be flagged (`lockedBySmileId`): `400 Smile ID verified this driver's licence, so it stays approved - only a licence approved on a partial name match that ops hasn't reviewed yet can be rejected or sent back`. Verifying it is fine.
 - Marking again replaces the old mark.
 - If the driver re-uploads, the old mark stops counting and the item shows as Unreviewed.
 
@@ -381,6 +425,55 @@ Every mark is cleared afterwards. **Returns** the review page.
 
 **Error:** `400 Nothing to save - verify or flag a document first`. `review.canSave` tells you in advance.
 
+### Approve one document: `POST /drivers/{driverId}/verification/items/{item}/approve`
+
+```json
+{ "note": "Selfie was in poor light - matched the licence on a video call" }
+```
+
+Approves just this document, now, without the all-or-nothing rule of **Approve Driver**. It's how ops approves **a licence Smile ID failed**.
+
+- Body optional; `note` up to **500** characters, kept in the audit log.
+- **Allowed** for: a document in review; a licence still with Smile ID (`awaitingProvider`, see section 7); a **licence Smile ID failed** (`status: PENDING`, `providerOutcome` set); a `REJECTED` document (ops changing its mind).
+- **`note` is required** when `approveItemNeedsNote`: the licence Smile ID failed, or a rejected document.
+- Any mark on the document is cleared. The driver gets a push; with all four approved, they can post.
+- The audit log entry is `OVERRIDE_APPROVED` with `providerOutcome` when Smile ID hadn't approved the licence; `APPROVED` otherwise.
+
+**Returns** the review page.
+
+| `400` message | When |
+|---|---|
+| `The vehicle registration is already approved` | Already approved |
+| `The insurance certificate has expired - the driver must upload a current one` | `EXPIRED` |
+| `The driver's licence hasn't been uploaded yet` | `PENDING`, never uploaded, and Smile ID never answered |
+| `Add a note saying why you're approving the driver's licence - it goes against Smile ID's result` | Licence Smile ID failed, no note |
+| `Add a note saying why you're approving the insurance certificate - it goes against its rejection` | Rejected document, no note |
+| `note: size must be between 0 and 500` | Note too long |
+
+An unknown `{item}` is a `400`.
+
+### Request resubmission: `POST /drivers/{driverId}/verification/items/{item}/request-resubmission`
+
+```json
+{ "reason": "The policy number is cut off - upload the full page" }
+```
+
+Asks the driver to upload this one document again. It becomes **`REJECTED`** at once with `reason` as its `rejectionReason`, and appears in `resubmissionRequests`. When the driver re-uploads, it goes back to **`IN_REVIEW`** (marked `resubmitted`, under the **Resubmitted** tab) and leaves `resubmissionRequests`.
+
+- **`reason` is required**, up to **255** characters. The driver sees it word for word.
+- **Allowed** for a document in review, approved (the approval is taken back, and the driver can't post until the new one is approved), expired, or a licence still with Smile ID.
+- Any mark on the document is cleared.
+
+**Returns** the review page.
+
+| `400` message | When |
+|---|---|
+| `reason: is required - the person sees it` | No reason (checked by the console API) |
+| `Keep the reason to 255 characters - the driver sees it` | Too long |
+| `The insurance certificate is already waiting for the driver to upload it again` | Already `REJECTED` |
+| `The insurance certificate hasn't been uploaded yet - there's nothing to send back` | Never uploaded |
+| `Smile ID verified this driver's licence, so it stays approved - only a licence approved on a partial name match that ops hasn't reviewed yet can be rejected or sent back` | Rule 1 (`lockedBySmileId`) |
+
 ### Older: `POST /drivers/{driverId}/verification/decisions`
 The original all-in-one call still works, if you'd rather keep marks in the page:
 
@@ -391,6 +484,7 @@ The original all-in-one call still works, if you'd rather keep marks in the page
 ```
 
 - Each rejection needs its own `rejectionReason` (up to 255 characters).
+- Rejecting a licence Smile ID approved is refused, as for a flag (rule 1).
 - An item appears at most once per call.
 - If any rule fails, nothing is saved.
 
@@ -428,6 +522,14 @@ Smile ID usually answers within minutes, but some results take hours. Ops can de
 - If ops decides **after** Smile ID has already answered, a later result can't override it.
 - If the driver starts a new check, the old result has nothing left to override.
 
+### A licence Smile ID failed
+
+When Smile ID asks the driver to try again (the selfie isn't the face on the licence, it isn't a licence it accepts, the photo was unusable…), the licence goes back to `status: "PENDING"` with `awaitingProvider: false`, and `review.items[].providerOutcome` says why (`FACE_MISMATCH`, `NOT_A_LICENCE`, `UNREADABLE`, `TRY_LATER`). The driver is asked to retry in the app; after 5 failed tries the app tells them to contact support.
+
+Ops can approve it anyway with **Approve** on the document (section 6), **with a note**. It's recorded as `OVERRIDE_APPROVED` with Smile ID's `providerOutcome`. Since Smile ID has already answered, nothing overrides this approval later.
+
+A licence Smile ID sent to ops (`IN_REVIEW`: name, number or expiry mismatch, forgery or risk flag) is approved the usual way, by **Verify** + **Approve Driver** or by **Approve** on the document; no note is required, and the audit log still records it as `OVERRIDE_APPROVED` with Smile ID's finding.
+
 ---
 
 ## 8. Audit log: `GET /drivers/{driverId}/verification/history`
@@ -436,16 +538,36 @@ Newest first. It includes every decision:
 - from the review screen and the older `decisions` call: `decidedBy` is the admin's name;
 - Smile ID's automatic licence approvals and overrides: `decidedBy` is `"SMILE_ID"`.
 
+It also includes the driver's **identity (NIN)** decisions made on the identity screen: `subject: "IDENTITY"`, `item: null`, `label: "Identity (NIN)"`.
+
 ```json
 [
-  { "item": "GOVERNMENT_ID", "label": "Driver's licence", "status": "IN_REVIEW",
-    "note": "Smile ID's result came in after ops decided - back for review: …", "decidedBy": "SMILE_ID", "decidedAt": "…" },
-  { "item": "VEHICLE", "label": "Vehicle registration", "status": "REJECTED",
-    "note": "Blurry document", "decidedBy": "Ada Ops", "decidedAt": "2026-10-03T09:00:00Z" }
+  { "item": "INSURANCE", "subject": "INSURANCE", "label": "Insurance certificate",
+    "action": "RESUBMISSION_REQUESTED", "previousStatus": "APPROVED", "status": "REJECTED",
+    "overrodeProvider": false, "providerOutcome": null,
+    "note": "The policy number is cut off - upload the full page",
+    "decidedBy": "Ada Ops", "decidedById": "0b5e…", "decidedAt": "2026-10-04T09:00:00Z" },
+  { "item": "GOVERNMENT_ID", "subject": "GOVERNMENT_ID", "label": "Driver's licence",
+    "action": "OVERRIDE_APPROVED", "previousStatus": "PENDING", "status": "APPROVED",
+    "overrodeProvider": true, "providerOutcome": "FACE_MISMATCH",
+    "note": "Selfie was in poor light - matched the licence on a video call",
+    "decidedBy": "Ada Ops", "decidedById": "0b5e…", "decidedAt": "2026-10-03T10:00:00Z" },
+  { "item": "GOVERNMENT_ID", "subject": "GOVERNMENT_ID", "label": "Driver's licence",
+    "action": "PROVIDER_RESULT", "previousStatus": null, "status": "IN_REVIEW", "overrodeProvider": false, "providerOutcome": null,
+    "note": "Smile ID's result came in after ops decided - back for review: …", "decidedBy": "SMILE_ID", "decidedById": null, "decidedAt": "…" },
+  { "item": "VEHICLE", "subject": "VEHICLE", "label": "Vehicle registration",
+    "action": "REJECTED", "previousStatus": "IN_REVIEW", "status": "REJECTED", "overrodeProvider": false, "providerOutcome": null,
+    "note": "Blurry document", "decidedBy": "Ada Ops", "decidedById": "0b5e…", "decidedAt": "2026-10-03T09:00:00Z" }
 ]
 ```
 
-`note` is the rejection reason the driver saw, or the note left with an approval.
+| Field | Meaning |
+|---|---|
+| `action` | `APPROVED` · `OVERRIDE_APPROVED` (approved over Smile ID's result) · `REJECTED` · `RESUBMISSION_REQUESTED` · `PROVIDER_RESULT` (Smile ID's late result over an ops decision) · `ATTEMPTS_RESET` (identity only). `null` on entries from before these were recorded: read `status` then. |
+| `previousStatus` → `status` | The item's status before and after. `previousStatus` is `null` on older entries. |
+| `overrodeProvider` / `providerOutcome` | The approval went against Smile ID; `providerOutcome` is what it had said |
+| `note` | The rejection or resubmission reason the driver saw, or the note left with an approval |
+| `decidedBy` / `decidedById` | The admin's name / user id; `SMILE_ID` (no id) for Smile ID |
 
 ---
 
@@ -541,6 +663,33 @@ Newest first. It includes every decision:
 - [ ] Preview from `file.url`, badge from `file.fileType`, **Download** from `file.downloadUrl`.
 - [ ] **Verify**, **Flag** (note required, max 255 characters) and **Reset to Default**.
 
+**Per-document actions**
+- [ ] **Approve** on each document, following `canApproveItem`; note box required when `approveItemNeedsNote`.
+- [ ] **Request resubmission** on each document, following `canRequestResubmission`; reason required (max 255).
+- [ ] "Smile ID: …" from `providerOutcome` on the licence; "Verified by Smile ID" and no Flag / Request resubmission when `lockedBySmileId`.
+- [ ] "Waiting for the driver to re-upload" from `resubmissionRequests`.
+
 **Other**
-- [ ] Audit log tab or drawer (`/verification/history`).
+- [ ] Audit log tab or drawer (`/verification/history`), with `action`, before → after, and an "override" chip from `overrodeProvider`.
 - [ ] Show every `400` `message` as-is.
+
+---
+
+## 13. What the driver app sees
+
+The driver app reads its documents from `GET /profile/drivers/{driverId}/verification-status` (the driver's own id) and the licence from `GET /profile/drivers/me`. Each decision also sends a push (and an email when the driver has one), as decisions always have.
+
+| Ops action | Push (title / body) | What the app reads afterwards |
+|---|---|---|
+| **Approve** one document / **Approve Driver** | "Driver's licence approved" / "Your driver's licence has been approved." | The item's `status: "APPROVED"`. With all four approved, `overallStatus: "APPROVED"` and the driver can post (plus the usual "You're verified" push the first time). |
+| **Request resubmission** | "Please upload your insurance certificate again" / the `reason` | The item's `status: "REJECTED"` with `rejectionReason` = the reason, and an entry in **`resubmissionRequests`** (`item`, `label`, `reason`, `requestedAt`). `overallStatus: "REJECTED"`; an approved driver can't post until the new upload is approved. |
+| **Reject** / **Save Changes** with a flag | "Insurance certificate needs attention" / the flag's note | `status: "REJECTED"`, `rejectionReason`. Not in `resubmissionRequests` (that's only for an explicit request). |
+
+**Re-uploading:**
+- Insurance / roadworthiness: `POST /profile/drivers/me/documents` again.
+- Vehicle: `PUT /profile/vehicles/{vehicleId}`.
+- Licence: a new Smile ID check (`POST /profile/drivers/me/licence-check/session`), or on older builds `PUT /profile/drivers/me` with `governmentIdUrl`.
+
+The document goes back to `IN_REVIEW` (a new licence check: `PENDING` while Smile ID checks it, then approved or in review), leaves `resubmissionRequests`, and the driver shows under **Resubmitted** in the queue.
+
+Push `type`s are unchanged: `VERIFICATION_ITEM_APPROVED`, `VERIFICATION_ITEM_REJECTED` (a resubmission request uses the rejected type, with its own title).

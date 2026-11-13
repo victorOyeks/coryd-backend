@@ -193,6 +193,110 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
+    /** The identity (NIN) list - filtered, sorted and paged by profile-service, which checks the token is OPS_ADMIN. */
+    public JsonNode identityPeople(IdentityReviewTab tab, String search, IdentityReviewRole role, IdentityReviewSort sort,
+                                   Sort.Direction direction, int page, int size) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/identity-verification/people").queryParam("page", page).queryParam("size", size);
+                    if (tab != null) {
+                        b.queryParam("tab", tab);
+                    }
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    if (role != null) {
+                        b.queryParam("role", role);
+                    }
+                    if (sort != null) {
+                        b.queryParam("sort", sort);
+                    }
+                    if (direction != null) {
+                        b.queryParam("direction", direction);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode identityPeopleCounts(String search, IdentityReviewRole role) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> {
+                    b.path("/identity-verification/people/counts");
+                    if (search != null && !search.isBlank()) {
+                        b.queryParam("search", search);
+                    }
+                    if (role != null) {
+                        b.queryParam("role", role);
+                    }
+                    return b.build();
+                })
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode identityPerson(String userId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/identity-verification/people/{userId}", userId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode identityPersonHistory(String userId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/identity-verification/people/{userId}/history", userId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    public JsonNode identityCheckImages(String userId, String checkId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/identity-verification/people/{userId}/checks/{checkId}/images", userId, checkId)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** action is approve, reject or reset-attempts. reviewedBy is the signed-in admin's name - never taken from the console. */
+    public JsonNode identityAction(String userId, String action, String note, String reason, String reviewedBy) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("note", note);
+        body.put("reason", reason);
+        body.put("reviewedBy", reviewedBy);
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
+                .uri("/identity-verification/people/{userId}/{action}", userId, action)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** Approve one driver document - including over Smile ID's failed licence check. */
+    public VerificationStatusResponse approveVerificationItem(String driverId, ReviewableItem item, String note, String reviewedBy) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("note", note);
+        body.put("reviewedBy", reviewedBy);
+        return DownstreamCalls.data(SERVICE, objectMapper, VerificationStatusResponse.class, () -> restClient.post()
+                .uri("/drivers/{driverId}/verification/items/{item}/approve", driverId, item)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
+    /** Ask the driver to upload one document again, with the reason they'll see. */
+    public VerificationStatusResponse requestResubmission(String driverId, ReviewableItem item, String reason, String reviewedBy) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("reason", reason);
+        body.put("reviewedBy", reviewedBy);
+        return DownstreamCalls.data(SERVICE, objectMapper, VerificationStatusResponse.class, () -> restClient.post()
+                .uri("/drivers/{driverId}/verification/items/{item}/request-resubmission", driverId, item)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class));
+    }
+
     /** Display details only - a profile-service hiccup blanks names rather than failing the whole page. */
     public Map<String, Driver> drivers(Collection<String> userIds) {
         return DownstreamCalls.batch(SERVICE, objectMapper, userIds, Driver.class, Driver::userId, ids -> restClient.get()

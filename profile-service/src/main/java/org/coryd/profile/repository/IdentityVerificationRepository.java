@@ -13,6 +13,8 @@ public interface IdentityVerificationRepository extends JpaRepository<IdentityVe
 
     Optional<IdentityVerification> findByUserId(String userId);
 
+    List<IdentityVerification> findByUserIdIn(java.util.Collection<String> userIds);
+
     /** The ops queue - oldest submission first. */
     Page<IdentityVerification> findByStatusOrderBySubmittedAtAsc(VerificationStatus status, Pageable pageable);
 
