@@ -3,6 +3,7 @@ package org.coryd.ops.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.http.IdBatches;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
@@ -49,27 +50,28 @@ final class DownstreamCalls {
         }
     }
 
-    /** A list-of-records lookup keyed by id - empty on any failure, so missing names never sink a page. */
+    /**
+     * A list-of-records lookup keyed by id - a failed batch leaves its ids without details, so missing names never sink a
+     * page. Sent in batches of IdBatches.MAX_IDS: the ids go in the query string, and a long one is refused before it
+     * reaches the service.
+     */
     static <T> Map<String, T> batch(String service, ObjectMapper objectMapper, Collection<String> ids, Class<T> type,
                                     Function<T, String> key, Function<List<String>, JsonNode> call) {
-        List<String> distinct = ids.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
-        if (distinct.isEmpty()) {
-            return Map.of();
-        }
-        try {
-            JsonNode items = data(service, objectMapper, () -> call.apply(distinct));
-            Map<String, T> byId = new LinkedHashMap<>();
-            if (items != null && items.isArray()) {
-                for (JsonNode item : items) {
-                    T value = objectMapper.treeToValue(item, type);
-                    byId.put(key.apply(value), value);
+        Map<String, T> byId = new LinkedHashMap<>();
+        for (List<String> batch : IdBatches.of(ids)) {
+            try {
+                JsonNode items = data(service, objectMapper, () -> call.apply(batch));
+                if (items != null && items.isArray()) {
+                    for (JsonNode item : items) {
+                        T value = objectMapper.treeToValue(item, type);
+                        byId.put(key.apply(value), value);
+                    }
                 }
+            } catch (Exception e) {
+                log.warn("{} lookup for {} ids failed - showing them without details: {}", service, batch.size(), e.getMessage());
             }
-            return byId;
-        } catch (Exception e) {
-            log.warn("{} lookup for {} ids failed - showing them without details: {}", service, distinct.size(), e.getMessage());
-            return Map.of();
         }
+        return byId;
     }
 
     private static String messageFrom(ObjectMapper objectMapper, RestClientResponseException e, String service) {

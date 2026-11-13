@@ -71,16 +71,22 @@ public class IdentityServiceClient {
         if (userIds == null || userIds.isEmpty()) {
             return java.util.List.of();
         }
-        try {
-            ContactsView view = restClient.get()
-                    .uri(b -> b.path("/internal/users/contacts").queryParam("userIds", userIds).build())
-                    .retrieve()
-                    .body(ContactsView.class);
-            return view == null || view.data() == null ? java.util.List.of() : view.data();
-        } catch (Exception e) {
-            log.warn("Could not fetch contacts for {} user(s): {}", userIds.size(), e.getMessage());
-            return java.util.List.of();
+        // In batches: 200 ids in one GET is past Tomcat's request-line limit and comes back a 400 (IdBatches).
+        java.util.List<Contact> contacts = new java.util.ArrayList<>();
+        for (java.util.List<String> batch : org.coryd.common.http.IdBatches.of(userIds)) {
+            try {
+                ContactsView view = restClient.get()
+                        .uri(b -> b.path("/internal/users/contacts").queryParam("userIds", batch).build())
+                        .retrieve()
+                        .body(ContactsView.class);
+                if (view != null && view.data() != null) {
+                    contacts.addAll(view.data());
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch contacts for {} user(s): {}", batch.size(), e.getMessage());
+            }
         }
+        return contacts;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
