@@ -29,6 +29,8 @@ import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.common.kafka.events.VerificationItemDecidedEvent;
 import org.coryd.notification.config.KafkaConfig;
 import org.coryd.notification.config.SosAlertProperties;
+import org.coryd.notification.gateway.whatsapp.WhatsAppMessage;
+import org.coryd.notification.gateway.whatsapp.WhatsAppMessageKind;
 import org.coryd.notification.service.NotificationDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +43,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -411,10 +414,13 @@ public class NotificationEventListener {
     @KafkaListener(topics = KafkaTopics.TRIP_SHARE_REQUESTED, groupId = KafkaConfig.GROUP_ID_SAFETY)
     public void onTripShareRequested(TripShareRequestedEvent event) {
         for (EmergencyContactPayload contact : event.getContacts()) {
-            dispatchService.sendSms(contact.getPhone(),
+            dispatchService.sendWhatsappOrSms(contact.getPhone(),
                     (contact.getName() == null ? "Hi" : "Hi " + contact.getName()) +
                             ", someone you know shared their CoRyd trip with you - track it here: " + event.getShareLink(),
-                    "TRIP_SHARE_REQUESTED");
+                    new WhatsAppMessage(WhatsAppMessageKind.TRIP_SHARE, Map.of(
+                            "name", contact.getName() == null ? "there" : contact.getName(),
+                            "link", orUnknown(event.getShareLink()))),
+                    "TRIP_SHARE_REQUESTED", event.getRiderId());
         }
     }
 
@@ -427,10 +433,13 @@ public class NotificationEventListener {
             String locationText = event.getLatitude() == null ? ""
                     : " Last known location: " + event.getLatitude() + "," + event.getLongitude() + ".";
             for (EmergencyContactPayload contact : event.getContacts()) {
-                dispatchService.sendSms(contact.getPhone(),
+                dispatchService.sendWhatsappOrSms(contact.getPhone(),
                         (contact.getName() == null ? "Hi" : "Hi " + contact.getName()) +
                                 ", this is an emergency alert from CoRyd - someone you know triggered SOS during their trip." + locationText,
-                        "SOS_TRIGGERED");
+                        new WhatsAppMessage(WhatsAppMessageKind.SOS_CONTACT, Map.of(
+                                "name", contact.getName() == null ? "there" : contact.getName(),
+                                "location", location(event.getLatitude(), event.getLongitude()))),
+                        "SOS_TRIGGERED", event.getTriggeredBy());
             }
         }
 
@@ -441,7 +450,7 @@ public class NotificationEventListener {
         // acknowledgement, not silence (or a flood) after tapping the button.
         // Only claims a contact was alerted when one actually was.
         dispatchService.sendPush(event.getTriggeredBy(), anyContact ? "Emergency alert sent" : "No emergency contact set",
-                anyContact ? "Your emergency contact has been notified by SMS."
+                anyContact ? "Your emergency contact has been notified."
                         : "We couldn't alert anyone - add an emergency contact in your profile.",
                 "SOS_TRIGGERED", event.getBookingId());
     }
@@ -477,7 +486,8 @@ public class NotificationEventListener {
             return;
         }
         String sms = safetyEscalationSms(event);
-        phones.forEach(phone -> dispatchService.sendSms(phone, sms, "SAFETY_ESCALATED"));
+        WhatsAppMessage whatsapp = safetyEscalationWhatsapp(event);
+        phones.forEach(phone -> dispatchService.sendWhatsappOrSms(phone, sms, whatsapp, "SAFETY_ESCALATED", null));
         emails.forEach(email -> dispatchService.sendEmail(email,
                 "Unanswered safety check: " + orUnknown(event.getRouteSummary()), sms + "\n\nAlert " + event.getAlertId()
                         + ", route " + event.getRoutePostId(), "SAFETY_ESCALATED"));
@@ -488,18 +498,41 @@ public class NotificationEventListener {
      * exactly who didn't answer and who did, by role, so ops knows whether to call the driver or a rider.
      */
     static String safetyEscalationSms(TripSafetyEscalatedEvent event) {
-        String what = switch (event.getKind() == null ? "" : event.getKind()) {
-            case "STOPPED" -> "the car stopped for a long time";
-            case "OFF_ROUTE" -> "the car went far off its route";
-            case "SIGNAL_LOST" -> "the driver's location stopped updating";
-            default -> "something looked unusual";
-        };
-        String notAnswered = event.getNotAnswered() != null ? event.getNotAnswered() : event.getUnanswered() + " on board";
+        String what = safetyWhat(event);
+        String notAnswered = notAnswered(event);
         return "CoRyd safety: no reply to an Are-you-OK check. Trip " + plain(orUnknown(event.getRouteSummary())) + ": " + what + ". "
                 + "No reply from: " + notAnswered + ". "
                 + (event.getAnsweredOk() != null ? "Said OK: " + event.getAnsweredOk() + ". " : "")
                 + "Car " + orUnknown(event.getVehiclePlate()) + "."
                 + (event.getLatitude() == null ? "" : " Last seen: https://maps.google.com/?q=" + event.getLatitude() + "," + event.getLongitude());
+    }
+
+    /** The same facts as the SMS, one per template placeholder (docs/whatsapp-notifications.md). */
+    static WhatsAppMessage safetyEscalationWhatsapp(TripSafetyEscalatedEvent event) {
+        return new WhatsAppMessage(WhatsAppMessageKind.SAFETY_ESCALATED, Map.of(
+                "route", plain(orUnknown(event.getRouteSummary())),
+                "what", safetyWhat(event),
+                "not_answered", notAnswered(event),
+                "answered_ok", event.getAnsweredOk() != null ? event.getAnsweredOk() : "nobody",
+                "car", orUnknown(event.getVehiclePlate()),
+                "location", location(event.getLatitude(), event.getLongitude())));
+    }
+
+    private static String safetyWhat(TripSafetyEscalatedEvent event) {
+        return switch (event.getKind() == null ? "" : event.getKind()) {
+            case "STOPPED" -> "the car stopped for a long time";
+            case "OFF_ROUTE" -> "the car went far off its route";
+            case "SIGNAL_LOST" -> "the driver's location stopped updating";
+            default -> "something looked unusual";
+        };
+    }
+
+    private static String notAnswered(TripSafetyEscalatedEvent event) {
+        return event.getNotAnswered() != null ? event.getNotAnswered() : event.getUnanswered() + " on board";
+    }
+
+    private static String location(Double latitude, Double longitude) {
+        return latitude == null ? "not shared" : "https://maps.google.com/?q=" + latitude + "," + longitude;
     }
 
     private static String plain(String text) {
@@ -516,7 +549,8 @@ public class NotificationEventListener {
             return;
         }
         String sms = sosOpsSms(event);
-        phones.forEach(phone -> dispatchService.sendSms(phone, sms, "SOS_OPS_ALERT"));
+        WhatsAppMessage whatsapp = sosOpsWhatsapp(event);
+        phones.forEach(phone -> dispatchService.sendWhatsappOrSms(phone, sms, whatsapp, "SOS_OPS_ALERT", null));
         String subject = "SOS: " + who(event) + " on " + orUnknown(event.getRouteSummary());
         String body = sosOpsEmail(event, Instant.now());
         emails.forEach(email -> dispatchService.sendEmail(email, subject, body, "SOS_OPS_ALERT"));
@@ -527,6 +561,18 @@ public class NotificationEventListener {
                 + ". Rider " + orUnknown(event.getRiderPhone())
                 + ". Driver " + orUnknown(event.getDriverName()) + " " + orUnknown(event.getDriverPhone())
                 + ", car " + orUnknown(event.getVehiclePlate()) + "." + mapLink(event);
+    }
+
+    /** The same facts as the SMS, one per template placeholder (docs/whatsapp-notifications.md). */
+    static WhatsAppMessage sosOpsWhatsapp(SosTriggeredEvent event) {
+        return new WhatsAppMessage(WhatsAppMessageKind.SOS_OPS, Map.of(
+                "who", who(event),
+                "route", orUnknown(event.getRouteSummary()),
+                "rider_phone", orUnknown(event.getRiderPhone()),
+                "driver", orUnknown(event.getDriverName()),
+                "driver_phone", orUnknown(event.getDriverPhone()),
+                "car", orUnknown(event.getVehiclePlate()),
+                "location", location(event.getLatitude(), event.getLongitude())));
     }
 
     static String sosOpsEmail(SosTriggeredEvent event, Instant receivedAt) {

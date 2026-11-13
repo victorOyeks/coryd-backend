@@ -4,6 +4,8 @@ import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.RouteCancelledEvent;
 import org.coryd.common.kafka.events.RouteDepartureReminderEvent;
 import org.coryd.common.kafka.events.SeatReservedEvent;
+import org.coryd.notification.gateway.whatsapp.WhatsAppMessage;
+import org.coryd.notification.gateway.whatsapp.WhatsAppMessageKind;
 import org.coryd.notification.service.NotificationDispatchService;
 import org.junit.jupiter.api.Test;
 
@@ -108,12 +110,18 @@ class NotificationCopyTest {
         listener.onSosTriggered(sosEvent().contacts(List.of(
                 org.coryd.common.kafka.events.EmergencyContactPayload.builder().name("Wife").phone("08050000000").build())).build());
 
-        verify(dispatch).sendSms(eq("08050000000"), any(), eq("SOS_TRIGGERED"));
+        // The contact's channel follows the preferences of whoever pressed SOS.
+        verify(dispatch).sendWhatsappOrSms(eq("08050000000"), any(), eq(new WhatsAppMessage(WhatsAppMessageKind.SOS_CONTACT,
+                java.util.Map.of("name", "Wife", "location", "https://maps.google.com/?q=6.45,3.39"))), eq("SOS_TRIGGERED"), eq("driver-1"));
         String sms = "CoRyd SOS: the driver pressed SOS on Eko Hotel → Ikorodu. Rider 08030000000. Driver Tunde 08040000000, "
                 + "car LND123AB. https://maps.google.com/?q=6.45,3.39";
-        verify(dispatch).sendSms(eq("08011111111"), eq(sms), eq("SOS_OPS_ALERT"));
-        verify(dispatch).sendSms(eq("08022222222"), eq(sms), eq("SOS_OPS_ALERT"));
-        verify(dispatch, org.mockito.Mockito.times(3)).sendSms(any(), any(), any());
+        WhatsAppMessage whatsapp = new WhatsAppMessage(WhatsAppMessageKind.SOS_OPS, java.util.Map.of(
+                "who", "driver", "route", "Eko Hotel → Ikorodu", "rider_phone", "08030000000", "driver", "Tunde",
+                "driver_phone", "08040000000", "car", "LND123AB", "location", "https://maps.google.com/?q=6.45,3.39"));
+        verify(dispatch).sendWhatsappOrSms(eq("08011111111"), eq(sms), eq(whatsapp), eq("SOS_OPS_ALERT"), eq(null));
+        verify(dispatch).sendWhatsappOrSms(eq("08022222222"), eq(sms), eq(whatsapp), eq("SOS_OPS_ALERT"), eq(null));
+        verify(dispatch, org.mockito.Mockito.times(3)).sendWhatsappOrSms(any(), any(), any(), any(), any());
+        verify(dispatch, org.mockito.Mockito.never()).sendSms(any(), any(), any());
         verify(dispatch).sendEmail(eq("ops@coryd.ng"), eq("SOS: driver on Eko Hotel → Ikorodu"), any(), eq("SOS_OPS_ALERT"));
         verify(dispatch).sendEmail(eq("founder@coryd.ng"), any(), any(), eq("SOS_OPS_ALERT"));
     }
@@ -137,9 +145,21 @@ class NotificationCopyTest {
         listener.onSosTriggered(sosEvent().contacts(List.of(
                 org.coryd.common.kafka.events.EmergencyContactPayload.builder().name("Wife").phone("08050000000").build())).build());
 
-        verify(dispatch).sendSms(eq("08050000000"), any(), eq("SOS_TRIGGERED"));
-        verify(dispatch, org.mockito.Mockito.never()).sendSms(any(), any(), eq("SOS_OPS_ALERT"));
+        verify(dispatch).sendWhatsappOrSms(eq("08050000000"), any(), any(), eq("SOS_TRIGGERED"), eq("driver-1"));
+        verify(dispatch, org.mockito.Mockito.never()).sendWhatsappOrSms(any(), any(), any(), eq("SOS_OPS_ALERT"), any());
         verify(dispatch, org.mockito.Mockito.never()).sendEmail(any(), any(), any(), any());
+    }
+
+    @Test
+    void aSharedTripGoesToEachContactOnWhatsappOrSmsByTheRidersPreference() {
+        listener.onTripShareRequested(org.coryd.common.kafka.events.TripShareRequestedEvent.builder()
+                .riderId("rider-1").shareLink("https://coryd.ng/t/abc").contacts(List.of(
+                        org.coryd.common.kafka.events.EmergencyContactPayload.builder().phone("08050000000").build())).build());
+
+        verify(dispatch).sendWhatsappOrSms(eq("08050000000"),
+                eq("Hi, someone you know shared their CoRyd trip with you - track it here: https://coryd.ng/t/abc"),
+                eq(new WhatsAppMessage(WhatsAppMessageKind.TRIP_SHARE, java.util.Map.of("name", "there", "link", "https://coryd.ng/t/abc"))),
+                eq("TRIP_SHARE_REQUESTED"), eq("rider-1"));
     }
 
     @Test
@@ -160,9 +180,12 @@ class NotificationCopyTest {
                 .vehiclePlate("KJA001XA").riderPhones("0803, 0805").unanswered(2)
                 .notAnswered("driver Kunle Adeyemi 0804, rider 0803").answeredOk("rider 0805").build());
 
-        verify(dispatch).sendSms(eq("08011111111"), eq("CoRyd safety: no reply to an Are-you-OK check. Trip Obalende to Berger: "
+        verify(dispatch).sendWhatsappOrSms(eq("08011111111"), eq("CoRyd safety: no reply to an Are-you-OK check. Trip Obalende to Berger: "
                 + "the driver's location stopped updating. No reply from: driver Kunle Adeyemi 0804, rider 0803. Said OK: rider 0805. "
-                + "Car KJA001XA."), eq("SAFETY_ESCALATED"));
+                + "Car KJA001XA."), eq(new WhatsAppMessage(WhatsAppMessageKind.SAFETY_ESCALATED, java.util.Map.of(
+                        "route", "Obalende to Berger", "what", "the driver's location stopped updating",
+                        "not_answered", "driver Kunle Adeyemi 0804, rider 0803", "answered_ok", "rider 0805",
+                        "car", "KJA001XA", "location", "not shared"))), eq("SAFETY_ESCALATED"), eq(null));
     }
 
     @Test
@@ -172,9 +195,9 @@ class NotificationCopyTest {
                 .alertId("alert-1").kind("OFF_ROUTE").routeSummary("Ikorodu → VI").vehiclePlate("LND1").unanswered(1)
                 .notAnswered("rider 0803").latitude(6.5).longitude(3.4).build());
 
-        verify(dispatch).sendSms(eq("08011111111"), eq("CoRyd safety: no reply to an Are-you-OK check. Trip Ikorodu to VI: "
+        verify(dispatch).sendWhatsappOrSms(eq("08011111111"), eq("CoRyd safety: no reply to an Are-you-OK check. Trip Ikorodu to VI: "
                 + "the car went far off its route. No reply from: rider 0803. Car LND1. Last seen: https://maps.google.com/?q=6.5,3.4"),
-                eq("SAFETY_ESCALATED"));
+                any(), eq("SAFETY_ESCALATED"), eq(null));
     }
 
     @Test

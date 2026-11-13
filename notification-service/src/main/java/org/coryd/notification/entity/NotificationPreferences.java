@@ -31,4 +31,14 @@ public class NotificationPreferences extends BaseEntity {
     @Builder.Default
     @Column(nullable = false)
     private boolean promotionalOptIn = true;
+
+    /**
+     * Whether texts CoRyd sends on this user's behalf (their trip shares and SOS alerts to their
+     * emergency contacts) may go by WhatsApp. OTPs don't consult it - the user picks that channel
+     * on the resend itself. Off only changes the channel - the same message still
+     * goes out by SMS, so this never disables a trip-critical notification.
+     */
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean whatsappOptIn = true;
 }

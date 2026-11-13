@@ -11,7 +11,8 @@ import java.util.Map;
 
 /**
  * Thin wrapper over Termii's SMS API. Kept behind a single method so swapping
- * SMS vendors later only touches this class.
+ * SMS vendors later only touches this class. WhatsApp is not sent from here -
+ * see gateway.whatsapp.WhatsAppService (approved templates, its own flag).
  */
 @Slf4j
 @Service
@@ -48,11 +49,7 @@ public class TermiiSmsService {
         return dispatch(toPhone, message, "dnd");
     }
 
-    public boolean sendWhatsapp(String toPhone, String message) {
-        return dispatch(toPhone, message, "whatsapp");
-    }
-
-    /** Separate endpoint from send()/sendWhatsapp() - Termii's voice OTP API takes a bare numeric
+    /** Separate endpoint from send() - Termii's voice OTP API takes a bare numeric
      * code (it generates and reads out its own script), not a full message, and needs no sender ID
      * since it's a phone call, not a text with a displayed "from" name. Stopgap while the DND route
      * is pending Termii's approval - a code read aloud isn't blocked by the SMS DND registry. */
@@ -105,15 +102,7 @@ public class TermiiSmsService {
         }
     }
 
-    /** Every phone number in this codebase is stored/passed around in local Nigerian format
-     * (0803...) - Termii rejects that outright and needs international format with no leading
-     * zero and no "+" (234803...). Converted only here, right before the API call, so nothing
-     * else (storage, login, lookups) has to change format. */
     private static String toInternationalFormat(String phone) {
-        String digits = phone.replaceAll("[^0-9]", "");
-        if (digits.startsWith("0") && digits.length() == 11) {
-            return "234" + digits.substring(1);
-        }
-        return digits;
+        return PhoneNumbers.toInternationalFormat(phone);
     }
 }

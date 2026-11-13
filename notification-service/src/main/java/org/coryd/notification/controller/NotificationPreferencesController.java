@@ -18,12 +18,19 @@ public class NotificationPreferencesController {
 
     private final NotificationPreferencesRepository preferencesRepository;
 
+    /** Either flag may be sent alone; one that isn't sent keeps its current value. */
     @PutMapping("/users/{userId}")
-    public ApiResponse<NotificationPreferences> setPromotionalOptIn(@PathVariable String userId,
-                                                                      @RequestParam boolean promotionalOptIn) {
+    public ApiResponse<NotificationPreferences> setPreferences(@PathVariable String userId,
+                                                               @RequestParam(required = false) Boolean promotionalOptIn,
+                                                               @RequestParam(required = false) Boolean whatsappOptIn) {
         NotificationPreferences preferences = preferencesRepository.findByUserId(userId)
                 .orElseGet(() -> NotificationPreferences.builder().userId(userId).build());
-        preferences.setPromotionalOptIn(promotionalOptIn);
+        if (promotionalOptIn != null) {
+            preferences.setPromotionalOptIn(promotionalOptIn);
+        }
+        if (whatsappOptIn != null) {
+            preferences.setWhatsappOptIn(whatsappOptIn);
+        }
         return ApiResponse.ok(preferencesRepository.save(preferences));
     }
 }
