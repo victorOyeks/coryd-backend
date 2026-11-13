@@ -85,8 +85,8 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onBookingCancelled(BookingCancelledEvent event) {
-        dispatchService.sendPush(event.getRiderId(), "Booking cancelled", cancellationCopy(event.getCancelledBy(), event.isPaid()),
-                "BOOKING_CANCELLED", event.getBookingId());
+        dispatchService.sendPush(event.getRiderId(), "Booking cancelled",
+                cancellationCopy(event.getCancelledBy(), event.isPaid(), event.isFeeApplied()), "BOOKING_CANCELLED", event.getBookingId());
 
         // Only tell the driver when the RIDER was the one who cancelled (or CoRyd cancelled the rider's seat because of their account) - a seat just freed up on
         // their route and they'd otherwise have no way to know. A driver- or system-initiated
@@ -99,6 +99,12 @@ public class NotificationEventListener {
             // The rider's account was suspended or closed - the driver is told the seat is free, never why.
             dispatchService.sendPush(event.getDriverId(), "A seat opened up",
                     "A rider's booking on your route was cancelled - the seat is available again.",
+                    "BOOKING_CANCELLED", event.getBookingId());
+        }
+        // Ops cancelling one seat frees it the same way. A whole trip ops cancelled (OPS_TRIP) is ROUTE_CANCELLED's job.
+        if ("OPS".equals(event.getCancelledBy()) && event.getDriverId() != null) {
+            dispatchService.sendPush(event.getDriverId(), "A seat opened up",
+                    "CoRyd support cancelled a booking on your route - the seat is available again.",
                     "BOOKING_CANCELLED", event.getBookingId());
         }
     }
@@ -162,9 +168,11 @@ public class NotificationEventListener {
         // Per-rider notification for R-704 is handled by the booking-cancelled listener above,
         // which trip-service publishes once per affected booking. This just confirms to the driver.
         int refunded = event.getAffectedBookingIds() == null ? 0 : event.getAffectedBookingIds().size();
-        String cancelled = "NOT_STARTED".equals(event.getCancelledBy())
-                ? "Your route wasn't started within 45 minutes of departure, so it was cancelled"
-                : "Your route was cancelled";
+        String cancelled = switch (String.valueOf(event.getCancelledBy())) {
+            case "NOT_STARTED" -> "Your route wasn't started within 45 minutes of departure, so it was cancelled";
+            case "OPS_TRIP" -> "CoRyd support cancelled your route";
+            default -> "Your route was cancelled";
+        };
         String body = refunded == 0 ? cancelled + "."
                 : cancelled + " and " + count(refunded, "booking", "bookings") + (refunded == 1 ? " was" : " were") + " refunded.";
         dispatchService.sendRoutePush(event.getDriverId(), "Route cancelled", body, "ROUTE_CANCELLED", event.getRoutePostId());
@@ -252,11 +260,19 @@ public class NotificationEventListener {
 
     /** The refund line only for riders who paid - an unpaid hold or reservation had nothing to refund. */
     static String cancellationCopy(String cancelledBy, boolean paid) {
+        return cancellationCopy(cancelledBy, paid, false);
+    }
+
+    /** feeApplied: a late-cancellation fee was kept back, so the refund is partial. */
+    static String cancellationCopy(String cancelledBy, boolean paid, boolean feeApplied) {
         String refund = paid ? " You've been fully refunded." : "";
         if (cancelledBy == null) {
             return "Your booking was cancelled.";
         }
         return switch (cancelledBy) {
+            case "OPS" -> "CoRyd support cancelled your booking."
+                    + (!paid ? "" : feeApplied ? " You'll be refunded, less the late-cancellation fee." : " You've been fully refunded.");
+            case "OPS_TRIP" -> "CoRyd support cancelled this trip." + refund;
             case "NOT_STARTED" -> "Your driver didn't start this trip." + refund;
             case "DRIVER" -> "Your driver cancelled this trip." + refund;
             case "RIDER" -> "Your booking was cancelled.";

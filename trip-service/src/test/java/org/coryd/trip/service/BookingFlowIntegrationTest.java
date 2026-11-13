@@ -71,7 +71,7 @@ import static org.mockito.Mockito.verify;
 @Testcontainers
 // The identity (NIN) gate is on by default; these tests cover everything else, and the gate's own tests switch it on.
 @org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
-@Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class,
+@Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationLogService.class, org.coryd.trip.config.StuckTripProperties.class, CancellationPolicy.class, MatchingProperties.class,
         NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class, OpsDriverStatsService.class, DriverStatsPublisher.class,
         OpsRiderStatsService.class, RiderStatsPublisher.class, OpsRiderTripService.class})
 class BookingFlowIntegrationTest {
@@ -1073,7 +1073,7 @@ class BookingFlowIntegrationTest {
         confirm(book(route, RIDER, 1));
         departAt(route, Instant.now().minus(1, ChronoUnit.HOURS));
 
-        new org.coryd.trip.scheduler.RouteExpiryJob(routePostRepository, routeService).run();
+        new org.coryd.trip.scheduler.RouteExpiryJob(routePostRepository, routeService, new org.coryd.trip.config.StuckTripProperties()).run();
 
         assertThat(routePostRepository.findById(route.getId()).orElseThrow().getStatus()).isEqualTo(RouteStatus.CANCELLED);
         verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED),

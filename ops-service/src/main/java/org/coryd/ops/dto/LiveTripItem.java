@@ -4,7 +4,11 @@ import org.coryd.common.enums.LiveTripPhase;
 
 import java.time.Instant;
 
-/** One card on the Live Trips monitor. */
+/**
+ * One card on the Live Trips monitor. location is the live pin (only while the driver's app is sending); lastSeen is
+ * their last point however old, locationAgeSeconds how old, locationStale true once it's over two minutes. overdue:
+ * started and past etaAt. stuck: past the stuck-trip threshold - resolve it from GET /trips/stuck.
+ */
 public record LiveTripItem(
         String routePostId,
         String tripRef,
@@ -26,6 +30,11 @@ public record LiveTripItem(
         int estimatedDurationMinutes,
         Instant etaAt,
         double progress,
-        TripLocation location
+        TripLocation location,
+        TripLocation lastSeen,
+        Long locationAgeSeconds,
+        boolean locationStale,
+        boolean overdue,
+        boolean stuck
 ) {
 }

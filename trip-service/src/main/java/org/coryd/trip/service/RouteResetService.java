@@ -43,6 +43,7 @@ public class RouteResetService {
     private final SosIncidentRepository sosIncidentRepository;
     private final ChatService chatService;
     private final PaymentDevClient paymentDevClient;
+    private final org.coryd.trip.repository.CancellationLogRepository cancellationLogRepository;
 
     @Transactional
     public RouteResetResult reset(String routePostId) {
@@ -64,6 +65,8 @@ public class RouteResetService {
             sosIncidentsDeleted = sosIncidentRepository.deleteByBookingIdIn(bookingIds);
         }
         bookingRepository.deleteByRoutePostId(routePostId);
+        // A reset route was never cancelled - nor were its seats.
+        cancellationLogRepository.deleteByRoutePostId(routePostId);
         long chatMessagesDeleted = chatService.deleteChatForRoute(routePostId);
 
         RouteStatus previousStatus = route.getStatus();
