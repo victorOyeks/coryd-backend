@@ -24,6 +24,7 @@ invite, change a role, deactivate/reactivate), the four ops roles, `GET /me`, an
 | `VERIFICATION_DECIDE` | Approve / reject / request resubmission / override, give tries back, partial-name review, expiry reminders | ✓ | ✓ | | |
 | `MONEY_VIEW` | Transactions, refunds, approvals, payouts, earnings & debt, finance dashboard, pricing, money audit (read) | ✓ | | ✓ | ✓ |
 | `MONEY_MANAGE` | Manual refunds, approve/reject/cancel/retry requests, payout & refund retries, debt adjustments, bank-detail reveal | ✓ | | ✓ | |
+| `VERIFICATION_DECIDE` or `ACCOUNT_MANAGE` | Reveal a full NIN, licence number or date of birth (`POST /users/{id}/reveal`, [privacy.md](privacy.md)) | ✓ | ✓ | | ✓ |
 | `TRIPS_VIEW` | Trips, live, stuck, last-minute time changes, cancellations log | ✓ | | ✓ | ✓ |
 | `TRIPS_MANAGE` | Cancel a trip or booking, resolve a stuck trip | ✓ | | | ✓ |
 | `SAFETY_VIEW` | SOS queue, reports & disputes, ratings (read) | ✓ | | | ✓ |
@@ -218,6 +219,11 @@ sends the email in `phone`. An identifier with `@` is looked up by email (case-i
 - coryd:121: every account already holding `OPS_ADMIN` becomes `SUPER_ADMIN`; an admin created by hand with their email in
   the `phone` column (the console's test admin, `admin@coryd.africa`) gets it copied to `email`.
 - coryd:122: `identity.ops_invites` (token hash, expiry, used/revoked, who sent it).
+- **Two test super admins on dev** (phase 7): the console's test admin `admin@coryd.africa` ("Test Ops Admin") and the dev
+  seeder's account, phone `08000000003`. The seeder's one is now **"Seed Ops Admin"** with email `ops-seed@coryd.local`
+  (set on the next dev start, only if it has no email and nobody else uses that address), so the two can't be confused in
+  the team list or the audit log. Nobody's access changed: both stay `SUPER_ADMIN`, the seed admin still signs in with its
+  phone and the seed password (or now the email). Audit entries it made earlier keep the name recorded then ("Test Ops Admin").
 - Team actions are written to the admin's account history (`identity.account_actions`) as `OPS_ADMIN_INVITED`,
   `OPS_INVITE_RESENT`, `OPS_INVITE_REVOKED`, `OPS_INVITE_ACCEPTED`, `OPS_ROLE_CHANGED` (before/after role),
   `OPS_ADMIN_DEACTIVATED`, `OPS_ADMIN_REACTIVATED` — the audit log shows them as category `TEAM`.

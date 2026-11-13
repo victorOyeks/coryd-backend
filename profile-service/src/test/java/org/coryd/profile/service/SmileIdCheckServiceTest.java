@@ -396,7 +396,7 @@ class SmileIdCheckServiceTest {
         @Test
         void wrongNameNumberOrExpiredGoesToOps() throws Exception {
             String[][] cases = {{"ADA", "OBI", "ABC12345DE67", "2030-01-01", "ADA OBI"},
-                    {"TUNDE", "BAKARE", "ZZZ99999", "2030-01-01", "ZZZ99999"},
+                    {"TUNDE", "BAKARE", "ZZZ99999", "2030-01-01", "Licence number on the card is \u2022\u2022\u2022\u20229999, driver entered \u2022\u2022\u2022\u2022DE67"},
                     {"TUNDE", "BAKARE", "ABC12345DE67", LocalDate.now().minusDays(1).toString(), "expired"}};
             for (String[] c : cases) {
                 drivers.get("driver-1").setGovernmentIdStatus(VerificationStatus.PENDING);
@@ -654,7 +654,8 @@ class SmileIdCheckServiceTest {
 
             verify(decider, never()).approve(any(), anyString());
             assertThat(verifications.get("driver-2").getStatus()).isEqualTo(VerificationStatus.IN_REVIEW);
-            assertThat(last().getProviderSummary()).contains("date of birth");
+            assertThat(last().getProviderSummary()).as("years only - the full dates are a reveal")
+                    .contains("dates of birth differ (born 2000 / 1985)").doesNotContain("1985-01-01");
         }
 
         @Test

@@ -22,11 +22,12 @@ changed an admin's role — merged from the audit tables each service already ke
 | `TRIPS` | trip (`ops_audit_log`) | `CANCEL_TRIP`, `CANCEL_BOOKING`, `RESOLVE_STUCK_COMPLETED`, `RESOLVE_STUCK_CANCELLED` | `ROUTE`, `BOOKING` |
 | `SAFETY` | trip (`ops_audit_log`) | `SOS_ACKNOWLEDGED`, `SOS_NOTE`, `SOS_ESCALATED`, `SOS_RESOLVED`, `REPORT_ASSIGNED`, `REPORT_NOTE`, `REPORT_RESOLVED`, `REPORT_DISMISSED`, `RATING_HIDDEN`, `RATING_RESTORED` | `SOS`, `ISSUE`, `RATING` |
 | `MONEY` | payment (`ops_money_audit`) | `REFUND_*`, `PAYOUT_RETRY*`, `PAYOUT_RETRIED`, `DEBT_*`, `REQUEST_APPROVED/REJECTED/CANCELLED/RESUBMITTED`, `PAYOUT_ACCOUNT_REVEALED` | `BOOKING`, `FARE_HOLD`, `SETTLEMENT`, `DRIVER`, `MONEY_REQUEST`, `PAYOUT_ACCOUNT` |
+| `PRIVACY` | profile (`pii_reveal_log`) | `PII_REVEALED` - an admin revealed a full NIN, licence number or date of birth ([privacy.md](privacy.md)) | `ACCOUNT` (the person's user id; `subject` names the field) |
 
 Left out on purpose: Smile ID's own late results (`PROVIDER_RESULT` — not an ops action) and the verification log's
 `ATTEMPTS_RESET` (the same reset is already in the account history as `LICENCE_/IDENTITY_ATTEMPTS_RESET`).
-Not audited anywhere yet (so not here): beta-signup "invited" marks, document-expiry reminders, bank-detail views other than
-the reveal. Phase 6 part B (settings, broadcasts) adds its own source when it lands.
+Not audited anywhere yet (so not here): beta-signup "invited" marks, document-expiry reminders. Views of masked data aren't
+audited - only reveals of the full value are. Phase 6 part B (settings, broadcasts) adds its own source when it lands.
 
 ---
 
@@ -36,7 +37,7 @@ the reveal. Phase 6 part B (settings, broadcasts) adds its own source when it la
 |---|---|
 | `actorId` | The admin who did it (user id — use `/team` for the picker). |
 | `action` | One or more action names (`action=SUSPENDED&action=REINSTATED` or comma-separated). |
-| `category` | One or more of `ACCOUNT`, `TEAM`, `VERIFICATION`, `TRIPS`, `SAFETY`, `MONEY`. Unknown → `400`. |
+| `category` | One or more of `ACCOUNT`, `TEAM`, `VERIFICATION`, `TRIPS`, `SAFETY`, `MONEY`, `PRIVACY`. Unknown → `400`. |
 | `targetType` | One or more target types from the table above. Unknown → `400` listing the allowed ones. |
 | `targetId` | Exact target id. For money, an approval request id also matches every action on that request. |
 | `from`, `to` | `YYYY-MM-DD`, **Lagos** days, both inclusive (`to=2026-11-12` runs to 2026-11-13 00:00 Lagos). `from` after `to` → `400`. |
@@ -75,8 +76,16 @@ Always newest first. Response:
 - `id` is `{source}:{row id}` — unique across the feed.
 - `target.ref`: the console's short reference where one exists (`T-` route, `B-` booking, `S-` SOS, `D-` driver / payout account).
   `target.name`: the person's name for `ACCOUNT`, `ADMIN`, `VERIFICATION`, `DRIVER` and `PAYOUT_ACCOUNT` targets.
-- `actor.name` is the name recorded at the time; filled from the account if it wasn't recorded. `actor` is `null` for
-  entries recorded before actors were kept.
+  The target object is `{type, id, ref, name, driverId}`.
+- `actor.name` is the name recorded at the time; filled from the account if it wasn't recorded.
+- **System actions** (phase 7): anything no admin did - Smile ID's automatic decisions, scheduled setting changes, actions
+  made with the platform's own system token, and the dev seeders (`SEED`, `DataSeeder`) - read
+  `"actor": { "id": null, "name": "System" }`, from every source alike. `actor` is `null` only when nothing at all was
+  recorded (account suspensions from before the history kept who did them). Entries an admin made before their id was
+  kept show `{ "id": null, "name": "<their name>" }`.
+- `target.driverId`: the driver, for `DRIVER` and `PAYOUT_ACCOUNT` targets (the same as `target.id`); `null` otherwise. A
+  `PAYOUT_ACCOUNT_REVEALED` entry's target is the **driver** (since phase 7; older ones moved by coryd:152) - the bank
+  account is `after.recipientId`.
 - `before` / `after`: JSON as recorded (`null` when nothing was). Account and team actions: `{field: value}` per changed
   field. Verification: `{status}` before, `{status, overrodeProvider?, providerOutcome?}` after.
 - `amount`: money actions only (naira). `relatedId`: the trip a booking/SOS action was on (`relatedRef` `T-…`), or the
