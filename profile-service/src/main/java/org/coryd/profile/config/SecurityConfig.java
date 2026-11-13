@@ -4,6 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.security.filter.InternalApiKeyFilter;
 import org.coryd.common.security.InternalOnlyPaths;
 import org.coryd.common.security.filter.JwtFilter;
+import org.coryd.common.security.filter.OpsPermissionFilter;
+import org.coryd.common.security.OpsOwnedPaths;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.coryd.common.security.PublicPaths;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -35,7 +38,9 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http, InternalApiKeyFilter internalApiKeyFilter) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http, InternalApiKeyFilter internalApiKeyFilter,
+                                           ObjectMapper objectMapper,
+                                           @Value("${services.internal.api-key}") String opsServiceKey) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -49,7 +54,11 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(internalApiKeyFilter, JwtFilter.class);
+                .addFilterBefore(internalApiKeyFilter, JwtFilter.class)
+                // Ops roles enforced here too: an ops-facing path needs the internal key (ops-service) or an ops role that
+                // holds the permission (OpsOwnedPaths). Not a bean - a registered servlet filter would run before
+                // authentication and mark itself done.
+                .addFilterAfter(new OpsPermissionFilter(OpsOwnedPaths.PROFILE_SERVICE, opsServiceKey, objectMapper), JwtFilter.class);
 
         return http.build();
     }

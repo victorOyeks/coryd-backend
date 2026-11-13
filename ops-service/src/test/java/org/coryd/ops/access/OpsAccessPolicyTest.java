@@ -21,6 +21,11 @@ class OpsAccessPolicyTest {
         assertThat(OpsAccessPolicy.required("GET", "/users/u-1/account-history")).isEqualTo(OpsPermission.DIRECTORY_VIEW);
         assertThat(OpsAccessPolicy.required("PATCH", "/users/u-1/details")).isEqualTo(OpsPermission.ACCOUNT_MANAGE);
         assertThat(OpsAccessPolicy.required("DELETE", "/users/u-1")).isEqualTo(OpsPermission.ACCOUNT_DELETE);
+        assertThat(OpsAccessPolicy.anyOf("POST", "/users/u-1/reveal"))
+                .as("the reveal: verification or account admins, matched before the generic /users/** rule")
+                .containsExactly(OpsPermission.VERIFICATION_DECIDE, OpsPermission.ACCOUNT_MANAGE);
+        assertThat(OpsAccessPolicy.anyOf("PATCH", "/users/u-1/details")).containsExactly(OpsPermission.ACCOUNT_MANAGE);
+        assertThat(OpsAccessPolicy.anyOf("GET", "/not-yet-ruled")).isEmpty();
         assertThat(OpsAccessPolicy.required("GET", "/team/roles")).isEqualTo(OpsPermission.CONSOLE_BASICS);
         assertThat(OpsAccessPolicy.required("POST", "/stream/token")).isEqualTo(OpsPermission.CONSOLE_BASICS);
         assertThat(OpsAccessPolicy.required("GET", "/not-yet-ruled")).as("an endpoint with no rule is super-admin only").isEqualTo(OpsAccessPolicy.SUPER_ADMIN_ONLY);

@@ -2,6 +2,7 @@ package org.coryd.ops.stream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.security.revocation.TokenRevocationRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -36,11 +37,14 @@ public class OpsEventStream {
     public static final String RESYNC = "resync";
     public static final String BYE = "bye";
     public static final String COUNTS = "counts";
+    /** bye reasons. */
+    public static final String EXPIRED = "EXPIRED";
+    public static final String SESSION_ENDED = "SESSION_ENDED";
 
     record Event(long seq, String id, String type, Object data, Instant at) {
     }
 
-    private record Subscriber(String connectionId, String adminId, SseEmitter emitter, Instant expiresAt) {
+    private record Subscriber(String connectionId, String adminId, SseEmitter emitter, Instant expiresAt, long sessionIssuedAtMs) {
     }
 
     private final String instance = Long.toString(System.currentTimeMillis(), 36) + UUID.randomUUID().toString().substring(0, 4);
@@ -52,23 +56,34 @@ public class OpsEventStream {
     private final int replaySize;
     private final Duration maxConnection;
     private final long heartbeatSeconds;
+    private final TokenRevocationRegistry revocations;
 
     public OpsEventStream(ObjectMapper objectMapper,
                           @Value("${ops.stream.replay-size:500}") int replaySize,
                           @Value("${ops.stream.max-connection-minutes:30}") long maxConnectionMinutes,
-                          @Value("${ops.stream.heartbeat-seconds:15}") long heartbeatSeconds) {
+                          @Value("${ops.stream.heartbeat-seconds:15}") long heartbeatSeconds,
+                          TokenRevocationRegistry revocations) {
         this.objectMapper = objectMapper;
         this.replaySize = replaySize;
         this.maxConnection = Duration.ofMinutes(maxConnectionMinutes);
         this.heartbeatSeconds = heartbeatSeconds;
+        this.revocations = revocations;
+        // An admin's sessions ended (suspension, deactivation, sign out everywhere, role change, two-factor reset): their open
+        // streams close within the second the revocation arrives here - not at the stream's 30 minutes.
+        revocations.addListener(this::endRevokedStreams);
     }
 
     /** Opens a stream for an admin: hello, then anything missed since lastEventId (or resync), then live events. */
     public SseEmitter connect(String adminId, String lastEventId) {
+        return connect(adminId, 0L, lastEventId);
+    }
+
+    /** sessionIssuedAtMs: issue time of the access token behind the stream - the stream ends when that session is ended. */
+    public SseEmitter connect(String adminId, long sessionIssuedAtMs, String lastEventId) {
         Instant expiresAt = Instant.now().plus(maxConnection);
         SseEmitter emitter = new SseEmitter(maxConnection.plusMinutes(1).toMillis());
         String connectionId = UUID.randomUUID().toString();
-        Subscriber subscriber = new Subscriber(connectionId, adminId, emitter, expiresAt);
+        Subscriber subscriber = new Subscriber(connectionId, adminId, emitter, expiresAt, sessionIssuedAtMs);
         emitter.onCompletion(() -> subscribers.remove(connectionId));
         emitter.onTimeout(() -> subscribers.remove(connectionId));
         emitter.onError(e -> subscribers.remove(connectionId));
@@ -143,10 +158,11 @@ public class OpsEventStream {
     @Scheduled(fixedRateString = "${ops.stream.heartbeat-seconds:15}000")
     public void heartbeat() {
         Instant now = Instant.now();
+        endRevokedStreams(null);
         for (Subscriber s : List.copyOf(subscribers.values())) {
             try {
                 if (now.isAfter(s.expiresAt())) {
-                    send(s, null, BYE, Map.of("reason", "EXPIRED", "message", "Stream ended after its time - reconnect with a new stream token"));
+                    send(s, null, BYE, Map.of("reason", EXPIRED, "message", "Stream ended after its time - reconnect with a new stream token"));
                     subscribers.remove(s.connectionId());
                     s.emitter().complete();
                 } else {
@@ -162,6 +178,35 @@ public class OpsEventStream {
 
     public int openStreams() {
         return subscribers.size();
+    }
+
+    /**
+     * Closes, with bye {reason: SESSION_ENDED}, every open stream whose session the revocation registry now refuses -
+     * for one admin (a revocation just arrived) or, with null, everyone (the heartbeat's safety sweep).
+     */
+    void endRevokedStreams(String adminId) {
+        for (Subscriber s : List.copyOf(subscribers.values())) {
+            if (adminId != null && !adminId.equals(s.adminId())) {
+                continue;
+            }
+            String refusal = revocations.refusal(s.adminId(), s.sessionIssuedAtMs());
+            if (refusal == null) {
+                continue;
+            }
+            try {
+                send(s, null, BYE, Map.of("reason", SESSION_ENDED, "message", refusal));
+            } catch (Exception e) {
+                // the console is gone anyway
+            }
+            if (subscribers.remove(s.connectionId()) != null) {
+                log.info("Ops stream {} for admin {} closed - their session was ended", s.connectionId(), s.adminId());
+            }
+            try {
+                s.emitter().complete();
+            } catch (Exception ignored) {
+                // already closed
+            }
+        }
     }
 
     String currentId() {

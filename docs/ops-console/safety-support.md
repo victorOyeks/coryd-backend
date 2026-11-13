@@ -433,7 +433,7 @@ async function openStream(lastEventId) {
 
 - **Reconnects:** on a dropped connection `EventSource` reconnects by itself and sends `Last-Event-ID` - but with the same (by then expired) token, which gets `401` and closes it (`readyState` `CLOSED`). Then get a new token and open a new `EventSource`, passing the last id you saw as `lastEventId` (the server takes the `Last-Event-ID` header or the `lastEventId` param).
 - **Replay:** events you missed since `lastEventId` are sent again, in order, after `hello`. If they can't be (the server restarted, another instance served you, or it was too long ago) you get **`resync`**: reload the SOS queue, reports and badges.
-- **Length:** a stream is ended after **30 minutes** with a `bye` event; open a new one with a new token. An admin who is suspended or signed out everywhere can't get a new token.
+- **Length:** a stream is ended after **30 minutes** with a `bye` event; open a new one with a new token. An admin who is suspended or signed out everywhere can't get a new token, and since phase 7 their open stream is closed within seconds (`bye` `SESSION_ENDED`, [security.md](security.md) §6).
 - **Heartbeat:** a comment line (`:hb …`) every **15 seconds**. Nothing to handle - it keeps proxies from closing the connection. No event and no heartbeat for 45 s: treat the stream as dead and reopen it.
 - **Proxy:** if the console proxies `/ops/**`, the proxy must stream `text/event-stream` responses (no buffering, no compression). The server sends `X-Accel-Buffering: no` and `Cache-Control: no-cache, no-transform`.
 
@@ -456,6 +456,7 @@ Every event's `data` is JSON. Events from Kafka carry an `id`; `hello`, `resync`
 | `counts` | a badge changed (checked every 30 s, at once after any SOS or report change, and at least every 5 min) | `{ sos: { open, acknowledged, escalated }, stuckTrips, reports: { open, inProgress }, computedAt }` |
 | `resync` | missed events can't be replayed | `{ reason }` |
 | `bye` | the stream reached its 30 minutes | `{ reason: "EXPIRED", message }` |
+| `bye` | phase 7: the admin's sessions were ended (deactivated, suspended, signed out everywhere, role changed, two-factor reset) - don't reconnect, sign out | `{ reason: "SESSION_ENDED", message }` |
 
 **US-11.1 banner:** show it on `sos.raised` and keep it until `GET /sos/counts` shows `open: 0` (or `sos.updated` with `ACKNOWLEDGED` for that incident). `sos.raised` carries enough to show who / where / phones before the detail loads.
 

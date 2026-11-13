@@ -466,18 +466,23 @@ class OpsMoneyIntegrationTest {
         PayoutAccountView view = payoutService.payoutAccount(DRIVER);
         assertThat(view.canReceivePayouts()).isTrue();
         assertThat(view.accounts()).singleElement().satisfies(a -> {
-            assertThat(a.accountNumberMasked()).isEqualTo("******6789");
+            assertThat(a.accountNumberMasked()).isEqualTo("\u2022\u2022\u2022\u2022\u2022\u20226789");
+            assertThat(a.revealedAt()).isNull();
             assertThat(a.accountNumber()).isNull();
             assertThat(a.accountName()).isEqualTo("EMEKA OKAFOR");
         });
-        assertThatThrownBy(() -> payoutService.reveal(DRIVER, null, "", ADA)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> payoutService.reveal(DRIVER, null, "", ADA)).isInstanceOf(BadRequestException.class)
+                .hasMessage("Say why you need to see it - it goes in the audit log");
 
         PayoutAccountView.Account full = payoutService.reveal(DRIVER, null, "Verifying before a payout retry", ADA);
         assertThat(full.accountNumber()).isEqualTo("0123456789");
-        assertThat(auditRepository.findByTargetIdOrderByCreatedAtAsc(full.id())).singleElement().satisfies(a -> {
+        assertThat(full.revealedAt()).isNotNull();
+        assertThat(full.expiresInSeconds()).isEqualTo(60);
+        assertThat(auditRepository.findByTargetIdOrderByCreatedAtAsc(DRIVER)).as("the driver is the target").singleElement().satisfies(a -> {
             assertThat(a.getAction()).isEqualTo(OpsMoneyAudit.Action.PAYOUT_ACCOUNT_REVEALED);
+            assertThat(a.getTargetType()).isEqualTo(OpsMoneyAudit.TargetType.PAYOUT_ACCOUNT);
             assertThat(a.getActorId()).isEqualTo(ADA.id());
-            assertThat(a.getBeforeState()).doesNotContain("0123456789");
+            assertThat(a.getAfterState()).contains(full.id()).contains("BANK_ACCOUNT_NUMBER").doesNotContain("0123456789");
         });
     }
 
@@ -530,6 +535,53 @@ class OpsMoneyIntegrationTest {
         assertThat(view.refunded()).isEqualByComparingTo("0");
         assertThat(view.duplicateChargeRefunded()).isEqualByComparingTo("507.62");
         assertThat(view.refundable()).isEqualByComparingTo("500.00");
+    }
+
+    /**
+     * B-524EA3 as it is on dev: ₦500 paid, the rider cancelled (CANCELLED_RIDER - the hold was settled as refunded), and the
+     * only refund on record is the ₦507.62 duplicate charge. The figures alone would offer ₦500 again; it must be blocked.
+     */
+    @Test
+    void aFareTheHoldSaysWentBackIsNeverOfferedAgainWhenNoRefundOfItIsRecorded() {
+        String booking = paidBooking("500.00");
+        FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow();
+        hold.setRefunded(true);
+        hold.setRefundDue(new BigDecimal("500.00"));
+        hold.setRefundReason("CANCELLED_RIDER");
+        fareHoldRepository.save(hold);
+        refundRepository.save(Refund.builder().userId(RIDER).bookingId(booking)
+                .paymentTransactionId(paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow().getId())
+                .amount(new BigDecimal("507.62")).status(RefundStatus.REFUNDED).kind(RefundKind.DUPLICATE_CHARGE)
+                .reason("Duplicate payment for a booking already paid").refundedAt(Instant.now()).build());
+
+        RefundableView view = refundService.refundable(booking);
+
+        assertThat(view.paid()).isEqualByComparingTo("500.00");
+        assertThat(view.refunded()).isEqualByComparingTo("0");
+        assertThat(view.duplicateChargeRefunded()).isEqualByComparingTo("507.62");
+        assertThat(view.refundable()).isEqualByComparingTo("0");
+        assertThat(view.blockedReason()).isEqualTo("The fare was already returned on this booking - check Paystack before refunding");
+        assertThatThrownBy(() -> refundService.submit(booking, new ManualRefundRequest(null, "Rider says not refunded", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessage(RefundableView.FARE_ALREADY_RETURNED);
+        assertThatThrownBy(() -> refundService.submit(booking, new ManualRefundRequest(new BigDecimal("100"), "Partial", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessage(RefundableView.FARE_ALREADY_RETURNED);
+    }
+
+    @Test
+    void aRefundedHoldWithItsCancellationRefundOnRecordIsNotBlocked() {
+        String booking = paidBooking("500.00");
+        FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow();
+        hold.setRefunded(true);
+        fareHoldRepository.save(hold);
+        refundRepository.save(Refund.builder().userId(RIDER).bookingId(booking)
+                .paymentTransactionId(paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow().getId())
+                .amount(new BigDecimal("250.00")).status(RefundStatus.REFUNDED).kind(RefundKind.CANCELLATION)
+                .reason("Rider cancelled").refundedAt(Instant.now()).build());
+
+        RefundableView view = refundService.refundable(booking);
+
+        assertThat(view.blockedReason()).isNull();
+        assertThat(view.refundable()).isEqualByComparingTo("250.00");
     }
 
     @Test

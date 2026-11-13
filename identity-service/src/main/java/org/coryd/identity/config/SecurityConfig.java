@@ -49,6 +49,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/auth/signup", "/auth/verify-otp", "/auth/resend-otp",
                                 "/auth/login", "/auth/refresh-token",
+                                // ops console sign-in, second step (the mfa/enroll token is the credential)
+                                "/auth/mfa/verify", "/auth/mfa/enroll/setup", "/auth/mfa/enroll/confirm",
                                 "/auth/forgot-password", "/auth/reset-password",
                                 // an invited ops admin setting their password from the email link
                                 "/auth/ops-invite", "/auth/ops-invite/accept",

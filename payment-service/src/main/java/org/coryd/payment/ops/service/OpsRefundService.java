@@ -94,15 +94,24 @@ public class OpsRefundService implements OpsMoneyExecutor {
         BigDecimal shownPending = pending.min(amountPaid.subtract(shownRefunded));
         BigDecimal shownReserved = reserved.min(amountPaid.subtract(shownRefunded).subtract(shownPending));
         BigDecimal refundable = amountPaid.subtract(shownRefunded).subtract(shownPending).subtract(shownReserved).max(BigDecimal.ZERO);
+        FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
+        // B-524EA3: the hold was settled as refunded (the booking was cancelled and the fare marked as gone back) but no refund
+        // of this payment is on record - only, say, a duplicate-charge refund. The money may already be with the rider through
+        // a path these rows don't show, so offering the fare again risks paying it twice. Nothing is refundable until someone
+        // has checked Paystack (and recorded what they found).
+        String blockedReason = null;
+        if (paid && hold != null && hold.isRefunded() && refunded.add(pending).signum() == 0) {
+            blockedReason = RefundableView.FARE_ALREADY_RETURNED;
+            refundable = BigDecimal.ZERO;
+        }
         if (refunded.add(pending).compareTo(amountPaid) > 0 && paid) {
             log.error("RECONCILE: booking {} has {} refunded/pending against {} paid on {}", bookingId, refunded.add(pending),
                     amountPaid, payment.getGatewayReference());
         }
 
-        FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
         return new RefundableView(bookingId, payment.getId(), payment.getGatewayReference(), payment.getStatus().name(), amountPaid,
                 shownRefunded, shownPending, shownReserved, refundable, duplicates, support.threshold(), payment.getRiderId(),
-                hold == null ? null : hold.getDriverId(), hold == null || hold.isReleased() || hold.isRefunded());
+                hold == null ? null : hold.getDriverId(), hold == null || hold.isReleased() || hold.isRefunded(), blockedReason);
     }
 
     private static BigDecimal sum(List<Refund> refunds, RefundStatus status, boolean ofThisPayment) {
@@ -125,6 +134,9 @@ public class OpsRefundService implements OpsMoneyExecutor {
         }
         requireRefundablePayment(payment);
         RefundableView before = refundable(payment, null);
+        if (before.blockedReason() != null) {
+            throw new BadRequestException(before.blockedReason());
+        }
         if (before.refundable().signum() <= 0) {
             throw new BadRequestException("Nothing is left to refund on this booking - " + OpsRequestSupport.naira(before.paid())
                     + " paid, " + OpsRequestSupport.naira(before.refunded().add(before.refundPending()).add(before.awaitingApproval()))
@@ -160,6 +172,9 @@ public class OpsRefundService implements OpsMoneyExecutor {
                 .orElseThrow(() -> new ResourceNotFoundException("No payment found for this booking"));
         requireRefundablePayment(payment);
         RefundableView before = refundable(payment, request.getId());
+        if (before.blockedReason() != null) {
+            throw new BadRequestException(before.blockedReason());
+        }
         BigDecimal amount = request.getAmount();
         if (amount.compareTo(before.refundable()) > 0) {
             throw new BadRequestException("Only " + OpsRequestSupport.naira(before.refundable())

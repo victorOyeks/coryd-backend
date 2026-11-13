@@ -74,4 +74,10 @@ public class RefreshToken extends BaseEntity {
      */
     @Column(length = 512)
     private String replacedBy;
+
+    /**
+     * Ops console sessions: when the sign-in that started this lineage happened, carried through every rotation - the
+     * absolute session limit counts from here. Null for rider/driver sessions.
+     */
+    private Instant sessionStartedAt;
 }

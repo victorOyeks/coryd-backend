@@ -24,6 +24,7 @@ invite, change a role, deactivate/reactivate), the four ops roles, `GET /me`, an
 | `VERIFICATION_DECIDE` | Approve / reject / request resubmission / override, give tries back, partial-name review, expiry reminders | ✓ | ✓ | | |
 | `MONEY_VIEW` | Transactions, refunds, approvals, payouts, earnings & debt, finance dashboard, pricing, money audit (read) | ✓ | | ✓ | ✓ |
 | `MONEY_MANAGE` | Manual refunds, approve/reject/cancel/retry requests, payout & refund retries, debt adjustments, bank-detail reveal | ✓ | | ✓ | |
+| `VERIFICATION_DECIDE` or `ACCOUNT_MANAGE` | Reveal a full NIN, licence number or date of birth (`POST /users/{id}/reveal`, [privacy.md](privacy.md)) | ✓ | ✓ | | ✓ |
 | `TRIPS_VIEW` | Trips, live, stuck, last-minute time changes, cancellations log | ✓ | | ✓ | ✓ |
 | `TRIPS_MANAGE` | Cancel a trip or booking, resolve a stuck trip | ✓ | | | ✓ |
 | `SAFETY_VIEW` | SOS queue, reports & disputes, ratings (read) | ✓ | | | ✓ |
@@ -39,6 +40,7 @@ invite, change a role, deactivate/reactivate), the four ops roles, `GET /me`, an
 | Method | Path (under `/ops`) | Permission |
 |---|---|---|
 | GET | `/me`, `/metrics/**`, `/team/roles` | `CONSOLE_BASICS` |
+| any | `/me/mfa/**` (own two-factor sign-in, [security.md](security.md)) | `CONSOLE_BASICS` |
 | any | `/stream/**` | `CONSOLE_BASICS` |
 | any | `/team/**` | `TEAM_MANAGE` |
 | any | `/audit/**` | `AUDIT_VIEW` |
@@ -85,9 +87,13 @@ Any ops role. Call it once on load: hide what `permissions` doesn't include. Als
   "email": "fola@coryd.ng",
   "opsRole": "FINANCE",
   "opsRoleLabel": "Finance",
-  "permissions": ["CONSOLE_BASICS", "DIRECTORY_VIEW", "MONEY_MANAGE", "MONEY_VIEW", "TRIPS_VIEW"]
+  "permissions": ["CONSOLE_BASICS", "DIRECTORY_VIEW", "MONEY_MANAGE", "MONEY_VIEW", "TRIPS_VIEW"],
+  "mfaEnabled": true, "mfaRequired": false,
+  "sessionIdleMinutes": 30, "sessionAbsoluteHours": 12, "sessionExpiresAt": "2026-11-13T22:00:00Z"
 }
 ```
+
+The last five fields are phase 7 (two-factor sign-in and session limits, [security.md](security.md) §2).
 
 `opsRole`/`permissions` are what the **token** grants — exactly what the endpoints enforce. `email` is `null` for an
 admin who signs in by phone, or when identity-service can't be reached (the call still answers).
@@ -115,6 +121,7 @@ admin who signs in by phone, or when identity-service can't be reached (the call
   "inviteExpiresAt": "2026-11-16T10:00:00Z",
   "deactivatedAt": null, "deactivationReason": null,
   "createdAt": "2026-11-13T10:00:00Z",
+  "mfaEnabled": false,
   "you": false
 }
 ```
@@ -143,6 +150,7 @@ admin who signs in by phone, or when identity-service can't be reached (the call
 | `POST /team/{adminId}/role` | `{ opsRole, reason? }` | Their access tokens issued so far stop working at once (they carry the old role); the console's next token refresh gets the new role. |
 | `POST /team/{adminId}/deactivate` | `{ reason }` (required) | Console access removed **now**: every session on every device ends within seconds (same `tokens_valid_after` mechanism as sign-out-everywhere), console sign-in refused, pending invites revoked. Their account is **not** suspended. |
 | `POST /team/{adminId}/reactivate` | `{ reason }` (required) | Console access back. The ended sessions stay ended — they sign in again. |
+| `POST /team/{adminId}/mfa/reset` | `{ reason }` (required) | Phase 7: clears their two-factor sign-in and ends every session; they set it up again at next sign-in ([security.md](security.md) §4). |
 
 Every call returns the updated admin object (`data`).
 
@@ -188,7 +196,8 @@ this page.** It calls:
 ```
 
 Returns the same session as `/auth/login` (`activeRole: "OPS_ADMIN"`, plus `opsRole` and `email`) — the admin is signed
-in. Store it as a normal console session.
+in. Store it as a normal console session. **Phase 7:** when two-factor sign-in is required (`OPS_MFA_REQUIRED`), it returns
+the `mfaEnrollmentRequired` step instead ([security.md](security.md) §1.3-1.4).
 
 | Link state | `400` message |
 |---|---|
@@ -208,6 +217,10 @@ sends the email in `phone`. An identifier with `@` is looked up by email (case-i
 `opsRole` and `email` (null for rider/driver sessions). Messages: `Incorrect email or password`; a deactivated admin gets
 `401 Your ops console access has been removed. Ask a super admin to restore it.` (also on token refresh).
 
+**Phase 7:** an admin with two-factor sign-in gets `{ mfaRequired, mfaToken, mfaTokenExpiresAt }` instead of a session,
+and one who must enroll gets `{ mfaEnrollmentRequired, enrollToken, enrollTokenExpiresAt }`. Console access tokens last
+15 minutes, refresh tokens 30 idle minutes / 12 hours in all. See [security.md](security.md).
+
 ---
 
 ## 6. Data and migrations
@@ -218,14 +231,21 @@ sends the email in `phone`. An identifier with `@` is looked up by email (case-i
 - coryd:121: every account already holding `OPS_ADMIN` becomes `SUPER_ADMIN`; an admin created by hand with their email in
   the `phone` column (the console's test admin, `admin@coryd.africa`) gets it copied to `email`.
 - coryd:122: `identity.ops_invites` (token hash, expiry, used/revoked, who sent it).
+- **Two test super admins on dev** (phase 7): the console's test admin `admin@coryd.africa` ("Test Ops Admin") and the dev
+  seeder's account, phone `08000000003`. The seeder's one is now **"Seed Ops Admin"** with email `ops-seed@coryd.local`
+  (set on the next dev start, only if it has no email and nobody else uses that address), so the two can't be confused in
+  the team list or the audit log. Nobody's access changed: both stay `SUPER_ADMIN`, the seed admin still signs in with its
+  phone and the seed password (or now the email). Audit entries it made earlier keep the name recorded then ("Test Ops Admin").
 - Team actions are written to the admin's account history (`identity.account_actions`) as `OPS_ADMIN_INVITED`,
   `OPS_INVITE_RESENT`, `OPS_INVITE_REVOKED`, `OPS_INVITE_ACCEPTED`, `OPS_ROLE_CHANGED` (before/after role),
-  `OPS_ADMIN_DEACTIVATED`, `OPS_ADMIN_REACTIVATED` — the audit log shows them as category `TEAM`.
+  `OPS_ADMIN_DEACTIVATED`, `OPS_ADMIN_REACTIVATED` — the audit log shows them as category `TEAM`. Phase 7 adds
+  `MFA_ENABLED`, `MFA_DISABLED`, `MFA_RESET`, `RECOVERY_CODE_USED`, `MFA_RECOVERY_CODES_REGENERATED` (also `TEAM`).
 
 ## 7. Known limits
 
-- Roles are enforced in **ops-service**. Some profile-service verification endpoints are also reachable directly through
-  the gateway with any `OPS_ADMIN` token (they check `OPS_ADMIN`, not the ops role). Closing that is a follow-up.
-- The live stream (`GET /stream`) carries SOS alerts to every ops role.
+- Roles are enforced in **ops-service** and, since phase 7, in the owning services too: profile- and payment-service's
+  ops-facing paths need the internal key (ops-service) or an ops role with the permission ([security.md](security.md) §7).
+- The live stream (`GET /stream`) carries SOS alerts to every ops role. Since phase 7 it closes (`bye`, `SESSION_ENDED`)
+  within seconds of a deactivation or role change.
 - Invited admins sign in by email only; giving console access to an existing rider/driver phone account isn't supported
   through invites.

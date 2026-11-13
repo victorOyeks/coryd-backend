@@ -58,6 +58,13 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    /** Whether the request carries this service's internal API key - a call from another CoRyd service. */
+    public static boolean hasValidKey(jakarta.servlet.http.HttpServletRequest request, String expectedKey) {
+        String provided = request.getHeader(HEADER);
+        return provided != null && expectedKey != null && !expectedKey.isEmpty() && MessageDigest.isEqual(
+                provided.getBytes(StandardCharsets.UTF_8), expectedKey.getBytes(StandardCharsets.UTF_8));
+    }
+
     private boolean matchesInternalOnlyPattern(String path) {
         return internalOnlyPatterns.stream().anyMatch(pattern -> PATH_MATCHER.match(pattern, path));
     }

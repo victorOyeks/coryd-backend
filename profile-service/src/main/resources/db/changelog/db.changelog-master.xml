@@ -43,5 +43,6 @@
     <include file="db/changelog/032-directory-identity-and-last-trip.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/033-job-runs.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/033-ops-audit-feed.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/034-phase7-privacy.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

@@ -26,6 +26,8 @@ import org.coryd.identity.dto.DeviceInfo;
 import org.coryd.identity.dto.DeviceResponse;
 import org.coryd.identity.dto.ForgotPasswordRequest;
 import org.coryd.identity.dto.LoginRequest;
+import org.coryd.identity.dto.LoginResult;
+import org.coryd.identity.security.OpsSecurityPolicy;
 import org.coryd.identity.dto.OnboardingStatusResponse;
 import org.coryd.identity.dto.RefreshTokenRequest;
 import org.coryd.identity.dto.ResendOtpRequest;
@@ -87,6 +89,8 @@ public class AuthService {
     private final Environment environment;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ProfileServiceClient profileServiceClient;
+    private final OpsSecurityPolicy opsSecurityPolicy;
+    private final MfaChallengeService mfaChallengeService;
 
     @Transactional
     public void signup(SignupRequest request) {
@@ -184,7 +188,12 @@ public class AuthService {
             userRepository.save(user);
         }
 
-        UserRole role = user.getRoles().iterator().next();
+        // An OTP is one factor. It never opens an ops console session where two-factor sign-in applies - a rider or driver
+        // role is preferred, and an ops-only account is sent to the console's own sign-in.
+        UserRole role = user.getRoles().stream().filter(r -> r != UserRole.OPS_ADMIN).findFirst().orElse(UserRole.OPS_ADMIN);
+        if (role == UserRole.OPS_ADMIN && secondFactorApplies(user)) {
+            throw new BadRequestException(OPS_SIGN_IN_ONLY);
+        }
 
         return issueTokens(user, role, request.device());
     }
@@ -272,7 +281,7 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResponse login(LoginRequest request) {
+    public LoginResult login(LoginRequest request) {
         UserRole activeRole = request.roleOrDefault();
 
         // Ops admins sign in to the console with their email, sent in the same "phone" field.
@@ -293,7 +302,35 @@ public class AuthService {
             throw new RoleNotHeldException("You don't have a " + activeRole + " account - please sign up first", user.getRoles());
         }
 
+        if (activeRole == UserRole.OPS_ADMIN) {
+            return opsSignIn(user);
+        }
         return issueTokens(user, activeRole, request.device());
+    }
+
+    public static final String OPS_SIGN_IN_ONLY = "Sign in to the ops console with your email, password and two-factor code";
+
+    /**
+     * An ops admin whose password (or invite) checked out: the session - or, with two-factor sign-in on, the step that asks
+     * for a code ({@link org.coryd.identity.dto.mfa.MfaChallengeResponse}); with it required and not set up, enrollment
+     * ({@link org.coryd.identity.dto.mfa.MfaEnrollmentResponse}). Riders and drivers never come here.
+     */
+    @Transactional
+    public LoginResult opsSignIn(User user) {
+        requireActive(user);
+        requireOpsAccess(user);
+        if (user.getMfaEnabledAt() != null) {
+            return mfaChallengeService.startLogin(user);
+        }
+        if (opsSecurityPolicy.mfaRequired()) {
+            return mfaChallengeService.startEnroll(user);
+        }
+        return issueTokens(user, UserRole.OPS_ADMIN, null, null, null);
+    }
+
+    /** Whether an OPS_ADMIN session for this account needs a second factor (it's on for them, or required for everyone). */
+    private boolean secondFactorApplies(User user) {
+        return user.getMfaEnabledAt() != null || opsSecurityPolicy.mfaRequired();
     }
 
     /** By email, ignoring case - and an admin created by hand with the email in the phone column (before emails existed). */
@@ -302,10 +339,10 @@ public class AuthService {
         return userRepository.findByEmail(normalized).or(() -> userRepository.findByPhone(email.trim()));
     }
 
-    /** A console session for an ops admin who just set their password from an invite (OpsTeamService). */
+    /** A console session once every factor has been checked (OpsMfaService) - a new session, so a new absolute limit. */
     @Transactional
     public AuthResponse opsSession(User user) {
-        return issueTokens(user, UserRole.OPS_ADMIN, null, null);
+        return issueTokens(user, UserRole.OPS_ADMIN, null, null, null);
     }
 
     /** In-app "switch to Driver mode" (or vice versa) for the first time: attach the role to the already-authenticated account, no OTP needed. */
@@ -326,7 +363,7 @@ public class AuthService {
         userRepository.save(user);
 
         // Same handset, new role - keep the binding rather than handing back an unbound session.
-        return issueTokens(user, role, registerDeviceId(user.getId(), request.deviceId()), null);
+        return issueTokens(user, role, registerDeviceId(user.getId(), request.deviceId()), null, null);
     }
 
     /** In-app mode toggle for a role already held - re-scopes the session without granting anything new, so no OPS_ADMIN guard is needed here. */
@@ -339,8 +376,12 @@ public class AuthService {
         if (!user.getRoles().contains(role)) {
             throw new BadRequestException("You don't have a " + role + " account - add it first");
         }
+        // A rider/driver session can't become an ops console session without the console's own sign-in when two-factor applies.
+        if (role == UserRole.OPS_ADMIN && secondFactorApplies(user)) {
+            throw new BadRequestException(OPS_SIGN_IN_ONLY);
+        }
 
-        return issueTokens(user, role, registerDeviceId(user.getId(), request.deviceId()), null);
+        return issueTokens(user, role, registerDeviceId(user.getId(), request.deviceId()), null, null);
     }
 
     public OnboardingStatusResponse onboardingStatus(CoRydUserDetails principal, String bearerToken) {
@@ -393,6 +434,10 @@ public class AuthService {
             userRepository.findById(existing.getUserId()).ifPresent(AuthService::requireActive);
             return handleSpentToken(existing, request.deviceId());
         }
+        if (existing.getActiveRole() == UserRole.OPS_ADMIN && opsSessionOver(existing)) {
+            // Ops console: idle too long, or past the absolute limit since sign-in. 401 - the console signs the admin out.
+            throw new UnauthorizedException(OpsSecurityPolicy.SESSION_TIMED_OUT);
+        }
         if (existing.getExpiresAt().isBefore(Instant.now())) {
             throw new BadRequestException("Refresh token has expired");
         }
@@ -401,7 +446,8 @@ public class AuthService {
         User user = userRepository.findById(existing.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account no longer exists"));
 
-        AuthResponse response = issueTokens(user, existing.getActiveRole(), existing.getDeviceId(), existing.getFamilyId());
+        AuthResponse response = issueTokens(user, existing.getActiveRole(), existing.getDeviceId(), existing.getFamilyId(),
+                existing.getSessionStartedAt());
 
         existing.setRevoked(true);
         existing.setRotatedAt(Instant.now());
@@ -410,6 +456,15 @@ public class AuthService {
 
         touchDevice(existing.getUserId(), existing.getDeviceId());
         return response;
+    }
+
+    /** An ops console refresh token past its idle expiry (expiresAt slides with each refresh) or its session's absolute limit. */
+    private boolean opsSessionOver(RefreshToken token) {
+        Instant now = opsSecurityPolicy.now();
+        if (!now.isBefore(token.getExpiresAt())) {
+            return true;
+        }
+        return token.getSessionStartedAt() != null && !now.isBefore(token.getSessionStartedAt().plus(opsSecurityPolicy.absolute()));
     }
 
     /**
@@ -524,23 +579,34 @@ public class AuthService {
 
     private AuthResponse issueTokens(User user, UserRole activeRole, DeviceInfo device) {
         requireActive(user);
-        return issueTokens(user, activeRole, registerDevice(user.getId(), device), null);
+        return issueTokens(user, activeRole, registerDevice(user.getId(), device), null, null);
     }
 
     /**
      * @param familyId null for a genuine sign-in, which starts a new family; carried through on
      *                 rotation so every token descended from that sign-in stays identifiable as
      *                 one lineage.
+     * @param sessionStartedAt ops console sessions: when the lineage's sign-in happened (null = now, a new session).
+     *                 An ops refresh token lives the idle timeout (each refresh slides it) but never past the absolute
+     *                 limit counted from here; riders and drivers keep 30 days.
      */
-    private AuthResponse issueTokens(User user, UserRole activeRole, String deviceId, String familyId) {
+    private AuthResponse issueTokens(User user, UserRole activeRole, String deviceId, String familyId, Instant sessionStartedAt) {
         requireActive(user);
+        Instant refreshExpiresAt = Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS);
+        Instant sessionStart = null;
+        Instant sessionExpiresAt = null;
         if (activeRole == UserRole.OPS_ADMIN) {
             requireOpsAccess(user);
             user.setLastSeenAt(Instant.now());
             userRepository.save(user);
+            Instant now = opsSecurityPolicy.now();
+            sessionStart = sessionStartedAt == null ? now : sessionStartedAt;
+            sessionExpiresAt = sessionStart.plus(opsSecurityPolicy.absolute());
+            Instant idleEnd = now.plus(opsSecurityPolicy.idle());
+            refreshExpiresAt = idleEnd.isBefore(sessionExpiresAt) ? idleEnd : sessionExpiresAt;
         }
         String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(), activeRole,
-                opsRoleFor(user, activeRole));
+                opsRoleFor(user, activeRole), sessionExpiresAt);
 
         String refreshTokenValue = UUID.randomUUID().toString();
         refreshTokenRepository.save(RefreshToken.builder()
@@ -549,22 +615,25 @@ public class AuthService {
                 .activeRole(activeRole)
                 .deviceId(deviceId)
                 .familyId(familyId == null ? UUID.randomUUID().toString() : familyId)
-                .expiresAt(Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS))
+                .expiresAt(refreshExpiresAt)
+                .sessionStartedAt(sessionStart)
                 .build());
 
-        return buildAuthResponse(user, activeRole, accessToken, refreshTokenValue,
-                Instant.now().plus(REFRESH_TOKEN_TTL_DAYS, ChronoUnit.DAYS));
+        return buildAuthResponse(user, activeRole, accessToken, refreshTokenValue, refreshExpiresAt, sessionExpiresAt);
     }
 
     /** A new access token against an existing, unchanged refresh token - the retry path in {@link #handleSpentToken}. */
     private AuthResponse issueAccessTokenFor(User user, RefreshToken refreshToken) {
+        Instant sessionExpiresAt = null;
         if (refreshToken.getActiveRole() == UserRole.OPS_ADMIN) {
             requireOpsAccess(user);
+            sessionExpiresAt = refreshToken.getSessionStartedAt() == null ? null
+                    : refreshToken.getSessionStartedAt().plus(opsSecurityPolicy.absolute());
         }
         String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(),
-                refreshToken.getActiveRole(), opsRoleFor(user, refreshToken.getActiveRole()));
+                refreshToken.getActiveRole(), opsRoleFor(user, refreshToken.getActiveRole()), sessionExpiresAt);
         return buildAuthResponse(user, refreshToken.getActiveRole(), accessToken, refreshToken.getToken(),
-                refreshToken.getExpiresAt());
+                refreshToken.getExpiresAt(), sessionExpiresAt);
     }
 
     /** Every way in - login, OTP, refresh, role add/switch - ends here, so a suspended account gets no tokens at all. */
@@ -589,17 +658,19 @@ public class AuthService {
     }
 
     private AuthResponse buildAuthResponse(User user, UserRole activeRole, String accessToken,
-                                           String refreshTokenValue, Instant refreshExpiresAt) {
+                                           String refreshTokenValue, Instant refreshExpiresAt, Instant sessionExpiresAt) {
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
-        long expiresIn = jwtUtil.getExpirationMs() / 1000;
-        long refreshExpiresIn = Math.max(0, Duration.between(Instant.now(), refreshExpiresAt).getSeconds());
         // fullName carries only the first name - the key stays for the clients already bound to it,
         // with firstName/lastName alongside it for anything that needs the surname on its own.
         OpsRole opsRole = opsRoleFor(user, activeRole);
+        long expiresIn = jwtUtil.expirationMsFor(activeRole, opsRole) / 1000;
+        Instant now = activeRole == UserRole.OPS_ADMIN ? opsSecurityPolicy.now() : Instant.now();
+        long refreshExpiresIn = Math.max(0, Duration.between(now, refreshExpiresAt).getSeconds());
         return new AuthResponse(user.getId(), user.getFirstName(), user.getFirstName(), user.getLastName(),
                 user.getPhone(), activeRole.name(), roleNames,
                 accessToken, expiresIn, refreshTokenValue, refreshExpiresIn,
-                opsRole == null ? null : opsRole.name(), activeRole == UserRole.OPS_ADMIN ? user.getEmail() : null);
+                opsRole == null ? null : opsRole.name(), activeRole == UserRole.OPS_ADMIN ? user.getEmail() : null,
+                sessionExpiresAt);
     }
 
     /** Everywhere the user is signed in, newest first. */

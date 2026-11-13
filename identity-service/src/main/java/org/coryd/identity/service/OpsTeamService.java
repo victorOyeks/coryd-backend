@@ -10,7 +10,7 @@ import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OpsAdminInvitedEvent;
 import org.coryd.common.util.Names;
-import org.coryd.identity.dto.AuthResponse;
+import org.coryd.identity.dto.LoginResult;
 import org.coryd.identity.dto.RecordAccountActionRequest.Change;
 import org.coryd.identity.dto.ops.AcceptOpsInviteRequest;
 import org.coryd.identity.dto.ops.ChangeOpsRoleRequest;
@@ -181,9 +181,12 @@ public class OpsTeamService {
                 invite.getCreatedByName(), invite.getExpiresAt());
     }
 
-    /** Sets the password from the invite (once) and signs the admin in to the console. */
+    /**
+     * Sets the password from the invite (once) and signs the admin in to the console - or, when two-factor sign-in is
+     * required (OPS_MFA_REQUIRED), hands back the enrollment step instead, exactly as sign-in does.
+     */
     @Transactional
-    public AuthResponse accept(AcceptOpsInviteRequest request) {
+    public LoginResult accept(AcceptOpsInviteRequest request) {
         if (!request.password().equals(request.confirmPassword())) {
             throw new BadRequestException("Password and confirmation do not match");
         }
@@ -198,7 +201,7 @@ public class OpsTeamService {
         accountActionService.record(user.getId(), AccountActionType.OPS_INVITE_ACCEPTED, user.getId(),
                 Names.join(user.getFirstName(), user.getLastName()), null, null);
         log.info("Ops admin {} accepted their invite", user.getId());
-        return authService.opsSession(user);
+        return authService.opsSignIn(user);
     }
 
     // ---- role, deactivate, reactivate --------------------------------------------------------------------------------
@@ -332,7 +335,7 @@ public class OpsTeamService {
     }
 
     /** The acting admin must be an active SUPER_ADMIN right now - not only on their (possibly older) token. */
-    private User requireSuperAdmin(String actorId) {
+    User requireSuperAdmin(String actorId) {
         User actor = actorId == null ? null : userRepository.findById(actorId).orElse(null);
         if (actor == null || !actor.getRoles().contains(UserRole.OPS_ADMIN) || !isActiveAdmin(actor)
                 || OpsRole.effective(actor.getOpsRole()) != OpsRole.SUPER_ADMIN) {
@@ -341,7 +344,7 @@ public class OpsTeamService {
         return actor;
     }
 
-    private User admin(String userId) {
+    User admin(String userId) {
         User user = userRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("Admin not found"));
         if (!user.getRoles().contains(UserRole.OPS_ADMIN)) {
             throw new ResourceNotFoundException("Admin not found");
@@ -392,15 +395,15 @@ public class OpsTeamService {
         return new OpsAdminView(u.getId(), u.getFirstName(), u.getLastName(), Names.join(u.getFirstName(), u.getLastName()),
                 u.getEmail(), u.getPhone(), role, role.label(), role.permissions(), status, u.getLastSeenAt(), u.getInvitedAt(),
                 u.getInvitedBy(), u.getInvitedByName(), invitePending && latest != null ? latest.getExpiresAt() : null,
-                u.getOpsDeactivatedAt(), u.getOpsDeactivationReason(), u.getCreatedAt());
+                u.getOpsDeactivatedAt(), u.getOpsDeactivationReason(), u.getCreatedAt(), u.getMfaEnabledAt() != null);
     }
 
-    private static String display(User user) {
+    static String display(User user) {
         String name = Names.join(user.getFirstName(), user.getLastName());
         return name == null || name.isBlank() ? (user.getEmail() != null ? user.getEmail() : "This admin") : name;
     }
 
-    private static String name(User actor, String given) {
+    static String name(User actor, String given) {
         if (given != null && !given.isBlank()) {
             return given.trim();
         }

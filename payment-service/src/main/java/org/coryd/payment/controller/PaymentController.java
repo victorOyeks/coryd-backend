@@ -42,6 +42,7 @@ public class PaymentController {
 
     private final PaymentService paymentService;
     private final PaymentHistoryService paymentHistoryService;
+    private final org.coryd.payment.security.BookingPaymentAccess bookingPaymentAccess;
     private final PaymentGatewayClient gatewayClient;
     private final ObjectMapper objectMapper;
 
@@ -62,7 +63,11 @@ public class PaymentController {
     }
 
     @GetMapping("/bookings/{bookingId}")
-    public ApiResponse<PaymentSummaryResponse> byBooking(@PathVariable String bookingId) {
+    public ApiResponse<PaymentSummaryResponse> byBooking(@PathVariable String bookingId,
+                                                        @AuthenticationPrincipal CoRydUserDetails principal,
+                                                        jakarta.servlet.http.HttpServletRequest request) {
+        // the rider who booked, the trip's driver, another service (internal key), or ops with MONEY_VIEW - else 403
+        bookingPaymentAccess.requireCanRead(bookingId, principal, request);
         return ApiResponse.ok(paymentService.getByBooking(bookingId));
     }
 

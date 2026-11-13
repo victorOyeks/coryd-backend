@@ -118,17 +118,28 @@ public class OpsPayoutService implements OpsMoneyExecutor {
         return account(driverId, false);
     }
 
-    /** The full account number, once, recorded against the admin who asked for it. */
+    /** Same words as the ID reveal (POST /ops/users/{id}/reveal) - docs/ops-console/privacy.md. */
+    static final String NEED_A_REASON = "Say why you need to see it - it goes in the audit log";
+    static final int REVEAL_EXPIRES_IN_SECONDS = 60;
+
+    /**
+     * The full account number, once, recorded against the admin who asked for it: PAYOUT_ACCOUNT_REVEALED with the driver as
+     * the target (so it shows on the driver's audit trail) and the account, field and masked number in after.
+     */
     @Transactional
     public PayoutAccountView.Account reveal(String driverId, String recipientId, String reason, OpsActor actor) {
+        if (reason == null || reason.isBlank()) {
+            throw new BadRequestException(NEED_A_REASON);
+        }
         String why = OpsRequestSupport.requireReason(reason);
         List<PayoutRecipient> accounts = payoutRecipientRepository.findByDriverIdOrderByCreatedAtDesc(driverId);
         PayoutRecipient recipient = accounts.stream()
                 .filter(a -> recipientId == null || recipientId.isBlank() ? a.isDefault() : a.getId().equals(recipientId))
                 .findFirst()
                 .orElseThrow(() -> new ResourceNotFoundException("This driver has no such payout account"));
-        audit.record(actor, OpsMoneyAudit.Action.PAYOUT_ACCOUNT_REVEALED, OpsMoneyAudit.TargetType.PAYOUT_ACCOUNT, recipient.getId(), null,
-                null, Map.of("driverId", driverId, "accountNumber", mask(recipient.getAccountNumber())), null, why);
+        audit.record(actor, OpsMoneyAudit.Action.PAYOUT_ACCOUNT_REVEALED, OpsMoneyAudit.TargetType.PAYOUT_ACCOUNT, driverId, null,
+                null, null, Map.of("driverId", driverId, "recipientId", recipient.getId(), "field", "BANK_ACCOUNT_NUMBER",
+                        "shownAs", mask(recipient.getAccountNumber())), why);
         return toAccount(recipient, true);
     }
 
@@ -241,14 +252,13 @@ public class OpsPayoutService implements OpsMoneyExecutor {
     private static PayoutAccountView.Account toAccount(PayoutRecipient r, boolean full) {
         return new PayoutAccountView.Account(r.getId(), r.getBankName(), r.getBankCode(), r.getAccountName(), mask(r.getAccountNumber()),
                 full ? r.getAccountNumber() : null, r.isDefault(), r.getGatewaySubaccountCode() != null, r.getGatewaySubaccountCode(),
-                r.getGatewaySplitPercentage(), r.getGatewaySettlementSchedule(), r.getCreatedAt());
+                r.getGatewaySplitPercentage(), r.getGatewaySettlementSchedule(), r.getCreatedAt(), full ? Instant.now() : null,
+                full ? REVEAL_EXPIRES_IN_SECONDS : null);
     }
 
+    /** "••••••6789" - PiiMask, like every masked identifier in the console. */
     static String mask(String number) {
-        if (number == null || number.length() <= 4) {
-            return number == null ? null : "****";
-        }
-        return "*".repeat(number.length() - 4) + number.substring(number.length() - 4);
+        return org.coryd.common.util.PiiMask.trailing(number);
     }
 
     private static String normalise(String name) {

@@ -13,5 +13,7 @@ public enum OpsAuditCategory {
     /** trip-service ops_audit_log: SOS, reports & disputes, ratings. */
     SAFETY,
     /** payment-service ops_money_audit: refunds, approvals, payouts, debt, bank-detail reveals. */
-    MONEY
+    MONEY,
+    /** profile-service pii_reveal_log: an ops admin revealed a full NIN, licence number or date of birth (PII_REVEALED). */
+    PRIVACY
 }

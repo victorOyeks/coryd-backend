@@ -30,6 +30,15 @@ public class TokenRevocationRegistry {
     }
 
     private final Map<String, State> states = new ConcurrentHashMap<>();
+    private final java.util.List<java.util.function.Consumer<String>> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Told the user id after each change is merged (any feed) - e.g. ops-service closes that admin's open live streams. A
+     * listener must be quick and must not throw; it runs on the feeding thread.
+     */
+    public void addListener(java.util.function.Consumer<String> listener) {
+        listeners.add(listener);
+    }
 
     public void apply(UserTokensRevokedEvent event) {
         if (event == null || event.getUserId() == null) {
@@ -47,6 +56,13 @@ public class TokenRevocationRegistry {
                     newer ? incoming.suspended() : old.suspended(),
                     Math.max(old.stateAtMs(), incoming.stateAtMs()));
         });
+        for (var listener : listeners) {
+            try {
+                listener.accept(userId);
+            } catch (RuntimeException e) {
+                log.warn("Token revocation listener failed for {}: {}", userId, e.getMessage());
+            }
+        }
     }
 
     /**

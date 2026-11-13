@@ -139,6 +139,6 @@ public class DriverVerificationOpsService {
         IdentityServiceClient.Contact contact = identityServiceClient.contacts(List.of(driverId)).get(driverId);
         return status.withDriver(new VerificationStatusResponse.DriverDetails(driverId, TripOpsService.ref("D", driverId),
                 d == null ? null : d.firstName(), d == null ? null : d.lastName(), contact == null ? null : contact.phone(),
-                d == null ? null : d.photoUrl(), d == null ? null : d.licenceNumber(), d == null ? null : d.dateOfBirth()));
+                d == null ? null : d.photoUrl(), d == null ? null : d.masked(), d == null ? null : d.year(), null, null));
     }
 }

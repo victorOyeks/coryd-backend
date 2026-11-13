@@ -36,4 +36,9 @@ public interface UserRepository extends JpaRepository<User, String> {
     /** Everyone a service must refuse some tokens for - what the revocation snapshot is made of. */
     @org.springframework.data.jpa.repository.Query("select u from User u where u.tokensValidAfter is not null or u.active = false")
     java.util.List<User> findWithRevokedTokens();
+
+    /** Locked while a second-factor code is checked, so the same code can't be accepted twice at once. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select u from User u where u.id = :id")
+    java.util.Optional<User> lockById(@org.springframework.data.repository.query.Param("id") String id);
 }

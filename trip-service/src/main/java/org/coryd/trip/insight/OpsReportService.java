@@ -43,30 +43,35 @@ public class OpsReportService {
         this.maxCsvRows = rows;
     }
 
+    /**
+     * columnTypes: one per column (integer, decimal, money, date, string, boolean - ReportColumnType), and every row value
+     * matches it. truncated: the range has more rows than the CSV export holds (MAX_CSV_ROWS) - narrow it. limited: this
+     * preview shows fewer rows than the range has (the limit applied) - the CSV has them all.
+     */
     public record Preview(String report, String title, LocalDate from, LocalDate to, String timezone, List<String> columns,
-                          List<List<Object>> rows, long totalRows, boolean truncated) {
+                          List<String> columnTypes, List<List<Object>> rows, long totalRows, boolean truncated, boolean limited) {
     }
 
     public Preview preview(TripReports report, LocalDate from, LocalDate to, int limit) {
         LagosRange range = LagosRange.of(from, to, 30);
         int max = Math.max(1, Math.min(limit, MAX_PREVIEW_ROWS));
         MapSqlParameterSource p = params(range).addValue("limit", max);
-        int columns = report.columns().size();
+        List<ReportColumnType> types = report.columns().stream().map(ReportColumnType::of).toList();
         long[] total = {0};
         List<List<Object>> rows;
         if (report.inIndexOrder()) {
             total[0] = count(report, range);
-            rows = jdbc.query("select * from (" + report.sql() + ") q limit :limit", p, (rs, i) -> row(rs, columns));
+            rows = jdbc.query("select * from (" + report.sql() + ") q limit :limit", p, (rs, i) -> row(rs, types));
         } else {
             // The total rides along on every row (a window over the whole result, before the limit), so the report runs once,
             // not once to count and again for the rows.
             rows = jdbc.query("select q.*, count(*) over () from (" + report.sql() + ") q limit :limit", p, (rs, i) -> {
-                total[0] = rs.getLong(columns + 1);
-                return row(rs, columns);
+                total[0] = rs.getLong(types.size() + 1);
+                return row(rs, types);
             });
         }
-        return new Preview(report.slug(), report.title(), range.from(), range.to(), LagosRange.LAGOS.getId(), report.columns(), rows, total[0],
-                total[0] > rows.size());
+        return new Preview(report.slug(), report.title(), range.from(), range.to(), LagosRange.LAGOS.getId(), report.columns(),
+                ReportColumnType.labels(report.columns()), rows, total[0], total[0] > maxCsvRows, total[0] > rows.size());
     }
 
     public long count(TripReports report, LagosRange range) {
@@ -85,6 +90,7 @@ public class OpsReportService {
      */
     public int csv(TripReports report, LagosRange range, Writer out, LongConsumer total) {
         int columns = report.columns().size();
+        List<ReportColumnType> types = report.columns().stream().map(ReportColumnType::of).toList();
         MapSqlParameterSource p = params(range).addValue("limit", maxCsvRows);
         boolean counted = report.inIndexOrder();
         if (counted) {
@@ -102,7 +108,7 @@ public class OpsReportService {
                         }
                         out.write(Csv.line(new ArrayList<>(report.columns())));
                     }
-                    out.write(Csv.line(row(rs, columns)));
+                    out.write(Csv.line(row(rs, types).stream().map(ReportColumnType::cell).toList()));
                     written[0]++;
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
@@ -125,16 +131,15 @@ public class OpsReportService {
         return new MapSqlParameterSource().addValue("from", Timestamp.from(range.since())).addValue("to", Timestamp.from(range.until()));
     }
 
-    private static List<Object> row(ResultSet rs, int columns) throws SQLException {
-        List<Object> row = new ArrayList<>(columns);
-        for (int c = 1; c <= columns; c++) {
+    /** Each value as its column's declared type (ReportColumnType.convert). */
+    private static List<Object> row(ResultSet rs, List<ReportColumnType> types) throws SQLException {
+        List<Object> row = new ArrayList<>(types.size());
+        for (int c = 1; c <= types.size(); c++) {
             Object value = rs.getObject(c);
-            if (value instanceof BigDecimal d) {
-                value = d.stripTrailingZeros().toPlainString();
-            } else if (value instanceof Double d) {
-                value = BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
+            if (value instanceof Double d) {
+                value = BigDecimal.valueOf(d);
             }
-            row.add(value);
+            row.add(types.get(c - 1).convert(value));
         }
         return row;
     }

@@ -420,7 +420,7 @@ Returns one request, in the same shape. An unknown id gets `404 Account deletion
 
 ## 8. How "ends every session within seconds" works
 
-Access tokens last 24 hours. Revoking a refresh token alone would let an issued access token keep working on other services until it expired. Instead:
+Access tokens last 24 hours (ops console tokens: 15 minutes since phase 7, [security.md](security.md) §2). Revoking a refresh token alone would let an issued access token keep working on other services until it expired. Instead:
 
 1. **identity-service** keeps a per-user cut-off, `tokens_valid_after`.
    - It's set when ops suspends the account, signs it out everywhere, or deletes it.
@@ -441,6 +441,9 @@ Access tokens last 24 hours. Revoking a refresh token alone would let an issued 
 
 **Also covered:**
 - trip-service's WebSocket sign-in (`JwtUtil.isTokenValid`).
+- ops-service's live stream (phase 7): an open stream of an admin whose sessions end gets `bye` `{ reason: "SESSION_ENDED" }`
+  and is closed within seconds; no new stream token is issued for the ended session ([security.md](security.md) §6).
+- Phase 7 adds a two-factor reset (`MFA_RESET`) as one more way a super admin ends an ops admin's sessions.
 - Public endpoints (sign-in, refresh) still work for a request carrying a dead token. The refusal applies only where authentication is needed.
 
 **Why not a check against identity on every request?** It would add a network call to every request on every service, and make identity a single point of failure. **Why not shorter-lived access tokens?** They'd still leave a window of minutes, and would mean far more refresh traffic from the apps.

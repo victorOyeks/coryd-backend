@@ -25,12 +25,20 @@ public class OpsStreamKafkaConfig {
 
     public static final String FACTORY = "opsStreamListenerFactory";
 
+    /** This instance's own consumer group: the prefix plus a random suffix (OpsStreamGroupJanitor deletes it on shutdown). */
+    public record StreamGroup(String prefix, String id) {
+    }
+
+    @Bean
+    public StreamGroup opsStreamGroup(@Value("${ops.stream.group-prefix:coryd-ops-stream}") String groupPrefix) {
+        return new StreamGroup(groupPrefix + "-", groupPrefix + "-" + UUID.randomUUID().toString().substring(0, 8));
+    }
+
     @Bean(name = FACTORY)
     public ConcurrentKafkaListenerContainerFactory<String, Object> opsStreamListenerFactory(
-            @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
-            @Value("${ops.stream.group-prefix:coryd-ops-stream}") String groupPrefix) {
+            @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers, StreamGroup streamGroup) {
         Map<String, Object> config = KafkaConsumerDefaults.consumerConfig(bootstrapServers, "latest");
-        config.put(ConsumerConfig.GROUP_ID_CONFIG, groupPrefix + "-" + UUID.randomUUID().toString().substring(0, 8));
+        config.put(ConsumerConfig.GROUP_ID_CONFIG, streamGroup.id());
         ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(new DefaultKafkaConsumerFactory<>(config));
         KafkaConsumerDefaults.harden(factory);

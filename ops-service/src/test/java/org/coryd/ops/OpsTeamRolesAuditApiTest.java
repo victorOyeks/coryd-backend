@@ -136,6 +136,7 @@ class OpsTeamRolesAuditApiTest {
                 new Call(() -> postJson("/bookings/b-1/cancel", "{\"reason\":\"x\"}"), List.of(S, P)),
                 new Call(() -> postJson("/users/" + RIDER + "/suspend", "{\"reason\":\"x\"}"), List.of(S, P)),
                 new Call(() -> delete("/users/" + RIDER), List.of(S)),
+                new Call(() -> postJson("/users/" + RIDER + "/reveal", "{\"field\":\"NIN\",\"reason\":\"x\"}"), List.of(S, V, P)),
                 new Call(() -> get("/riders"), List.of(S, V, F, P)),
                 new Call(() -> get("/drivers/verification/queue"), List.of(S, V)),
                 new Call(() -> postJson("/identity-verification/people/" + RIDER + "/approve", "{\"note\":\"x\"}"), List.of(S, V)),
@@ -219,6 +220,73 @@ class OpsTeamRolesAuditApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.opsRole").value("SUPPORT"))
                 .andExpect(jsonPath("$.data.email").doesNotExist());
+    }
+
+    // ---- phase 7: two-factor sign-in and session fields --------------------------------------------------------------
+
+    @Test
+    void meCarriesTwoFactorStateAndTheSessionLimits() throws Exception {
+        replies.put("/identity/internal/ops-admins/fin-2", new Reply(200, "{\"data\":{\"userId\":\"fin-2\",\"email\":\"f@coryd.ng\",\"mfaEnabled\":true}}"));
+        replies.put("/identity/internal/ops-admins/fin-2/mfa", new Reply(200,
+                "{\"data\":{\"mfaEnabled\":true,\"mfaRequired\":false,\"sessionIdleMinutes\":30,\"sessionAbsoluteHours\":12}}"));
+        Instant sessionEnd = Instant.parse("2026-11-13T22:00:00Z");
+        String token = "Bearer " + jwtUtil.generateToken("fin-2", null, "Ada", "Admin", UserRole.OPS_ADMIN, OpsRole.FINANCE, sessionEnd);
+        mockMvc.perform(get("/me").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mfaEnabled").value(true))
+                .andExpect(jsonPath("$.data.mfaRequired").value(false))
+                .andExpect(jsonPath("$.data.sessionIdleMinutes").value(30))
+                .andExpect(jsonPath("$.data.sessionAbsoluteHours").value(12))
+                .andExpect(jsonPath("$.data.sessionExpiresAt").value("2026-11-13T22:00:00Z"));
+
+        // identity down: the token's answer and the configured limits, two-factor state unknown
+        replies.put("/identity/internal/ops-admins/sup-2", new Reply(503, "{\"message\":\"down\"}"));
+        mockMvc.perform(get("/me").header("Authorization", bearer("sup-2", OpsRole.SUPPORT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mfaEnabled").doesNotExist())
+                .andExpect(jsonPath("$.data.sessionIdleMinutes").value(30))
+                .andExpect(jsonPath("$.data.sessionAbsoluteHours").value(12));
+    }
+
+    @Test
+    void everyOpsRoleManagesTheirOwnTwoFactorAndOnlySuperAdminsResetSomeoneElses() throws Exception {
+        String finance = bearer("fin-3", OpsRole.FINANCE);
+        mockMvc.perform(post("/me/mfa/setup").header("Authorization", finance)).andExpect(status().isOk());
+        assertThat(requests.getLast().path()).isEqualTo("/identity/internal/ops-admins/fin-3/mfa/setup");
+        mockMvc.perform(postJson("/me/mfa/enable", "{}").header("Authorization", finance))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("code: Enter the 6-digit code from your app"));
+        mockMvc.perform(postJson("/me/mfa/enable", "{\"code\":\"123456\"}").header("Authorization", finance)).andExpect(status().isOk());
+        assertThat(MAPPER.readTree(requests.getLast().body()).get("code").asText()).isEqualTo("123456");
+        replies.put("/identity/internal/ops-admins/fin-3/mfa/disable", new Reply(400,
+                "{\"success\":false,\"message\":\"That code didn't work - try the latest one from your app\"}"));
+        mockMvc.perform(postJson("/me/mfa/disable", "{\"code\":\"111111\",\"reason\":\"New phone\"}").header("Authorization", finance))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("That code didn't work - try the latest one from your app"));
+        mockMvc.perform(postJson("/me/mfa/recovery-codes", "{\"code\":\"123456\"}").header("Authorization", finance)).andExpect(status().isOk());
+        assertThat(requests.getLast().path()).isEqualTo("/identity/internal/ops-admins/fin-3/mfa/recovery-codes");
+        mockMvc.perform(get("/me/mfa").header("Authorization", finance)).andExpect(status().isOk());
+
+        requests.clear();
+        mockMvc.perform(postJson("/team/a-2/mfa/reset", "{\"reason\":\"Lost phone\"}").header("Authorization", finance))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Your ops role (FINANCE) can't manage the admin team"));
+        String boss = bearer("boss-1", OpsRole.SUPER_ADMIN);
+        mockMvc.perform(postJson("/team/boss-1/mfa/reset", "{\"reason\":\"Lost phone\"}").header("Authorization", boss))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("You can't reset your own two-factor sign-in - ask another super admin"));
+        mockMvc.perform(postJson("/team/a-2/mfa/reset", "{}").header("Authorization", boss))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Give a reason for resetting two-factor sign-in"));
+        assertThat(requests).as("refused here, never sent").isEmpty();
+        replies.put("/identity/internal/ops-admins/a-2/mfa/reset", new Reply(200, "{\"data\":{\"userId\":\"a-2\",\"mfaEnabled\":false}}"));
+        mockMvc.perform(postJson("/team/a-2/mfa/reset", "{\"reason\":\"Lost phone\"}").header("Authorization", boss))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mfaEnabled").value(false))
+                .andExpect(jsonPath("$.data.you").value(false));
+        JsonNode sent = MAPPER.readTree(requests.getLast().body());
+        assertThat(sent.get("opsUserId").asText()).isEqualTo("boss-1");
+        assertThat(sent.get("reason").asText()).isEqualTo("Lost phone");
     }
 
     // ---- the admin team -------------------------------------------------------------------------------------------------
@@ -387,6 +455,51 @@ class OpsTeamRolesAuditApiTest {
                 .andExpect(status().isBadRequest());
         mockMvc.perform(get("/audit").param("cursor", "%%%not-a-cursor").header("Authorization", boss))
                 .andExpect(status().isBadRequest());
+    }
+
+    private static OpsAuditEntry by(String id, int secondsAfter, OpsAuditCategory category, String action, String actorId, String actorName,
+                                    String targetType, String targetId) {
+        return new OpsAuditEntry(id, T.plusSeconds(secondsAfter), null, category, action, actorId, actorName, targetType, targetId, null,
+                null, null, null, null, null);
+    }
+
+    @Test
+    void systemAndSeedActionsReadAsSystemAndPayoutAccountTargetsNameTheDriver() throws Exception {
+        sources.put("profile", sorted(
+                by("p1", 1, OpsAuditCategory.VERIFICATION, "APPROVED", null, "SMILE_ID", "VERIFICATION", RIDER),
+                by("p2", 2, OpsAuditCategory.VERIFICATION, "APPROVED", null, "DataSeeder", "VERIFICATION", RIDER),
+                by("p3", 3, OpsAuditCategory.VERIFICATION, "APPROVED", null, "SEED", "VERIFICATION", RIDER),
+                by("p4", 4, OpsAuditCategory.PRIVACY, "PII_REVEALED", "boss-1", "Ada Admin", "ACCOUNT", RIDER),
+                by("p5", 5, OpsAuditCategory.VERIFICATION, "REJECTED", null, "Old Admin Name", "VERIFICATION", RIDER)));
+        sources.put("trip", sorted(by("t1", 6, OpsAuditCategory.TRIPS, "CANCEL_BOOKING", "system", "system", "BOOKING", "booking-1")));
+        sources.put("identity", sorted(by("i1", 7, OpsAuditCategory.ACCOUNT, "SUSPENDED", null, null, "ACCOUNT", RIDER)));
+        sources.put("payment", sorted(by("m1", 8, OpsAuditCategory.MONEY, "PAYOUT_ACCOUNT_REVEALED", "boss-1", "Ada Admin", "PAYOUT_ACCOUNT",
+                "driver-7")));
+        String boss = bearer("boss-1", OpsRole.SUPER_ADMIN);
+        JsonNode items = data(mockMvc.perform(get("/audit").header("Authorization", boss)).andExpect(status().isOk()).andReturn()).get("items");
+        Map<String, JsonNode> byId = new java.util.HashMap<>();
+        items.forEach(i -> byId.put(i.get("id").asText(), i));
+
+        for (String id : List.of("PROFILE:p1", "PROFILE:p2", "PROFILE:p3", "TRIP:t1")) {
+            assertThat(byId.get(id).get("actor").get("id").isNull()).as(id).isTrue();
+            assertThat(byId.get(id).get("actor").get("name").asText()).as(id).isEqualTo("System");
+        }
+        assertThat(byId.get("PROFILE:p5").get("actor").get("name").asText()).as("an admin recorded by name only").isEqualTo("Old Admin Name");
+        assertThat(byId.get("IDENTITY:i1").get("actor").isNull()).as("nothing recorded").isTrue();
+        assertThat(byId.get("PROFILE:p4").get("category").asText()).isEqualTo("PRIVACY");
+        JsonNode payout = byId.get("PAYMENT:m1").get("target");
+        assertThat(payout.get("id").asText()).isEqualTo("driver-7");
+        assertThat(payout.get("driverId").asText()).isEqualTo("driver-7");
+        assertThat(payout.get("ref").asText()).isEqualTo("D-DRIVER");
+        assertThat(byId.get("TRIP:t1").get("target").get("driverId").isNull()).isTrue();
+
+        requests.clear();
+        JsonNode privacy = data(mockMvc.perform(get("/audit").param("category", "PRIVACY").header("Authorization", boss)).andReturn());
+        assertThat(privacy.get("items")).extracting(n -> n.get("id").asText()).containsExactly("PROFILE:p4");
+        assertThat(auditCalls()).containsOnlyKeys("profile");
+        requests.clear();
+        mockMvc.perform(get("/audit").param("targetType", "ACCOUNT").header("Authorization", boss)).andExpect(status().isOk());
+        assertThat(auditCalls()).as("an account's trail includes reveals of its details").containsOnlyKeys("identity", "profile");
     }
 
     @Test

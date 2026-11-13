@@ -13,7 +13,17 @@ Sidebar: **Dashboard** (Overview, PRD module 1) and **Reports** (module 16).
 ### `GET /dashboard?from&to&fresh`
 Default range: the last 7 days to today. Three services are asked in parallel (trip, payment, profile) and the result is
 cached for 60 s per range (`ops.dashboard.cache-seconds`); `fresh=true` skips the cache. `cachedAt` is set when served from
-the cache. If a service doesn't answer, its sections are `null` and it's named in `unavailable` - the rest still shows.
+the cache. If a service doesn't answer, it's named in `unavailable` and the rest still shows. **Shapes when one is down**
+(phase 7 - never `{}`, never a field left out):
+
+| Down | `null` sections | Mixed sections |
+|---|---|---|
+| trip-service | `trips`, `seats`, `activity`, `cancellations`, `recentActivity` | `drivers` / `riders` keep every field, trip's (`activeInRange`, `onTripNow`, `onlineNow`, `repeatInRange`) `null`; every `daily` row keeps every key, trip's `null` |
+| payment-service | `revenue` | `daily` rows: `grossBookings`, `payments`, `refunds`, `commission`, `payouts` `null` |
+| profile-service | `verification` | `drivers` / `riders`: `total`, `verified`, `suspended`, `activeLast7Days` `null` |
+| trip + profile | also `drivers`, `riders` | |
+
+A `null` means "unknown"; `0` means "none". Days a running service has nothing for read `0`.
 
 ```json
 {
@@ -55,7 +65,8 @@ the cache. If a service doesn't answer, its sections are `null` and it's named i
 
 ### `GET /reports/catalog`
 ```json
-{ "reports": [ { "report": "trips", "title": "Trips", "description": "…", "columns": ["trip_id", "…"], "source": "trip-service", "csv": true }, … ],
+{ "reports": [ { "report": "trips", "title": "Trips", "description": "…", "columns": ["trip_id", "posted_at", "…"],
+                 "columnTypes": ["string", "date", "…"], "source": "trip-service", "csv": true }, … ],
   "emailed": [ { "period": "DAILY", "send": "POST /ops/reports/emailed/DAILY/send", "preview": "GET /ops/reports/emailed/DAILY/preview" }, … ],
   "timezone": "Africa/Lagos", "maxRangeDays": 366, "maxCsvRows": 50000, "maxPreviewRows": 500 }
 ```
@@ -73,9 +84,27 @@ the cache. If a service doesn't answer, its sections are `null` and it's named i
 
 Times in reports are Lagos local, `YYYY-MM-DD HH:MM`. People are ids (join with the directory for names).
 
+**Column types** (phase 7). Every column has one declared type, given as `columnTypes` (parallel to `columns`) in the catalog
+and every preview, and every row value matches it:
+
+| type | JSON value | CSV cell | columns |
+|---|---|---|---|
+| `integer` | number | `12` | seat_capacity, seats_booked, seats, minutes_before_departure, trips_*, seats_offered, ratings, bookings, completed, cancelled_by_*, no_shows, trips, drivers, suggested_sample, payments, people |
+| `decimal` | number | `66.7` | completion_rate_pct, fill_rate_pct, avg_rating, percent_of_joined |
+| `money` | number, naira, **2 dp** | `4800.00` | fare_per_seat, gross_completed, fare_total, fee, refund_expected, spent_completed, median_fare, suggested_min/max, gross_bookings, refunds, commission, payouts |
+| `date` | text, Lagos `YYYY-MM-DD HH:MM` (revenue: `YYYY-MM-DD`) | same | *_at, date |
+| `string` | text | text | ids, origin, destination, status, kind, source, fault, reason, corridor, audience, stage |
+| `boolean` | `true` / `false` | `true` / `false` | paid, backfilled (cancellations) |
+
+Any value may be `null` (an empty CSV cell). `boolean` is a sixth type beyond the five first planned - the cancellations
+report has two yes/no columns.
+
 ### `GET /reports/analytics/{report}?from&to&limit` - JSON preview
-Default range: the last 30 days. `{ report, title, from, to, timezone, columns, rows: [[…]], totalRows, truncated }` -
+Default range: the last 30 days. `{ report, title, from, to, timezone, columns, columnTypes, rows: [[…]], totalRows, truncated, limited }` -
 at most `limit` rows (default 100, max 500); `totalRows` is the full count. Unknown report → `404`.
+- `limited: true` - the preview shows fewer rows than the range has (the `limit` applied). The CSV has them all.
+- `truncated: true` - **only** when the range has more than 50,000 rows, so even the CSV would be cut (narrow the range).
+  (Before phase 7 `truncated` also meant "the preview limit applied".)
 
 ### `GET /reports/analytics/{report}.csv?from&to` - CSV download
 - `text/csv; charset=UTF-8`, `Content-Disposition: attachment; filename="coryd-<report>-<from>-to-<to>.csv"`.

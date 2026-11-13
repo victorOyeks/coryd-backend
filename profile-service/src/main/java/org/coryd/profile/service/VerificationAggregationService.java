@@ -74,7 +74,7 @@ public class VerificationAggregationService {
         List<VerificationQueueItem.Entry> entries = entries(profile, vehicle, documents, licenceCheck(driverId));
         boolean licenceAwaitingProvider = entries.get(0).awaitingProvider();
         return new VerificationStatusResponse(
-                profile == null ? null : new VerificationStatusResponse.DriverDetails(profile.getFirstName(), profile.getLastName(),
+                profile == null ? null : VerificationStatusResponse.DriverDetails.of(profile.getFirstName(), profile.getLastName(),
                         profile.getPhotoUrl(), profile.getIdNumber(), profile.getDateOfBirth()),
                 waitingSince(entries),
                 new VerificationStatusResponse.ItemStatus(

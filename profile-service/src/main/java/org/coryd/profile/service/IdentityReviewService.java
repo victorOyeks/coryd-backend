@@ -537,7 +537,7 @@ public class IdentityReviewService {
                 tab, v.getStatus(), v.getNinLast4(), v.getSubmittedAt(), v.getDecidedAt(), v.getDecidedBy(), v.getRejectionReason(),
                 v.getDecisionNote(), v.isProviderOverridden(),
                 v.getVerifiedFirstName() == null ? null : new IdentityReviewDetail.VerifiedRecord(v.getVerifiedFirstName(),
-                        v.getVerifiedMiddleName(), v.getVerifiedLastName(), v.getVerifiedDateOfBirth()),
+                        v.getVerifiedMiddleName(), v.getVerifiedLastName(), org.coryd.common.util.PiiMask.birthYear(v.getVerifiedDateOfBirth())),
                 driver == null || !hasNinLookup(userId) ? null : driver.getNinStatus(),
                 new IdentityReviewDetail.Attempts(check == null ? null : check.getCheckType(), used, max, Math.max(0, max - used),
                         tab == IdentityReviewTab.LOCKED_OUT, check == null ? null : check.getRetryReason(),

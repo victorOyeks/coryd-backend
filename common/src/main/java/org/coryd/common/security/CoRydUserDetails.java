@@ -30,12 +30,23 @@ public class CoRydUserDetails implements UserDetails {
      * ops-service turns it into permissions.
      */
     private final String opsRole;
+    /** When the token was issued, epoch millis (iat_ms, else iat) - 0 for a principal built by hand. */
+    private final long issuedAtMs;
+    /** Ops console sessions: when the session ends at the latest (JwtUtil.SESSION_EXPIRES_AT_CLAIM); null otherwise. */
+    private final java.time.Instant sessionExpiresAt;
 
     public CoRydUserDetails(String userId, String phone, String firstName, String lastName, UserRole activeRole) {
         this(userId, phone, firstName, lastName, activeRole, null);
     }
 
     public CoRydUserDetails(String userId, String phone, String firstName, String lastName, UserRole activeRole, String opsRole) {
+        this(userId, phone, firstName, lastName, activeRole, opsRole, 0L, null);
+    }
+
+    public CoRydUserDetails(String userId, String phone, String firstName, String lastName, UserRole activeRole, String opsRole,
+                            long issuedAtMs, java.time.Instant sessionExpiresAt) {
+        this.issuedAtMs = issuedAtMs;
+        this.sessionExpiresAt = sessionExpiresAt;
         this.userId = userId;
         this.phone = phone;
         this.firstName = firstName;

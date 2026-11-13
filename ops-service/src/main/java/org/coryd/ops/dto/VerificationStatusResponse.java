@@ -56,8 +56,26 @@ public record VerificationStatusResponse(
                                 Double nameMatchScore, String summary, Instant checkedAt, String providerReference) {
     }
 
+    /**
+     * The licence number and date of birth are masked (licenceNumberMasked "•••••••5678", birthYear) - the full values are an
+     * audited reveal (POST /ops/users/{id}/reveal, docs/ops-console/privacy.md). licenceNumber / dateOfBirth are only read
+     * (from a profile-service that still sends them, to mask them here) and never written out.
+     */
     public record DriverDetails(String id, String ref, String firstName, String lastName, String phone, String photoUrl,
-                                String licenceNumber, LocalDate dateOfBirth) {
+                                String licenceNumberMasked, Integer birthYear,
+                                @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
+                                String licenceNumber,
+                                @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
+                                LocalDate dateOfBirth) {
+
+        /** Masked from whichever the upstream sent - never the full values. */
+        public String masked() {
+            return licenceNumberMasked != null ? licenceNumberMasked : org.coryd.common.util.PiiMask.trailing(licenceNumber);
+        }
+
+        public Integer year() {
+            return birthYear != null ? birthYear : org.coryd.common.util.PiiMask.birthYear(dateOfBirth);
+        }
     }
 
     /** awaitingProvider: the licence is with Smile ID and its result hasn't come - ops may still decide it; the result overrides. */

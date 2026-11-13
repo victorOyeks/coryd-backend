@@ -30,10 +30,21 @@ public enum AccountActionType {
     /** A super admin removed this admin's console access - every session ended at once. */
     OPS_ADMIN_DEACTIVATED,
     /** A super admin gave the console access back; the ended sessions stay ended. */
-    OPS_ADMIN_REACTIVATED;
+    OPS_ADMIN_REACTIVATED,
+    // ---- ops admin two-factor sign-in (phase 7) - on the admin's own account; the audit log shows them as TEAM ----
+    /** The admin turned two-factor sign-in on (or enrolled at sign-in because it's required). */
+    MFA_ENABLED,
+    /** The admin turned two-factor sign-in off (reason recorded). */
+    MFA_DISABLED,
+    /** A super admin cleared this admin's two-factor sign-in - every session ended; they set it up again at next sign-in. */
+    MFA_RESET,
+    /** The admin signed in with one of their one-time recovery codes instead of the app. */
+    RECOVERY_CODE_USED,
+    /** The admin replaced their recovery codes - the old ones stopped working. */
+    MFA_RECOVERY_CODES_REGENERATED;
 
     /** Whether this is an admin-team action rather than one on a rider's or driver's account. */
     public boolean isTeamAction() {
-        return name().startsWith("OPS_");
+        return name().startsWith("OPS_") || name().startsWith("MFA_") || this == RECOVERY_CODE_USED;
     }
 }

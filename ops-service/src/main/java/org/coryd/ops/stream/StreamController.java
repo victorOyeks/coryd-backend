@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.exception.UnauthorizedException;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
+import org.coryd.common.security.revocation.TokenRevocationRegistry;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -31,12 +32,21 @@ public class StreamController {
 
     private final StreamTokenService tokens;
     private final OpsEventStream stream;
+    private final TokenRevocationRegistry revocations;
 
-    /** OPS_ADMIN only (the normal token). The result opens GET /stream?token=… within its lifetime. */
+    /**
+     * OPS_ADMIN only (the normal token). The result opens GET /stream?token=… within its lifetime. An admin whose sessions
+     * were ended gets none (JwtFilter already refuses their token; checked again here).
+     */
     @PostMapping("/token")
     public ApiResponse<StreamTokenService.Issued> token(@AuthenticationPrincipal CoRydUserDetails admin) {
+        String refusal = revocations.refusal(admin.getUserId(), admin.getIssuedAtMs());
+        if (refusal != null) {
+            throw new UnauthorizedException(refusal);
+        }
         String name = admin.getFullName();
-        return ApiResponse.ok(tokens.issue(admin.getUserId(), name == null || name.isBlank() ? admin.getUserId() : name));
+        return ApiResponse.ok(tokens.issue(admin.getUserId(), name == null || name.isBlank() ? admin.getUserId() : name,
+                admin.getIssuedAtMs()));
     }
 
     /**
@@ -50,13 +60,22 @@ public class StreamController {
                            @AuthenticationPrincipal CoRydUserDetails principal,
                            HttpServletResponse response) {
         String adminId;
+        long sessionIssuedAtMs;
         try {
             if (token != null && !token.isBlank()) {
-                adminId = tokens.verify(token).adminId();
+                StreamTokenService.Claims claims = tokens.verify(token);
+                adminId = claims.adminId();
+                sessionIssuedAtMs = claims.sessionIssuedAtMs();
             } else if (principal != null && principal.getAuthorities().stream().anyMatch(a -> "ROLE_OPS_ADMIN".equals(a.getAuthority()))) {
                 adminId = principal.getUserId();
+                sessionIssuedAtMs = principal.getIssuedAtMs();
             } else {
                 throw new UnauthorizedException("A stream token is required - get one from POST /ops/stream/token");
+            }
+            // The session the stream token came from was ended since (suspended, deactivated, signed out, role changed).
+            String refusal = revocations.refusal(adminId, sessionIssuedAtMs);
+            if (refusal != null) {
+                throw new UnauthorizedException(refusal);
             }
         } catch (UnauthorizedException e) {
             // A plain 401 with the reason in a header: the caller asked for an event stream, not JSON. EventSource stops
@@ -68,7 +87,7 @@ public class StreamController {
         // nginx would otherwise buffer the stream; no caching anywhere on the way.
         response.setHeader("X-Accel-Buffering", "no");
         response.setHeader("Cache-Control", "no-cache, no-transform");
-        return stream.connect(adminId, lastEventId != null ? lastEventId : lastEventIdParam);
+        return stream.connect(adminId, sessionIssuedAtMs, lastEventId != null ? lastEventId : lastEventIdParam);
     }
 
     /** A console that closed its tab mid-send: nothing to answer, and not an error worth a JSON body (it couldn't be written anyway). */

@@ -39,6 +39,7 @@ import java.util.List;
 public class MoneyController {
 
     private final MoneyOpsService money;
+    private final org.coryd.ops.privacy.RevealRateLimiter revealRateLimiter;
 
     // ---- transactions ------------------------------------------------------------------------------------------------
 
@@ -206,9 +207,25 @@ public class MoneyController {
         return ApiResponse.ok(money.get("/drivers/" + driverId + "/payout-account", new LinkedMultiValueMap<>()));
     }
 
+    /** Same rules as the ID reveal (docs/ops-console/privacy.md): reason required, shares its per-admin rate limit. */
     @PostMapping("/drivers/{driverId}/payout-account/reveal")
-    public ApiResponse<JsonNode> reveal(@PathVariable String driverId, @Valid @RequestBody RevealBody body) {
-        return relay(money.post("/drivers/" + driverId + "/payout-account/reveal", body));
+    public ApiResponse<JsonNode> reveal(@org.springframework.security.core.annotation.AuthenticationPrincipal
+                                        org.coryd.common.security.CoRydUserDetails admin,
+                                        @PathVariable String driverId, @RequestBody(required = false) RevealBody body) {
+        if (body == null || body.reason() == null || body.reason().isBlank()) {
+            throw new org.coryd.common.exception.BadRequestException(org.coryd.ops.privacy.PrivacyController.NEED_A_REASON);
+        }
+        if (body.reason().length() > 500) {
+            throw new org.coryd.common.exception.BadRequestException("Keep the reason under 500 characters");
+        }
+        String adminId = admin == null ? null : admin.getUserId();
+        revealRateLimiter.acquire(adminId);
+        try {
+            return relay(money.post("/drivers/" + driverId + "/payout-account/reveal", body));
+        } catch (RuntimeException e) {
+            revealRateLimiter.release(adminId);
+            throw e;
+        }
     }
 
     // ---- earnings and settlement debt --------------------------------------------------------------------------------

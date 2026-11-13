@@ -30,6 +30,13 @@ public class JwtUtil {
     private long expirationMs;
 
     /**
+     * Ops console sessions (an OPS_ADMIN token carrying an opsRole) get short-lived access tokens - 15 minutes by default
+     * (OPS_ACCESS_TOKEN_MINUTES in identity-service). Riders, drivers and service-to-service system tokens keep expirationMs.
+     */
+    @Value("${jwt.ops-expiration-minutes:15}")
+    private long opsExpirationMinutes = 15;
+
+    /**
      * Built once: the parser is immutable and thread-safe, and building one looks up jjwt's JSON reader through
      * ServiceLoader - done per request, a burst of first requests after a restart raced on that lookup and one
      * failed with NoSuchElementException (a 500 instead of a checked token).
@@ -57,11 +64,27 @@ public class JwtUtil {
         return expirationMs;
     }
 
+    /** How long an access token for this session lives: the ops lifetime for an ops console session, else the normal one. */
+    public long expirationMsFor(UserRole activeRole, OpsRole opsRole) {
+        return activeRole == UserRole.OPS_ADMIN && opsRole != null ? opsExpirationMinutes * 60_000L : expirationMs;
+    }
+
+    /** Tests and hand-built instances. */
+    public void setOpsExpirationMinutes(long minutes) {
+        this.opsExpirationMinutes = minutes;
+    }
+
     /**
      * The standard iat claim is whole seconds; a "sign out everywhere" and a sign-in a moment later can fall in the same
      * second. This carries the exact millisecond, so the revocation cut-off can tell them apart.
      */
     public static final String ISSUED_AT_MS_CLAIM = "iat_ms";
+
+    /**
+     * Ops console sessions only: when the whole session (the refresh-token lineage) ends at the latest, epoch millis - the
+     * console reads it from GET /ops/me to warn before the absolute timeout.
+     */
+    public static final String SESSION_EXPIRES_AT_CLAIM = "sess_exp";
 
     public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole) {
         return generateToken(userId, phone, firstName, lastName, activeRole, null);
@@ -73,6 +96,12 @@ public class JwtUtil {
      */
     public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole,
                                 OpsRole opsRole) {
+        return generateToken(userId, phone, firstName, lastName, activeRole, opsRole, null);
+    }
+
+    /** sessionExpiresAt: ops console sessions only (SESSION_EXPIRES_AT_CLAIM); ignored when null. */
+    public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole,
+                                OpsRole opsRole, java.time.Instant sessionExpiresAt) {
         long now = System.currentTimeMillis();
         var builder = Jwts.builder()
                 .subject(userId)
@@ -82,11 +111,14 @@ public class JwtUtil {
                 .claim("role", activeRole.name());
         if (opsRole != null && activeRole == UserRole.OPS_ADMIN) {
             builder.claim(OpsRole.CLAIM, opsRole.name());
+            if (sessionExpiresAt != null) {
+                builder.claim(SESSION_EXPIRES_AT_CLAIM, sessionExpiresAt.toEpochMilli());
+            }
         }
         return builder
                 .claim(ISSUED_AT_MS_CLAIM, now)
                 .issuedAt(new Date(now))
-                .expiration(new Date(now + expirationMs))
+                .expiration(new Date(now + expirationMsFor(activeRole, opsRole)))
                 .signWith(signingKey())
                 .compact();
     }
@@ -138,13 +170,16 @@ public class JwtUtil {
             firstName = Names.firstName(legacy);
             lastName = Names.lastName(legacy);
         }
+        Object sessionExpires = claims.get(SESSION_EXPIRES_AT_CLAIM);
         return new CoRydUserDetails(
                 claims.getSubject(),
                 claims.get("phone", String.class),
                 firstName,
                 lastName,
                 UserRole.valueOf(claims.get("role", String.class)),
-                claims.get(OpsRole.CLAIM, String.class)
+                claims.get(OpsRole.CLAIM, String.class),
+                issuedAtMillis(claims),
+                sessionExpires instanceof Number n ? java.time.Instant.ofEpochMilli(n.longValue()) : null
         );
     }
 }

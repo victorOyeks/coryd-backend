@@ -35,7 +35,7 @@ public class OpsAccessInterceptor implements HandlerInterceptor, WebMvcConfigure
             return true;
         }
         String path = request.getRequestURI().substring(request.getContextPath().length());
-        OpsAccess.require(admin, OpsAccessPolicy.required(request.getMethod(), path));
+        OpsAccess.requireAny(admin, OpsAccessPolicy.anyOf(request.getMethod(), path));
         return true;
     }
 }

@@ -31,13 +31,25 @@ public class KafkaLagReader implements DisposableBean {
     static final String PREFIX = "coryd-";
 
     private final String bootstrapServers;
+    private final List<String> ephemeralPrefixes;
     private volatile Admin admin;
 
-    public KafkaLagReader(@Value("${spring.kafka.bootstrap-servers:}") String bootstrapServers) {
+    public KafkaLagReader(@Value("${spring.kafka.bootstrap-servers:}") String bootstrapServers,
+                          @Value("${ops.health.ephemeral-group-prefixes:coryd-ops-stream-}") List<String> ephemeralPrefixes) {
         this.bootstrapServers = bootstrapServers;
+        this.ephemeralPrefixes = ephemeralPrefixes == null ? List.of() : ephemeralPrefixes.stream().filter(p -> !p.isBlank()).toList();
     }
 
-    public record GroupLag(String group, String state, int members, long lag, Map<String, Long> lagByTopic) {
+    /**
+     * ephemeral: a group that belongs to one running process and is thrown away with it - ops-service's live-stream groups
+     * (coryd-ops-stream-&lt;random&gt;, one per instance start). Listed, but never alerted on: an old one left EMPTY with
+     * lag is not a consumer that stopped (see SystemHealthService).
+     */
+    public record GroupLag(String group, String state, int members, long lag, Map<String, Long> lagByTopic, boolean ephemeral) {
+    }
+
+    boolean ephemeral(String group) {
+        return ephemeralPrefixes.stream().anyMatch(group::startsWith);
     }
 
     public record Lag(boolean reachable, String error, List<GroupLag> groups) {
@@ -77,7 +89,8 @@ public class KafkaLagReader implements DisposableBean {
                     total += lag;
                 }
                 ConsumerGroupDescription d = descriptions.get(group);
-                out.add(new GroupLag(group, d == null ? null : d.state().name(), d == null ? 0 : d.members().size(), total, byTopic));
+                out.add(new GroupLag(group, d == null ? null : d.state().name(), d == null ? 0 : d.members().size(), total, byTopic,
+                        ephemeral(group)));
             }
             return new Lag(true, null, out);
         } catch (Exception e) {
