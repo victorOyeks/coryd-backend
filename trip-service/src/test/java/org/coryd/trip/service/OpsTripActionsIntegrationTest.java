@@ -515,7 +515,8 @@ class OpsTripActionsIntegrationTest {
         cancellationLogRepository.deleteAll();
 
         String sql = new ClassPathResource("db/changelog/033-ops-trips-and-bookings.sql").getContentAsString(StandardCharsets.UTF_8);
-        String backfill = sql.substring(sql.indexOf("--changeset coryd:092"));
+        String backfill = sql.substring(sql.indexOf("--changeset coryd:092"))
+                + "\n" + new ClassPathResource("db/changelog/034-cancellation-log-route-totals.sql").getContentAsString(StandardCharsets.UTF_8);
         for (String statement : backfill.split(";\\s*\\n")) {
             String body = statement.lines().filter(l -> !l.trim().startsWith("--")).reduce("", (a, b) -> a + "\n" + b).trim();
             if (!body.isEmpty()) {
@@ -531,6 +532,11 @@ class OpsTripActionsIntegrationTest {
         assertThat(routeRow.getBookingsAffected()).isEqualTo(1);
         CancellationLog seat = rows.stream().filter(c -> onDriverCancel.getId().equals(c.getBookingId())).findFirst().orElseThrow();
         assertThat(seat.getParentId()).isEqualTo(routeRow.getId());
+        // 093: the trip row carries its seats' totals, so a trip with a paid seat no longer reads "Not paid".
+        assertThat(routeRow.isPaid()).isTrue();
+        assertThat(routeRow.getSeatCount()).isEqualTo(seat.getSeatCount());
+        assertThat(routeRow.getFareTotal()).isEqualByComparingTo(seat.getFareTotal());
+        assertThat(routeRow.getRefundExpected()).isEqualByComparingTo(seat.getRefundExpected());
         CancellationLog riderRow = rows.stream().filter(c -> byRider.getId().equals(c.getBookingId())).findFirst().orElseThrow();
         assertThat(riderRow.getSource()).isEqualTo(CancellationSource.RIDER);
         assertThat(riderRow.getFault()).isEqualTo(CancellationFault.RIDER);

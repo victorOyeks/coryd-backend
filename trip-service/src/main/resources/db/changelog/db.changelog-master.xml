@@ -42,5 +42,6 @@
     <include file="db/changelog/031-route-time-change.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/032-leaving-now.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/033-ops-trips-and-bookings.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/034-cancellation-log-route-totals.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
