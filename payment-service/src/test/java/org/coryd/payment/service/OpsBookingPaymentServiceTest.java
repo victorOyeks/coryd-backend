@@ -77,6 +77,39 @@ class OpsBookingPaymentServiceTest {
         assertThat(service.forBookings(List.of())).isEmpty();
     }
 
+    /**
+     * B-524EA3 on dev: ₦500 paid, ₦507.62 shown refunded. The ₦507.62 was a DUPLICATE_CHARGE refund - a second Paystack
+     * charge for the same booking (₦500 plus Paystack's 1.5% fee passed to the card: 500 / 0.985 = 507.62) sent straight
+     * back. It is a different charge from the ₦500, so it must not be counted as a refund of it.
+     */
+    @Test
+    void aDuplicateChargeSentBackIsShownApartAndNeverMakesRefundedExceedPaid() {
+        PaymentTransaction paid = charge("b-524ea3", "500.00", PayoutStatus.PAID);
+        refundRepository.save(Refund.builder().userId("rider-1").bookingId("b-524ea3").paymentTransactionId(paid.getId())
+                .amount(new BigDecimal("507.62")).status(RefundStatus.REFUNDED).kind(RefundKind.DUPLICATE_CHARGE).build());
+
+        OpsBookingPayment p = service.forBookings(List.of("b-524ea3")).get(0);
+
+        assertThat(p.amountPaid()).isEqualByComparingTo("500.00");
+        assertThat(p.refunded()).isEqualByComparingTo("0");
+        assertThat(p.netPaid()).isEqualByComparingTo("500.00");
+        assertThat(p.duplicateChargeRefunded()).isEqualByComparingTo("507.62");
+    }
+
+    @Test
+    void refundedNeverReadsMoreThanPaidWhateverTheRowsSay() {
+        PaymentTransaction paid = charge("b-over", "500.00", PayoutStatus.PAID);
+        refund("b-over", paid, "500.00", RefundStatus.REFUNDED);
+        refund("b-over", paid, "7.62", RefundStatus.REFUNDED);
+        refund("b-over", paid, "100.00", RefundStatus.PENDING);
+
+        OpsBookingPayment p = service.forBookings(List.of("b-over")).get(0);
+
+        assertThat(p.refunded()).isEqualByComparingTo("500.00");
+        assertThat(p.refundPending()).isEqualByComparingTo("0");
+        assertThat(p.netPaid()).isEqualByComparingTo("0");
+    }
+
     private PaymentTransaction charge(String bookingId, String amount, PayoutStatus status) {
         return paymentTransactionRepository.save(PaymentTransaction.builder()
                 .bookingId(bookingId).riderId("rider-1").amount(new BigDecimal(amount))
