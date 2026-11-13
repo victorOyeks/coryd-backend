@@ -433,7 +433,7 @@ class OpsServiceIntegrationTest {
             + "\"phone\":\"08053636321\",\"joinedAt\":\"2026-01-12T09:00:00Z\",\"status\":\"VERIFIED\",\"verificationStatus\":\"APPROVED\","
             + "\"vehicleMake\":\"Toyota\",\"vehicleModel\":\"Camry\",\"vehicleYear\":2019,\"vehicleColor\":\"Black\",\"plateNumber\":\"LND-441-AA\","
             + "\"trips\":213,\"ratingAvg\":4.88,\"ratingCount\":40,\"reliabilityPercent\":91,\"reportsFiled\":0,"
-            + "\"earningsNet\":1847200.00,\"earningsGross\":1944421.05}";
+            + "\"earningsNet\":1847200.00,\"earningsGross\":1944421.05,\"lastTripAt\":\"2026-11-12T07:30:00Z\"}";
     private static final String INDEXED_KINGSLEY = "{\"driverId\":\"cccc3333-3\",\"firstName\":\"Kingsley\",\"lastName\":\"Nwosu\","
             + "\"joinedAt\":\"2026-05-01T09:00:00Z\",\"status\":\"PENDING\",\"verificationStatus\":\"PENDING\"}";
 
@@ -458,10 +458,29 @@ class OpsServiceIntegrationTest {
                 .andExpect(jsonPath("$.data.content[1].earnings").value(1847200.00))
                 .andExpect(jsonPath("$.data.content[1].reliabilityPercent").value(91))
                 .andExpect(jsonPath("$.data.content[1].status").value("VERIFIED"))
-                .andExpect(jsonPath("$.data.content[1].verificationStatus").value("APPROVED"));
+                .andExpect(jsonPath("$.data.content[1].verificationStatus").value("APPROVED"))
+                .andExpect(jsonPath("$.data.content[1].lastTripAt").value("2026-11-12T07:30:00Z"))
+                .andExpect(jsonPath("$.data.content[0].lastTripAt").doesNotExist());
 
         assertThat(paths).anyMatch(p -> p.startsWith("/profile/internal/drivers/index?") && p.contains("status=VERIFIED")
                 && p.contains("search=oka") && p.contains("sort=EARNINGS") && p.contains("direction=DESC") && p.contains("page=1") && p.contains("size=2"));
+    }
+
+    @Test
+    void driversCanBeSortedByLastTripAndTheCountsCarryTheActiveOnes() throws Exception {
+        replies.put("/profile/internal/drivers/index", new Reply(200, "{\"data\":{\"content\":[" + INDEXED_EMEKA
+                + "],\"page\":0,\"size\":20,\"totalElements\":1,\"totalPages\":1,\"last\":true}}"));
+        replies.put("/profile/internal/drivers/index/counts", new Reply(200,
+                "{\"data\":{\"all\":21,\"verified\":12,\"pending\":5,\"resubmitted\":2,\"suspended\":2,\"activeLast7Days\":9}}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/drivers?sort=LAST_TRIP&direction=DESC").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[0].lastTripAt").value("2026-11-12T07:30:00Z"));
+        assertThat(paths).anyMatch(p -> p.startsWith("/profile/internal/drivers/index?") && p.contains("sort=LAST_TRIP"));
+        mockMvc.perform(get("/drivers/counts").header("Authorization", token))
+                .andExpect(jsonPath("$.data.all").value(21))
+                .andExpect(jsonPath("$.data.activeLast7Days").value(9));
     }
 
     @Test
@@ -748,7 +767,8 @@ class OpsServiceIntegrationTest {
 
     private static final String RIDER_ROW = "{\"riderId\":\"r-uuid-1\",\"firstName\":\"Emeka\",\"lastName\":\"Okafor\",\"phone\":\"08053636321\","
             + "\"joinedAt\":\"2026-01-12T09:00:00Z\",\"status\":\"ACTIVE\",\"trips\":213,\"ratingAvg\":4.88,\"ratingCount\":40,"
-            + "\"reliabilityPercent\":91,\"reportsFiled\":0,\"totalSpent\":157000.00}";
+            + "\"reliabilityPercent\":91,\"reportsFiled\":0,\"totalSpent\":157000.00,"
+            + "\"identityStatus\":\"APPROVED\",\"lastTripAt\":\"2026-11-10T18:05:00Z\"}";
 
     @Test
     void ridersTableComesFromTheRiderIndex() throws Exception {
@@ -766,18 +786,41 @@ class OpsServiceIntegrationTest {
                 .andExpect(jsonPath("$.data.content[0].rating").value(4.88))
                 .andExpect(jsonPath("$.data.content[0].totalSpent").value(157000.0))
                 .andExpect(jsonPath("$.data.content[0].reportsFiled").value(0))
-                .andExpect(jsonPath("$.data.content[0].status").value("ACTIVE"));
+                .andExpect(jsonPath("$.data.content[0].status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.content[0].identityStatus").value("APPROVED"))
+                .andExpect(jsonPath("$.data.content[0].lastTripAt").value("2026-11-10T18:05:00Z"));
         assertThat(paths.get(0)).contains("status=ACTIVE").contains("search=emeka").contains("sort=RETENTION").contains("direction=DESC");
+        assertThat(paths.get(0)).doesNotContain("identity=");
+    }
+
+    @Test
+    void ridersCanBeFilteredByIdentityAndSortedByLastTrip() throws Exception {
+        replies.put("/profile/internal/riders/index", new Reply(200, "{\"data\":{\"content\":[" + RIDER_ROW + "],"
+                + "\"page\":0,\"size\":20,\"totalElements\":1,\"totalPages\":1,\"last\":true}}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/riders").param("identity", "APPROVED").param("sort", "LAST_TRIP").param("direction", "DESC")
+                        .header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[0].identityStatus").value("APPROVED"));
+        assertThat(paths.get(0)).contains("identity=APPROVED").contains("sort=LAST_TRIP").contains("direction=DESC");
+
+        paths.clear();
+        mockMvc.perform(get("/riders").param("identity", "MAYBE").header("Authorization", token)).andExpect(status().isBadRequest());
+        assertThat(paths).isEmpty();
     }
 
     @Test
     void riderTabBadgesComeFromTheirOwnEndpoint() throws Exception {
-        replies.put("/profile/internal/riders/index/counts", new Reply(200, "{\"data\":{\"all\":62,\"active\":52,\"suspended\":10}}"));
+        replies.put("/profile/internal/riders/index/counts", new Reply(200,
+                "{\"data\":{\"all\":62,\"active\":52,\"suspended\":10,\"verified\":40,\"activeLast7Days\":31}}"));
 
         mockMvc.perform(get("/riders/counts").header("Authorization", bearer(UserRole.OPS_ADMIN)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.all").value(62))
-                .andExpect(jsonPath("$.data.suspended").value(10));
+                .andExpect(jsonPath("$.data.suspended").value(10))
+                .andExpect(jsonPath("$.data.verified").value(40))
+                .andExpect(jsonPath("$.data.activeLast7Days").value(31));
     }
 
     @Test

@@ -3,6 +3,7 @@ package org.coryd.ops.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.RiderDirectorySort;
 import org.coryd.common.enums.RiderDirectoryStatus;
+import org.coryd.common.enums.RiderIdentityStatus;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.util.Names;
 import org.coryd.ops.client.PaymentServiceClient;
@@ -35,9 +36,9 @@ public class RiderDirectoryService {
     private final PaymentServiceClient paymentServiceClient;
     private final AccountProfileParts accountProfileParts;
 
-    public PagedResponse<RiderDirectoryItem> riders(RiderDirectoryStatus status, String search, RiderDirectorySort sort,
-                                                    Sort.Direction direction, int page, int size) {
-        ProfileServiceClient.RiderIndexPage result = profileServiceClient.riderIndex(status, search, sort, direction,
+    public PagedResponse<RiderDirectoryItem> riders(RiderDirectoryStatus status, RiderIdentityStatus identity, String search,
+                                                    RiderDirectorySort sort, Sort.Direction direction, int page, int size) {
+        ProfileServiceClient.RiderIndexPage result = profileServiceClient.riderIndex(status, identity, search, sort, direction,
                 Math.max(0, page), Math.clamp(size, 1, 50));
         return new PagedResponse<>(result.content().stream().map(RiderDirectoryService::row).toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages(), result.last());
@@ -101,6 +102,6 @@ public class RiderDirectoryService {
         DriverSummary rider = new DriverSummary(r.riderId(), TripOpsService.ref("R", r.riderId()),
                 Names.join(r.firstName(), r.lastName()), r.phone(), r.photoUrl());
         return new RiderDirectoryItem(rider, r.trips(), r.reliabilityPercent(), r.ratingAvg(), r.ratingCount(), r.totalSpent(),
-                r.reportsFiled(), r.status(), r.joinedAt());
+                r.reportsFiled(), r.status(), r.joinedAt(), r.identityStatus(), r.lastTripAt());
     }
 }
