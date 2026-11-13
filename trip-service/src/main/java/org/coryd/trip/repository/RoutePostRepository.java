@@ -14,7 +14,13 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
-public interface RoutePostRepository extends JpaRepository<RoutePost, String> {
+public interface RoutePostRepository extends JpaRepository<RoutePost, String>,
+        org.springframework.data.jpa.repository.JpaSpecificationExecutor<RoutePost> {
+
+    /** Compare-and-set on a route's status - 0 means another writer moved it first. */
+    @Modifying(flushAutomatically = true)
+    @Query("update RoutePost r set r.status = :to, r.updatedAt = CURRENT_TIMESTAMP where r.id = :id and r.status in :from")
+    int transitionStatus(@Param("id") String id, @Param("from") Collection<RouteStatus> from, @Param("to") RouteStatus to);
 
     /** Every driver who has posted a trip - for the nightly driver stats pass. */
     @Query("select distinct r.driverId from RoutePost r order by r.driverId")

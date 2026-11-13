@@ -69,7 +69,7 @@ import static org.mockito.Mockito.when;
 @org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
 @Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class,
         RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class,
-        OpsTripQueryService.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class, DemandService.class,
+        OpsTripQueryService.class, CancellationLogService.class, org.coryd.trip.config.StuckTripProperties.class, CancellationPolicy.class, MatchingProperties.class, NotifyMeService.class, DemandService.class,
         org.coryd.trip.config.DemandProperties.class, TimeChangeProperties.class, RouteTimeChangeService.class,
         RouteDepartureReminderJob.class, RouteExpiryJob.class, org.coryd.trip.config.SavingsProperties.class, NearbyDemandService.class, OpsDriverStatsService.class, DriverStatsPublisher.class,
         OpsRiderStatsService.class, RiderStatsPublisher.class, OpsRiderTripService.class})

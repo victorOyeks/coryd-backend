@@ -137,6 +137,7 @@ public class BookingService {
     private final org.coryd.trip.config.SavingsProperties savingsProperties;
     private final DriverStatsPublisher driverStatsPublisher;
     private final RiderStatsPublisher riderStatsPublisher;
+    private final CancellationLogService cancellationLogService;
     /**
      * Rider-facing "verified driver" badge. Reads the six-item approval gate, not
      * DriverSummary.verificationStatus, which is identity-only and would
@@ -798,7 +799,9 @@ public class BookingService {
         }
         // A route cancelled between the hold and the payment can't take the rider anywhere - nor can one whose driver
         // tapped Start while they were paying: starting closes booking, so a seat still only held is refunded.
-        RouteStatus routeStatus = routeOf(booking).getStatus();
+        RoutePost bookedRoute = routeOf(booking);
+        RouteStatus routeStatus = bookedRoute.getStatus();
+        BookingStatus statusBefore = booking.getStatus();
         boolean routeGone = FINISHED_ROUTE_STATUSES.contains(routeStatus)
                 || (routeStatus == RouteStatus.IN_PROGRESS && booking.getStatus() == BookingStatus.HELD);
         if (routeGone) {
@@ -807,6 +810,8 @@ public class BookingService {
         if (routeGone || !moveStatus(booking, BookingStatus.CONFIRMED, List.of(BookingStatus.HELD))) {
             log.warn("Payment succeeded for booking {} but it's no longer HELD (status={}) - refunding instead of confirming",
                     bookingId, booking.getStatus());
+            cancellationLogService.recordBooking(booking, bookedRoute, routeStatus, statusBefore,
+                    CancellationLogService.Context.of("SYSTEM", null), null, null);
             kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                     .bookingId(booking.getId())
                     .routePostId(booking.getRoutePostId())
@@ -930,10 +935,13 @@ public class BookingService {
                 releaseUnpaid(booking, booking.getStatus(), why + " - seat released");
                 continue;
             }
+            BookingStatus statusBefore = booking.getStatus();
             if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
                 continue;
             }
             RoutePost route = routeOf(booking);
+            cancellationLogService.recordBooking(booking, route, route.getStatus(), statusBefore,
+                    CancellationLogService.Context.of(cancelledBy, riderId), null, null);
             routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
             routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
             recordHistory(booking.getId(), BookingStatus.CANCELLED_RIDER, why + " - refunded in full");
@@ -964,6 +972,7 @@ public class BookingService {
             }
         }
         RoutePost route = routeOf(booking);
+        BookingStatus statusBefore = booking.getStatus();
 
         if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
             throw new BadRequestException("This booking can no longer be cancelled - current status is " + booking.getStatus());
@@ -975,6 +984,8 @@ public class BookingService {
         routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window"
                 : freeCancellation(booking) ? "Cancelled free of charge - the driver changed the trip's time" : "Cancelled free of charge");
+        cancellationLogService.recordBooking(booking, route, route.getStatus(), statusBefore,
+                CancellationLogService.Context.of("RIDER", callerId), fee, null);
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                 .bookingId(booking.getId())
@@ -987,6 +998,170 @@ public class BookingService {
                 .feeAmount(fee)
                 .cancelledAt(LocalDateTime.now())
                 .build());
+    }
+
+    /** cancelledBy on a single seat ops cancelled - the rider gets support's copy, the driver is told the seat is free. */
+    public static final String CANCELLED_BY_OPS = "OPS";
+
+    /** Seats ops can cancel: paid and not yet finished - including a rider already aboard. */
+    private static final List<BookingStatus> OPS_CANCELLABLE_STATUSES = List.of(
+            BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
+
+    /** What an ops cancellation did: the status before and after, whether anything had been paid, and the money. */
+    public record OpsCancellation(String bookingId, String routePostId, BookingStatus statusBefore, BookingStatus statusAfter,
+                                  boolean paid, BigDecimal fareTotal, BigDecimal fee, BigDecimal refund) {
+    }
+
+    /**
+     * The late-cancellation fee the rider would lose if ops cancelled this seat as the rider's fault right now - the same
+     * rule as the rider cancelling themselves (CancellationPolicy, and free once the driver moved the trip far enough).
+     * Zero for a seat that isn't paid.
+     */
+    public BigDecimal riderFaultFee(Booking booking, RoutePost route, Instant now) {
+        if (booking.getConfirmedAt() == null || freeCancellation(booking)) {
+            return BigDecimal.ZERO;
+        }
+        return cancellationPolicy.applyFee(booking.getFareTotal(), cancellationPolicy.isFeeApplicable(route.getDepartureTime(), now));
+    }
+
+    /**
+     * Ops cancels one seat for the rider. The fault decides the refund: RIDER keeps the late-cancellation fee back under
+     * CancellationPolicy unless ops waives it; DRIVER and PLATFORM refund the rider in full. A seat not yet paid for is
+     * just let go. The refund itself is payment-service's, from the one BOOKING_CANCELLED this sends.
+     */
+    @Transactional
+    public OpsCancellation cancelAsOps(String bookingId, String actorId, String actorName, String reason,
+                                       org.coryd.trip.entity.CancellationFault fault, boolean waiveFee) {
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routeOf(booking);
+        BookingStatus before = booking.getStatus();
+        if (FINISHED_ROUTE_STATUSES.contains(route.getStatus())) {
+            throw new BadRequestException("This trip is already " + route.getStatus().name().toLowerCase()
+                    + " - its bookings can't be cancelled");
+        }
+        if (before == BookingStatus.HELD || before == BookingStatus.RESERVED) {
+            if (!releaseUnpaid(booking, before, truncate("Let go by CoRyd support before payment: " + reason))) {
+                throw new BadRequestException("This booking changed while you were cancelling it - reload and try again");
+            }
+            return new OpsCancellation(bookingId, route.getId(), before, booking.getStatus(), false, booking.getFareTotal(),
+                    BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+        if (!OPS_CANCELLABLE_STATUSES.contains(before)) {
+            throw new BadRequestException("This booking can't be cancelled - it's already " + before);
+        }
+
+        BigDecimal fee = fault == org.coryd.trip.entity.CancellationFault.RIDER && !waiveFee
+                ? riderFaultFee(booking, route, Instant.now()) : BigDecimal.ZERO;
+        boolean feeApplies = fee.signum() > 0;
+        BookingStatus to = fault == org.coryd.trip.entity.CancellationFault.RIDER
+                ? BookingStatus.CANCELLED_RIDER : BookingStatus.CANCELLED_DRIVER;
+        if (!moveStatus(booking, to, OPS_CANCELLABLE_STATUSES)) {
+            throw new BadRequestException("This booking changed while you were cancelling it - reload and try again");
+        }
+        routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
+        routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
+        recordHistory(bookingId, to, truncate("Cancelled by CoRyd support (" + fault + " fault"
+                + (feeApplies ? ", late fee kept" : waiveFee && fault == org.coryd.trip.entity.CancellationFault.RIDER ? ", fee waived" : "")
+                + "): " + reason));
+        cancellationLogService.recordBooking(booking, route, route.getStatus(), before,
+                new CancellationLogService.Context(CANCELLED_BY_OPS, actorId, actorName, reason, fault), fee, null);
+
+        kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
+                .bookingId(booking.getId())
+                .routePostId(booking.getRoutePostId())
+                .riderId(booking.getRiderId())
+                .driverId(route.getDriverId())
+                .cancelledBy(CANCELLED_BY_OPS)
+                .feeApplied(feeApplies)
+                .paid(true)
+                .feeAmount(feeApplies ? fee : null)
+                .cancelledAt(LocalDateTime.now())
+                .build());
+        return new OpsCancellation(bookingId, route.getId(), before, to, true, booking.getFareTotal(), fee,
+                booking.getFareTotal().subtract(fee));
+    }
+
+    /** What ops wants done with riders still waiting to be picked up when it marks a stuck trip completed. */
+    public enum UnboardedOutcome {
+        /** Cancel and refund in full - nothing shows they rode. The default. */
+        REFUND,
+        /** Mark them no-shows - the driver keeps the fare, as when the driver marks it. */
+        NO_SHOW
+    }
+
+    /** What marking a stuck trip completed did to each seat. */
+    public record OpsCompletion(List<String> completed, List<String> refunded, List<String> noShows, List<String> released) {
+    }
+
+    /**
+     * Ops marks a trip left in progress as having happened: everyone aboard is completed exactly as the driver's Complete
+     * Trip does (TRIP_COMPLETED, which settles the driver's earnings), riders never picked up are refunded or marked
+     * no-shows as ops chooses, and the trip ends COMPLETED.
+     */
+    @Transactional
+    public OpsCompletion completeAsOps(String routePostId, String actorId, String actorName, String reason, UnboardedOutcome unboarded) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trip not found"));
+        if (route.getStatus() != RouteStatus.IN_PROGRESS) {
+            throw new BadRequestException("Only a trip in progress can be marked completed - this one is " + route.getStatus());
+        }
+        UnboardedOutcome outcome = unboarded == null ? UnboardedOutcome.REFUND : unboarded;
+        // Claimed first, so a second resolve - or the driver's own Complete landing together - can't settle anyone twice.
+        if (routePostRepository.transitionStatus(routePostId, List.of(RouteStatus.IN_PROGRESS), RouteStatus.COMPLETED) == 0) {
+            throw new BadRequestException("This trip changed while you were resolving it - reload and try again");
+        }
+        List<String> completed = new java.util.ArrayList<>();
+        List<String> refunded = new java.util.ArrayList<>();
+        List<String> noShows = new java.util.ArrayList<>();
+        List<String> released = new java.util.ArrayList<>();
+        CancellationLogService.Context context = new CancellationLogService.Context(RouteService.CANCELLED_BY_OPS_TRIP, actorId,
+                actorName, reason, org.coryd.trip.entity.CancellationFault.PLATFORM);
+
+        for (Booking booking : bookingRepository.findByRoutePostId(routePostId)) {
+            BookingStatus before = booking.getStatus();
+            if (before == BookingStatus.IN_PROGRESS) {
+                if (completeBookingInternal(booking, route)) {
+                    completed.add(booking.getId());
+                }
+            } else if (AWAITING_PICKUP_STATUSES.contains(before)) {
+                if (outcome == UnboardedOutcome.NO_SHOW) {
+                    if (moveStatus(booking, BookingStatus.NO_SHOW, AWAITING_PICKUP_STATUSES)) {
+                        recordHistory(booking.getId(), BookingStatus.NO_SHOW, truncate("Marked no-show by CoRyd support: " + reason));
+                        noShows.add(booking.getId());
+                    }
+                } else if (moveStatus(booking, BookingStatus.CANCELLED_DRIVER, AWAITING_PICKUP_STATUSES)) {
+                    recordHistory(booking.getId(), BookingStatus.CANCELLED_DRIVER,
+                            truncate("Never picked up - refunded by CoRyd support: " + reason));
+                    cancellationLogService.recordBooking(booking, route, RouteStatus.IN_PROGRESS, before, context, null, null);
+                    kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
+                            .bookingId(booking.getId())
+                            .routePostId(routePostId)
+                            .riderId(booking.getRiderId())
+                            .driverId(route.getDriverId())
+                            .cancelledBy(RouteService.CANCELLED_BY_OPS_TRIP)
+                            .feeApplied(false)
+                            .paid(true)
+                            .cancelledAt(LocalDateTime.now())
+                            .build());
+                    refunded.add(booking.getId());
+                }
+            } else if (before == BookingStatus.HELD || before == BookingStatus.RESERVED) {
+                if (releaseUnpaid(booking, before, "Trip closed by CoRyd support - seat released")) {
+                    released.add(booking.getId());
+                }
+            }
+        }
+
+        route.setStatus(RouteStatus.COMPLETED);
+        route.setCompletedAt(Instant.now());
+        routePostRepository.save(route);
+        driverStatsPublisher.changed(route.getDriverId());
+        chatService.deleteChatForRoute(routePostId);
+        return new OpsCompletion(completed, refunded, noShows, released);
+    }
+
+    private static String truncate(String note) {
+        return note.length() <= 500 ? note : note.substring(0, 497) + "...";
     }
 
     /** A solo cab for this rider's own stretch: base plus road km - straight line times the road factor - rounded to 100. */

@@ -15,6 +15,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /** The wording drivers and riders actually see - singular/plural, and refunds only promised when there was a payment. */
@@ -348,6 +349,28 @@ class NotificationCopyTest {
 
         listener.onBookingCancelled(BookingCancelledEvent.builder().bookingId("b-2").riderId("rider-2").cancelledBy("DRIVER").paid(false).build());
         verify(dispatch).sendPush(eq("rider-2"), eq("Booking cancelled"), eq("Your driver cancelled this trip."), eq("BOOKING_CANCELLED"), eq("b-2"));
+    }
+
+    @Test
+    void opsCancellationsSaySupportDidItAndOnlyASingleSeatTellsTheDriver() {
+        listener.onBookingCancelled(BookingCancelledEvent.builder().bookingId("b-1").riderId("rider-1").driverId("driver-1")
+                .cancelledBy("OPS").paid(true).feeApplied(true).build());
+        verify(dispatch).sendPush(eq("rider-1"), eq("Booking cancelled"),
+                eq("CoRyd support cancelled your booking. You'll be refunded, less the late-cancellation fee."), eq("BOOKING_CANCELLED"), eq("b-1"));
+        verify(dispatch).sendPush(eq("driver-1"), eq("A seat opened up"),
+                eq("CoRyd support cancelled a booking on your route - the seat is available again."), eq("BOOKING_CANCELLED"), eq("b-1"));
+
+        listener.onBookingCancelled(BookingCancelledEvent.builder().bookingId("b-2").riderId("rider-2").driverId("driver-1")
+                .cancelledBy("OPS").paid(true).build());
+        verify(dispatch).sendPush(eq("rider-2"), any(), eq("CoRyd support cancelled your booking. You've been fully refunded."), any(), eq("b-2"));
+
+        listener.onBookingCancelled(BookingCancelledEvent.builder().bookingId("b-3").riderId("rider-3").driverId("driver-1")
+                .cancelledBy("OPS_TRIP").paid(true).build());
+        verify(dispatch).sendPush(eq("rider-3"), any(), eq("CoRyd support cancelled this trip. You've been fully refunded."), any(), eq("b-3"));
+        verify(dispatch, never()).sendPush(eq("driver-1"), any(), any(), any(), eq("b-3"));
+
+        listener.onRouteCancelled(routeCancelled("OPS_TRIP", 2));
+        verify(dispatch).sendRoutePush(any(), any(), eq("CoRyd support cancelled your route and 2 bookings were refunded."), any(), any());
     }
 
     @Test

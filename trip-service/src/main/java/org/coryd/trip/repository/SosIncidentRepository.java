@@ -13,6 +13,9 @@ public interface SosIncidentRepository extends JpaRepository<SosIncident, String
     /** Ops Console SOS list, newest first. */
     Page<SosIncident> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
+    /** One trip's SOS - raised on the route by its driver, or on one of its bookings by a rider. */
+    List<SosIncident> findByRoutePostIdOrBookingIdIn(String routePostId, java.util.Collection<String> bookingIds);
+
     /** Dev route reset only - see RouteResetService. */
     long deleteByBookingIdIn(List<String> bookingIds);
 }

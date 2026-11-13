@@ -40,6 +40,9 @@ public class LocationService {
     private static final Set<BookingStatus> NON_TERMINAL_BOOKING_STATUSES =
             Set.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS);
     private static final String ROUTE_LOCATION_KEY_PREFIX = "trip:location:route:";
+    /** The driver's last point kept well past LOCATION_TTL, for ops: where a trip that went quiet was last seen. */
+    private static final String ROUTE_LAST_SEEN_KEY_PREFIX = "trip:location:route-last:";
+    private static final Duration LAST_SEEN_TTL = Duration.ofHours(48);
 
     private final BookingRepository bookingRepository;
     private final RoutePostRepository routePostRepository;
@@ -141,6 +144,7 @@ public class LocationService {
         Instant now = Instant.now();
         String value = lat + "," + lng + "," + now.toEpochMilli();
         redisTemplate.opsForValue().set(ROUTE_LOCATION_KEY_PREFIX + routePostId, value, LOCATION_TTL);
+        redisTemplate.opsForValue().set(ROUTE_LAST_SEEN_KEY_PREFIX + routePostId, value, LAST_SEEN_TTL);
 
         LocationResponse response = new LocationResponse(true, lat, lng, now, null);
 
@@ -174,12 +178,29 @@ public class LocationService {
         return readRouteLocation(routePostId);
     }
 
+    /**
+     * The Ops Console: the driver's last reported point however old (kept 48 hours) - null if they never sent one.
+     * available is false once it's older than the live map's two minutes; the caller works out how stale it is.
+     */
+    public LocationResponse lastSeenRouteLocation(String routePostId) {
+        String raw = redisTemplate.opsForValue().get(ROUTE_LAST_SEEN_KEY_PREFIX + routePostId);
+        if (raw == null) {
+            return null;
+        }
+        LocationResponse point = parse(raw);
+        boolean fresh = point.recordedAt().isAfter(Instant.now().minus(LOCATION_TTL));
+        return new LocationResponse(fresh, point.lat(), point.lng(), point.recordedAt(), fresh ? null : "Last position is stale");
+    }
+
     private LocationResponse readRouteLocation(String routePostId) {
         String raw = redisTemplate.opsForValue().get(ROUTE_LOCATION_KEY_PREFIX + routePostId);
         if (raw == null) {
             return LocationResponse.unavailable("Waiting for the driver's location to come through.");
         }
+        return parse(raw);
+    }
 
+    private static LocationResponse parse(String raw) {
         String[] parts = raw.split(",", 3);
         double lat = Double.parseDouble(parts[0]);
         double lng = Double.parseDouble(parts[1]);

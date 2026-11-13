@@ -129,6 +129,7 @@ public class RouteService {
     private final GeoCapabilities geoCapabilities;
     private final ApplicationEventPublisher eventPublisher;
     private final TripScheduleService tripScheduleService;
+    private final CancellationLogService cancellationLogService;
 
     /** cancelledBy for a route auto-cancelled because its driver never started it. */
     public static final String CANCELLED_NOT_STARTED = "NOT_STARTED";
@@ -987,19 +988,66 @@ public class RouteService {
         if (route.getStatus() == RouteStatus.COMPLETED) {
             throw new BadRequestException("This trip is already completed - it can't be cancelled");
         }
+        cancelRoute(route, CancellationLogService.Context.of(cancelledBy, callerId));
+    }
 
+    /** cancelledBy on every event of a whole trip ops cancelled - riders get support's copy, the driver isn't told once per seat. */
+    public static final String CANCELLED_BY_OPS_TRIP = "OPS_TRIP";
+
+    /**
+     * Ops cancels a trip on the driver's behalf - the same refund-and-notify cascade as the driver's own cancel, every
+     * paid rider refunded in full whatever the fault. A trip already finished is refused rather than ignored, so ops
+     * never believes it cancelled something that had already ended. Returns the paid bookings that were refunded.
+     */
+    @Transactional
+    public List<String> cancelAsOps(String routePostId, String actorId, String actorName, String reason,
+                                    org.coryd.trip.entity.CancellationFault fault) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trip not found"));
+        if (route.getStatus() == RouteStatus.CANCELLED) {
+            throw new BadRequestException("This trip is already cancelled");
+        }
+        if (route.getStatus() == RouteStatus.COMPLETED) {
+            throw new BadRequestException("This trip is already completed - it can't be cancelled");
+        }
+        List<String> refunded = cancelRoute(route,
+                new CancellationLogService.Context(CANCELLED_BY_OPS_TRIP, actorId, actorName, reason, fault));
+        if (refunded == null) {
+            throw new BadRequestException("This trip changed while you were cancelling it - reload and try again");
+        }
+        return refunded;
+    }
+
+    private static final List<RouteStatus> CANCELLABLE_ROUTE_STATUSES = List.of(
+            RouteStatus.DRAFT, RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS);
+
+    /** Null when another writer finished or cancelled the route first - nothing was done. */
+    private List<String> cancelRoute(RoutePost route, CancellationLogService.Context context) {
+        String routePostId = route.getId();
+        RouteStatus before = route.getStatus();
+        // Compare-and-set, so two cancellations landing together can't both send the route's refunds and pushes.
+        if (routePostRepository.transitionStatus(routePostId, CANCELLABLE_ROUTE_STATUSES, RouteStatus.CANCELLED) == 0) {
+            return null;
+        }
         route.setStatus(RouteStatus.CANCELLED);
-        routePostRepository.save(route);
         driverStatsPublisher.changed(route.getDriverId());
+        org.coryd.trip.entity.CancellationLog routeRow = cancellationLogService.recordRoute(route, before, context);
 
+        String cancelledBy = context.cancelledBy();
         List<String> refundedIds = new ArrayList<>();
         for (Booking booking : bookingRepository.findByRoutePostId(routePostId)) {
+            BookingStatus bookingBefore = booking.getStatus();
             // Compare-and-set so a booking the rider cancelled a moment earlier isn't cancelled (and refunded) twice.
             if (bookingRepository.transitionStatus(booking.getId(), CANCELLABLE_BY_ROUTE_CANCELLATION, BookingStatus.CANCELLED_DRIVER) == 1) {
                 booking.setStatus(BookingStatus.CANCELLED_DRIVER);
                 boolean paid = booking.getConfirmedAt() != null;
                 if (paid) {
                     refundedIds.add(booking.getId());
+                    org.coryd.trip.entity.CancellationLog seat = cancellationLogService.recordBooking(
+                            booking, route, before, bookingBefore, context, null, routeRow.getId());
+                    if (seat != null) {
+                        cancellationLogService.addToRoute(routeRow, seat);
+                    }
                 }
                 kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                         .bookingId(booking.getId())
@@ -1025,6 +1073,7 @@ public class RouteService {
         // Same as completion - the route's group chat has no reason to outlive the route itself.
         chatService.deleteChatForRoute(routePostId);
         eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(routePostId));
+        return refundedIds;
     }
 
     /**

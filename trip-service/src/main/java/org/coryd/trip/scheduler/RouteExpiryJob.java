@@ -3,6 +3,7 @@ package org.coryd.trip.scheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.RouteStatus;
+import org.coryd.trip.config.StuckTripProperties;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.RoutePostRepository;
 import org.coryd.trip.service.RouteService;
@@ -22,11 +23,12 @@ import java.util.List;
  * 1. Never started - PUBLISHED/FULL past a grace window past departure. Cancelling here is safe
  *    to do automatically: the trip demonstrably never began, so RouteService.cancel()'s existing
  *    refund-and-notify cascade is exactly the right, unambiguous outcome.
- * 2. Started but never finished - IN_PROGRESS long past departure. This one is NOT auto-resolved:
- *    there's no way to tell from data alone whether the trip actually happened and the driver
- *    just forgot to tap Complete, or whether it never happened at all - completing it would risk
- *    charging a rider for nothing, cancelling it would risk denying the driver a real payout. So
- *    this only logs for a human to resolve via the existing complete/cancel endpoints.
+ * 2. Started but never finished - IN_PROGRESS past its expected arrival plus StuckTripProperties'
+ *    grace. This one is NOT auto-resolved: there's no way to tell from data alone whether the trip
+ *    actually happened and the driver just forgot to tap Complete, or whether it never happened at
+ *    all - completing it would risk charging a rider for nothing, cancelling it would risk denying
+ *    the driver a real payout. The Ops Console's stuck-trips queue (GET /ops/trips/stuck) lists
+ *    these and ops resolves them there; this only logs them as well.
  */
 @Slf4j
 @Component
@@ -35,10 +37,10 @@ public class RouteExpiryJob {
 
     private static final List<RouteStatus> NEVER_STARTED_STATUSES = List.of(RouteStatus.PUBLISHED, RouteStatus.FULL);
     static final Duration NEVER_STARTED_GRACE = Duration.ofMinutes(45);
-    private static final Duration STUCK_IN_PROGRESS_THRESHOLD = Duration.ofHours(6);
 
     private final RoutePostRepository routePostRepository;
     private final RouteService routeService;
+    private final StuckTripProperties stuckTripProperties;
 
     @Scheduled(fixedDelay = 5 * 60_000)
     public void run() {
@@ -63,12 +65,14 @@ public class RouteExpiryJob {
     }
 
     private void flagStuckInProgress() {
-        Instant cutoff = Instant.now().minus(STUCK_IN_PROGRESS_THRESHOLD);
-        List<RoutePost> stuck = routePostRepository.findByStatusAndDepartureTimeBefore(RouteStatus.IN_PROGRESS, cutoff);
-        for (RoutePost route : stuck) {
-            log.warn("OPS REVIEW NEEDED: route {} (driver {}) has been IN_PROGRESS since departure {} - over {}h with no Complete/Cancel. "
-                            + "Resolve manually via the existing complete-trip or cancel-route endpoint once you know which actually happened.",
-                    route.getId(), route.getDriverId(), route.getDepartureTime(), STUCK_IN_PROGRESS_THRESHOLD.toHours());
+        Instant now = Instant.now();
+        for (RoutePost route : routePostRepository.findByStatus(RouteStatus.IN_PROGRESS)) {
+            if (stuckTripProperties.isStuck(route, now)) {
+                log.warn("OPS REVIEW NEEDED: route {} (driver {}) is still IN_PROGRESS {}h past its expected arrival {} - "
+                                + "resolve it from the Ops Console's stuck trips (complete or cancel).",
+                        route.getId(), route.getDriverId(), stuckTripProperties.getGraceHours(),
+                        stuckTripProperties.expectedArrival(route));
+            }
         }
     }
 }
