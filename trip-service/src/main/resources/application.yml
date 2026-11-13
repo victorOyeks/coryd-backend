@@ -71,6 +71,18 @@ services:
 coryd:
   dev-tools:
     enabled: ${DEV_TOOLS_ENABLED:false}
+  # trip-service owns the platform settings (docs/ops-console/settings.md) - it reads its own table, not its own HTTP API.
+  platform-settings:
+    http-bootstrap:
+      enabled: false
+    # The defaults the console shows for settings other services use - the same env vars those services read.
+    defaults:
+      commission-fraction: ${COMMISSION_PERCENTAGE:0.05}
+      money-approval-threshold: ${OPS_MONEY_APPROVAL_THRESHOLD:50000}
+      document-reminder-days: ${DOCUMENT_EXPIRY_REMINDER_DAYS:14}
+      document-final-reminder-days: ${DOCUMENT_EXPIRY_FINAL_REMINDER_DAYS:3}
+  job-runs:
+    schema: trip
 
 google:
   maps:
@@ -160,6 +172,7 @@ trip:
     per-km: ${FARE_PER_KM:100}
     minimum: ${FARE_MINIMUM:500}
     round-to: ${FARE_ROUND_TO:100}
+    outlier-tolerance-percent: ${PRICING_FARE_TOLERANCE_PERCENT:0}
   # Regular routes: how often each driver's upcoming trips are posted (Lagos time).
   route-templates:
     cron: ${ROUTE_TEMPLATES_CRON:0 5 * * * *}

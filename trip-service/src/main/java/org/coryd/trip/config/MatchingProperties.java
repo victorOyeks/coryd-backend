@@ -1,7 +1,11 @@
 package org.coryd.trip.config;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import org.coryd.common.settings.PlatformSetting;
+import org.coryd.common.settings.PlatformSettings;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -39,8 +43,22 @@ public class MatchingProperties {
      */
     private int bookingGraceMinutes = 10;
 
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @Autowired(required = false)
+    private PlatformSettings platformSettings;
+
+    /** Ops' runtime value (booking.grace-minutes), else BOOKING_GRACE_MINUTES. */
+    public int getBookingGraceMinutes() {
+        return PlatformSettings.integer(platformSettings, PlatformSetting.BOOKING_GRACE_MINUTES, bookingGraceMinutes);
+    }
+
+    public int configuredBookingGraceMinutes() {
+        return bookingGraceMinutes;
+    }
+
     /** When booking closes on a trip leaving at departureTime, unless the driver starts it first. */
     public java.time.Instant bookableUntil(java.time.Instant departureTime) {
-        return departureTime == null ? null : departureTime.plus(java.time.Duration.ofMinutes(bookingGraceMinutes));
+        return departureTime == null ? null : departureTime.plus(java.time.Duration.ofMinutes(getBookingGraceMinutes()));
     }
 }

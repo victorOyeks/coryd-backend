@@ -1,10 +1,14 @@
 package org.coryd.trip.config;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.service.TripScheduleService;
+import org.coryd.common.settings.PlatformSetting;
+import org.coryd.common.settings.PlatformSettings;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -25,6 +29,20 @@ public class StuckTripProperties {
     /** Hours past the expected arrival before an in-progress trip is flagged. */
     private int graceHours = 3;
 
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @Autowired(required = false)
+    private PlatformSettings platformSettings;
+
+    /** Ops' runtime value (trips.stuck-grace-hours), else trip.stuck.grace-hours. */
+    public int getGraceHours() {
+        return PlatformSettings.integer(platformSettings, PlatformSetting.STUCK_TRIP_GRACE_HOURS, graceHours);
+    }
+
+    public int configuredGraceHours() {
+        return graceHours;
+    }
+
     public Instant expectedArrival(RoutePost route) {
         Instant start = route.getStartedAt() != null ? route.getStartedAt() : route.getDepartureTime();
         int minutes = route.getEstimatedDurationMinutes() == null
@@ -34,7 +52,7 @@ public class StuckTripProperties {
 
     /** The moment the trip became stuck - expected arrival plus the grace. */
     public Instant stuckFrom(RoutePost route) {
-        return expectedArrival(route).plus(Duration.ofHours(graceHours));
+        return expectedArrival(route).plus(Duration.ofHours(getGraceHours()));
     }
 
     public boolean isStuck(RoutePost route, Instant now) {

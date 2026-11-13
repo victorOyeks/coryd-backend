@@ -217,4 +217,12 @@ public class KafkaTopicsConfig {
     public NewTopic issueReportUpdatedTopic() {
         return TopicBuilder.name(KafkaTopics.ISSUE_REPORT_UPDATED).partitions(3).replicas(1).build();
     }
+
+    /** Compacted and kept forever, like the token revocations: a starting service reads every setting's latest value. */
+    @Bean
+    public NewTopic platformSettingsTopic() {
+        return TopicBuilder.name(KafkaTopics.PLATFORM_SETTINGS).partitions(1).replicas(1).compact()
+                .config("retention.ms", "-1")
+                .build();
+    }
 }

@@ -74,4 +74,11 @@ public final class KafkaTopics {
     public static final String SOS_OPS_REALERT = "coryd-sos-ops-realert";
     /** Ops resolved or dismissed an issue report - the reporter is told, with ops' message. */
     public static final String ISSUE_REPORT_UPDATED = "coryd-issue-report-updated";
+
+    /**
+     * Compacted, keyed by setting key: the platform settings ops changed in the console (commission, cancellation policy,
+     * booking window...). trip-service owns them; every service replays the topic at startup and follows it live, so a
+     * change reaches every service within seconds. See PlatformSettingChangedEvent and docs/ops-console/settings.md.
+     */
+    public static final String PLATFORM_SETTINGS = "coryd-platform-settings";
 }

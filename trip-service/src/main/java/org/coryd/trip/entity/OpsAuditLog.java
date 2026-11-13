@@ -26,11 +26,12 @@ public class OpsAuditLog extends BaseEntity {
         CANCEL_TRIP, CANCEL_BOOKING, RESOLVE_STUCK_COMPLETED, RESOLVE_STUCK_CANCELLED,
         SOS_ACKNOWLEDGED, SOS_NOTE, SOS_ESCALATED, SOS_RESOLVED,
         REPORT_ASSIGNED, REPORT_NOTE, REPORT_RESOLVED, REPORT_DISMISSED,
-        RATING_HIDDEN, RATING_RESTORED
+        RATING_HIDDEN, RATING_RESTORED,
+        SETTING_CHANGED, SETTING_SCHEDULED, SETTING_APPLIED, SETTING_SCHEDULE_CANCELLED, SETTING_RESET
     }
 
-    /** SOS covers SOS-queue safety checks too; ISSUE is an issue report. */
-    public enum TargetType { ROUTE, BOOKING, SOS, ISSUE, RATING }
+    /** SOS covers SOS-queue safety checks too; ISSUE is an issue report; SETTING a platform setting (target id = its key). */
+    public enum TargetType { ROUTE, BOOKING, SOS, ISSUE, RATING, SETTING }
 
     @Column(nullable = false, length = 36)
     private String actorId;

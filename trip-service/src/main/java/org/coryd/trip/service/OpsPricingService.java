@@ -44,6 +44,27 @@ public class OpsPricingService {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.coryd.trip.config.FareProperties fareProperties;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.coryd.common.settings.PlatformSettings platformSettings;
+
+    /**
+     * The tolerance in effect (pricing.fare-tolerance-percent, else trip.fare.outlier-tolerance-percent) as the SQL that
+     * flags a fare: below min x (1 - t) or above max x (1 + t). The value is a validated number, never user text.
+     */
+    String outlierCondition() {
+        BigDecimal configured = fareProperties == null || fareProperties.getOutlierTolerancePercent() == null
+                ? BigDecimal.ZERO : fareProperties.getOutlierTolerancePercent();
+        BigDecimal percent = org.coryd.common.settings.PlatformSettings.decimal(platformSettings,
+                org.coryd.common.settings.PlatformSetting.FARE_TOLERANCE_PERCENT, configured).max(BigDecimal.ZERO);
+        BigDecimal t = percent.movePointLeft(2);
+        String low = BigDecimal.ONE.subtract(t).max(BigDecimal.ZERO).toPlainString();
+        String high = BigDecimal.ONE.add(t).toPlainString();
+        return "(x.fare_per_seat < s.min_fare * " + low + " or x.fare_per_seat > s.max_fare * " + high + ")";
+    }
+
     @Transactional(readOnly = true)
     public OpsPricingResponse pricing(LocalDate from, LocalDate to, String corridor, boolean outliersOnly) {
         LocalDate end = to == null ? LocalDate.now(LAGOS) : to;
@@ -58,6 +79,7 @@ public class OpsPricingService {
         Instant until = end.plusDays(1).atStartOfDay(LAGOS).toInstant();
         String match = corridor == null || corridor.isBlank() ? null : "%" + corridor.trim().toLowerCase(Locale.ROOT) + "%";
         String corridorFilter = match == null ? "" : " where x.corridor_key like :match";
+        String outlier = outlierCondition();
 
         List<OpsPricingResponse.Corridor> corridors = new ArrayList<>();
         for (Object[] r : rows("""
@@ -72,7 +94,7 @@ public class OpsPricingService {
                 select x.corridor_key, min(x.origin_label), min(x.destination_label), count(*),
                        min(x.fare_per_seat), percentile_cont(0.5) within group (order by x.fare_per_seat), avg(x.fare_per_seat),
                        max(x.fare_per_seat), s.min_fare, s.max_fare, s.sample_size,
-                       sum(case when s.id is not null and (x.fare_per_seat < s.min_fare or x.fare_per_seat > s.max_fare) then 1 else 0 end),
+                       sum(case when s.id is not null and %s then 1 else 0 end),
                        coalesce(max(rep.n), 0)
                 from x
                 left join trip.suggested_fare_ranges s on s.corridor_key = x.corridor_key
@@ -80,7 +102,7 @@ public class OpsPricingService {
                 %s
                 group by x.corridor_key, s.id, s.min_fare, s.max_fare, s.sample_size
                 order by count(*) desc, x.corridor_key
-                """.formatted(ROUTES, CORRIDOR.formatted("r"), corridorFilter), since, until, match)) {
+                """.formatted(ROUTES, CORRIDOR.formatted("r"), outlier, corridorFilter), since, until, match)) {
             long outliers = ((Number) r[11]).longValue();
             if (outliersOnly && outliers == 0) {
                 continue;
@@ -96,11 +118,11 @@ public class OpsPricingService {
                        x.fare_per_seat, s.min_fare, s.max_fare
                 from (%s) x
                 join trip.suggested_fare_ranges s on s.corridor_key = x.corridor_key
-                where (x.fare_per_seat < s.min_fare or x.fare_per_seat > s.max_fare)%s
+                where %s%s
                 order by greatest((x.fare_per_seat - s.max_fare) / nullif(s.max_fare, 0), (s.min_fare - x.fare_per_seat) / nullif(s.min_fare, 0)) desc,
                          x.departure_time desc
                 limit %d
-                """.formatted(ROUTES, match == null ? "" : " and x.corridor_key like :match", MAX_ROWS), since, until, match)) {
+                """.formatted(ROUTES, outlier, match == null ? "" : " and x.corridor_key like :match", MAX_ROWS), since, until, match)) {
             BigDecimal fare = money(r[7]);
             BigDecimal min = money(r[8]);
             BigDecimal max = money(r[9]);

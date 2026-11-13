@@ -23,4 +23,7 @@ public class FareProperties {
 
     /** Suggestions are rounded to the nearest this many naira. */
     private BigDecimal roundTo = new BigDecimal("100");
+
+    /** Pricing monitor: how far outside a corridor's suggested range (in %) a fare can be before it's an outlier. */
+    private BigDecimal outlierTolerancePercent = BigDecimal.ZERO;
 }
