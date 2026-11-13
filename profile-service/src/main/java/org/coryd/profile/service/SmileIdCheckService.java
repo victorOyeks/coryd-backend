@@ -138,11 +138,11 @@ public class SmileIdCheckService {
             return;
         }
 
-        SmileIdCheckHandler.OpsOverride override = handler.startOverride(userId);
+        boolean opsDecided = handler.opsDecidedWhileOut(userId);
         SmileIdDecision decision = decide(handler, userId, result);
         String summary = decision.kind() == SmileIdDecision.Kind.RETRY
                 ? decision.summary() : decision.summary() + SmileIdResults.fraudNote(result) + handler.resultNote(userId);
-        verificationCheckRepository.save(VerificationCheck.builder()
+        VerificationCheck recordedCheck = verificationCheckRepository.save(VerificationCheck.builder()
                 .driverId(userId)
                 .checkType(handler.recordedAs())
                 .subjectKey(checkId)
@@ -155,6 +155,19 @@ public class SmileIdCheckService {
                 .build());
 
         check.setStartedAt(null);
+        if (opsDecided) {
+            // Ops decided while this was out, and ops' decision stands: the result is evidence, not a verdict. It uses no
+            // try, asks for no retry, and leaves nothing on a review list.
+            check.setRetryReason(null);
+            smileIdCheckRepository.save(check);
+            recordedCheck.setReviewedAt(Instant.now());
+            recordedCheck.setReviewedBy("ops decided before this result");
+            verificationCheckRepository.save(recordedCheck);
+            handler.recordLateResult(userId, decision);
+            log.info("Smile ID result for {}'s {} came in after ops decided - recorded, ops' decision kept ({} - {})",
+                    userId, handler.noun(), decision.kind(), summary);
+            return;
+        }
         check.setRetryReason(decision.retryReason());
         if (decision.usesATry()) {
             check.setAttempts(check.getAttempts() + 1);
@@ -168,10 +181,6 @@ public class SmileIdCheckService {
             case RETRY -> { }
         }
         handler.afterResult(userId, decision);
-        if (override != null) {
-            handler.finishOverride(userId, decision, override);
-            log.info("Smile ID result for {}'s {} overrode the ops decision made while it was out: {}", userId, handler.noun(), decision.kind());
-        }
     }
 
     private SmileIdDecision decide(SmileIdCheckHandler handler, String userId, SmileIdResult result) {

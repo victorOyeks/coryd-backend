@@ -40,7 +40,7 @@ public record VerificationStatusResponse(
     public record DriverDetails(String firstName, String lastName, String photoUrl, String licenceNumber, LocalDate dateOfBirth) {
     }
 
-    /** awaitingProvider: the licence is with Smile ID and its result hasn't come - ops may still decide it; the result overrides. */
+    /** awaitingProvider: the licence is with Smile ID and its result hasn't come - ops may still decide it; ops' decision then stands and the result is only recorded. */
     public record ItemStatus(VerificationStatus status, String rejectionReason, String url,
                              Instant submittedAt, boolean resubmitted, boolean awaitingProvider) {
     }

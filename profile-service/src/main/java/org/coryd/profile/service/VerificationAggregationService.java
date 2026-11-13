@@ -182,8 +182,11 @@ public class VerificationAggregationService {
         if (partialOnReviewList) {
             return null;
         }
+        // A late Smile ID result recorded after ops decided isn't a decision - ops' decision before it is the one that counts.
         Optional<org.coryd.profile.entity.VerificationDecisionLog> lastDecision = decisionLogRepository
-                .findFirstByDriverIdAndItemOrderByCreatedAtDesc(driverId, org.coryd.common.enums.DecisionSubject.GOVERNMENT_ID);
+                .findByDriverIdAndItemOrderByCreatedAtDesc(driverId, org.coryd.common.enums.DecisionSubject.GOVERNMENT_ID).stream()
+                .filter(l -> l.getAction() != VerificationDecisionAction.PROVIDER_RESULT)
+                .findFirst();
         boolean bySmileId = lastDecision
                 .map(l -> l.getStatus() == VerificationStatus.APPROVED && LicenceCheck.DECIDED_BY.equals(l.getDecidedBy()))
                 // approved before decisions were logged: Smile ID's if its own check matched
@@ -289,39 +292,6 @@ public class VerificationAggregationService {
                 driverDocumentRepository.findByDriverId(driverId));
     }
 
-    /**
-     * After Smile ID overrides an ops decision on the licence: keeps trip-service's posting gate in step. An approval
-     * overturned stops the driver posting (DRIVER_REJECTED notifies nobody); a rejection overturned into an approval
-     * lets them post again. A first-ever approval was already announced by reevaluateAndPublish.
-     */
-    public void publishOverride(String driverId, VerificationStatus before, boolean verifiedBefore, String decidedBy) {
-        DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
-        Vehicle vehicle = primaryVehicle(driverId);
-        List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
-        VerificationStatus after = computeOverallStatus(profile, vehicle, documents);
-        if (before == VerificationStatus.APPROVED && after != VerificationStatus.APPROVED && after != VerificationStatus.REJECTED) {
-            logKafkaResult(driverId, KafkaTopics.DRIVER_REJECTED,
-                    kafkaTemplate.send(KafkaTopics.DRIVER_REJECTED, DriverRejectedEvent.builder()
-                            .driverId(driverId)
-                            .vehicleId(vehicle == null ? null : vehicle.getId())
-                            .email(profile == null ? null : profile.getEmail())
-                            .rejectionReason("Driver's licence back under review")
-                            .reviewedBy(decidedBy)
-                            .rejectedAt(LocalDateTime.now())
-                            .build()));
-        } else if (before != VerificationStatus.APPROVED && after == VerificationStatus.APPROVED && verifiedBefore) {
-            logKafkaResult(driverId, KafkaTopics.DRIVER_APPROVED,
-                    kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
-                            .driverId(driverId)
-                            .vehicleId(vehicle == null ? null : vehicle.getId())
-                            .email(profile == null ? null : profile.getEmail())
-                            .reviewedBy(decidedBy)
-                            .approvedAt(LocalDateTime.now())
-                            .firstApproval(false)
-                            .build()));
-        }
-    }
-
     /** A driver who mustn't post - an expired document. trip-service's gate is told; the driver hears nothing from this. */
     public void publishPostingBlocked(String driverId, String reason, String decidedBy) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
@@ -337,13 +307,15 @@ public class VerificationAggregationService {
                         .build()));
     }
 
-    /** What Smile ID's late result did to a licence ops had decided, for the audit log. */
-    public void recordProviderOutcome(String driverId, VerificationStatus status, String note, String decidedBy) {
+    /** Smile ID's result on a licence ops had already decided, for the audit log: status is ops' decision, which stands. */
+    public void recordLateProviderResult(String driverId, VerificationStatus status, String providerOutcome, String note, String decidedBy) {
         decisionLogRepository.save(org.coryd.profile.entity.VerificationDecisionLog.builder()
                 .driverId(driverId)
                 .item(org.coryd.common.enums.DecisionSubject.GOVERNMENT_ID)
                 .action(VerificationDecisionAction.PROVIDER_RESULT)
+                .previousStatus(status)
                 .status(status)
+                .providerOutcome(providerOutcome)
                 .note(note == null ? null : note.length() > 500 ? note.substring(0, 500) : note)
                 .decidedBy(decidedBy)
                 .build());
@@ -535,7 +507,7 @@ public class VerificationAggregationService {
                 DriverProfile profile = driverProfileRepository.findByUserId(driverId)
                         .orElseThrow(() -> new ResourceNotFoundException("Driver profile not found"));
                 org.coryd.profile.entity.SmileIdCheck check = licenceCheck(driverId);
-                // Decided before Smile ID answered - its result, when it comes, overrides this.
+                // Decided before Smile ID answered - its result, when it comes, is recorded and this decision stands.
                 profile.setGovernmentIdDecidedDuringCheck(profile.getGovernmentIdStatus() == VerificationStatus.PENDING
                         && check != null && check.getStartedAt() != null);
                 profile.setGovernmentIdStatus(decision.status());
@@ -681,6 +653,11 @@ public class VerificationAggregationService {
 
     private Vehicle primaryVehicle(String driverId) {
         return primary(vehicleRepository.findByDriverId(driverId));
+    }
+
+    /** The vehicle the verification screens review - null if the driver hasn't registered one. */
+    public Vehicle primaryVehicleOf(String driverId) {
+        return primaryVehicle(driverId);
     }
 
     /** The first one registered - picked the same way everywhere so the queue, review page and decision agree. */

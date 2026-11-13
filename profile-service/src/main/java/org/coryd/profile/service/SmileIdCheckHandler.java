@@ -32,23 +32,19 @@ interface SmileIdCheckHandler {
     /** The name as on their profile for this check - what the SDK sends on live. */
     IdentityVerificationService.Name profileName(String userId, UserRole role);
 
-    /** False once ops has it or has decided - a late result never overrides that, unless ops decided while it was still out. */
+    /** False once ops has it or has decided - a late result is then ignored, unless ops decided while it was still out (then it's recorded, not applied). */
     boolean awaitingResult(String userId);
 
     /**
-     * Ops decided before this result came in - what to remember now so the result can override that decision.
-     * Null when there's nothing to override.
+     * Ops decided before this result came in. The result is then recorded (the check row, and recordLateResult) but not
+     * applied - ops' decision stands.
      */
-    default OpsOverride startOverride(String userId) {
-        return null;
+    default boolean opsDecidedWhileOut(String userId) {
+        return false;
     }
 
-    /** The result has been applied over ops's decision - record it and put everything in step. */
-    default void finishOverride(String userId, SmileIdDecision decision, OpsOverride override) {
-    }
-
-    /** The driver's overall status, and whether they had ever been verified, before the result landed. */
-    record OpsOverride(org.coryd.common.enums.VerificationStatus overallBefore, boolean verifiedBefore) {
+    /** A result that came in after ops decided - log it in the audit trail; change nothing ops decided. */
+    default void recordLateResult(String userId, SmileIdDecision decision) {
     }
 
     /** Smile ID said clear - approve, or send to ops if what it read doesn't match the person. */

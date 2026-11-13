@@ -387,7 +387,7 @@ class VerificationReviewIntegrationTest {
         assertThat(status.governmentId().status()).isEqualTo(VerificationStatus.APPROVED);
         assertThat(status.overallStatus()).isEqualTo(VerificationStatus.APPROVED);
         assertThat(driverProfileRepository.findByUserId("d-1").orElseThrow().isGovernmentIdDecidedDuringCheck())
-                .as("Smile ID's result will override this").isTrue();
+                .as("Smile ID's result, when it comes, is recorded and this decision stands").isTrue();
     }
 
     @Test
@@ -425,37 +425,22 @@ class VerificationReviewIntegrationTest {
     }
 
     @Test
-    void anOverriddenApprovalStopsTheDriverPostingAndAnOverriddenRejectionLetsThemBackIn() {
+    void smileIdsLateResultIsInTheAuditLogAndOpsDecisionStands() {
         submitAll("d-1", "Emeka", "Okafor");
-        decide("d-1", new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null),
-                new ItemDecision(ReviewableItem.VEHICLE, VerificationStatus.APPROVED, null),
-                new ItemDecision(ReviewableItem.INSURANCE, VerificationStatus.APPROVED, null),
-                new ItemDecision(ReviewableItem.ROADWORTHINESS_CERT, VerificationStatus.APPROVED, null));
-        org.mockito.Mockito.clearInvocations(kafkaTemplate);
-        jdbcTemplate.update("update profile.driver_profiles set government_id_status = 'IN_REVIEW' where user_id = 'd-1'");
+        decide("d-1", new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null));
+        verification.recordLateProviderResult("d-1", VerificationStatus.APPROVED, "MATCH",
+                "Smile ID's result came in after ops decided - ops' decision stands. Smile ID approved it: …", "SMILE_ID");
 
-        verification.publishOverride("d-1", VerificationStatus.APPROVED, true, "SMILE_ID");
-        org.mockito.Mockito.verify(kafkaTemplate).send(org.mockito.ArgumentMatchers.eq(org.coryd.common.kafka.KafkaTopics.DRIVER_REJECTED), any());
-
-        jdbcTemplate.update("update profile.driver_profiles set government_id_status = 'APPROVED' where user_id = 'd-1'");
-        verification.publishOverride("d-1", VerificationStatus.REJECTED, true, "SMILE_ID");
-        org.mockito.Mockito.verify(kafkaTemplate).send(org.mockito.ArgumentMatchers.eq(org.coryd.common.kafka.KafkaTopics.DRIVER_APPROVED), any());
-
-        org.mockito.Mockito.clearInvocations(kafkaTemplate);
-        verification.publishOverride("d-1", VerificationStatus.APPROVED, true, "SMILE_ID");
-        org.mockito.Mockito.verifyNoInteractions(kafkaTemplate);
-    }
-
-    @Test
-    void whatSmileIdsLateResultDidIsInTheAuditLog() {
-        submitAll("d-1", "Emeka", "Okafor");
-        verification.recordProviderOutcome("d-1", VerificationStatus.IN_REVIEW, "Smile ID's result came in after ops decided", "SMILE_ID");
-
-        assertThat(review.history("d-1", UserRole.OPS_ADMIN)).singleElement().satisfies(h -> {
+        assertThat(review.history("d-1", UserRole.OPS_ADMIN).get(0)).satisfies(h -> {
             assertThat(h.item()).isEqualTo(ReviewableItem.GOVERNMENT_ID);
-            assertThat(h.status()).isEqualTo(VerificationStatus.IN_REVIEW);
+            assertThat(h.action()).isEqualTo(org.coryd.common.enums.VerificationDecisionAction.PROVIDER_RESULT);
+            assertThat(h.status()).isEqualTo(VerificationStatus.APPROVED);
+            assertThat(h.providerOutcome()).isEqualTo("MATCH");
             assertThat(h.decidedBy()).isEqualTo("SMILE_ID");
         });
+        assertThat(verification.getStatus("d-1").governmentId().status()).isEqualTo(VerificationStatus.APPROVED);
+        assertThat(verification.licenceLockedBySmileId("d-1"))
+                .as("ops approved it - a Smile ID result recorded afterwards doesn't make it Smile ID's approval").isNull();
     }
 
     private void licenceWithSmileId(String driverId, int startedMinutesAgo) {

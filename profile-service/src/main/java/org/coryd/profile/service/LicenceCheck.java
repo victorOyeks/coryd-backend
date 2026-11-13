@@ -125,39 +125,32 @@ class LicenceCheck implements SmileIdCheckHandler {
                 .orElse(false);
     }
 
-    /** Ops approved or rejected this licence before Smile ID answered - Smile ID's answer wins. */
+    /** Ops approved or rejected this licence before Smile ID answered - ops' decision stands when the answer comes. */
     @Override
-    public OpsOverride startOverride(String userId) {
-        return driverProfileRepository.findByUserId(userId)
-                .filter(DriverProfile::isGovernmentIdDecidedDuringCheck)
-                .map(p -> new OpsOverride(verificationAggregationService.overallStatus(userId), p.getVerifiedSince() != null))
-                .orElse(null);
+    public boolean opsDecidedWhileOut(String userId) {
+        return driverProfileRepository.findByUserId(userId).map(DriverProfile::isGovernmentIdDecidedDuringCheck).orElse(false);
     }
 
     /**
-     * Approved by Smile ID: already applied and logged by approve(). Sent for review: back in the ops queue with Smile ID's
-     * finding. Asked to try again: back to waiting for a new check. Then the posting gate is put in step.
+     * Smile ID's answer to a licence ops already decided: recorded in the audit log as PROVIDER_RESULT with what Smile ID
+     * said, and nothing else changes - not the licence, not the driver's posting, not their tries. Ops can act on it from
+     * the history if it disagrees with them.
      */
     @Override
-    public void finishOverride(String userId, SmileIdDecision decision, OpsOverride override) {
-        DriverProfile profile = driverProfileRepository.findByUserId(userId).orElse(null);
-        if (profile == null) {
-            return;
-        }
-        profile.setGovernmentIdDecidedDuringCheck(false);
-        switch (decision.kind()) {
-            case APPROVE -> { }
-            case OPS -> verificationAggregationService.recordProviderOutcome(userId, VerificationStatus.IN_REVIEW,
-                    "Smile ID's result came in after ops decided - back for review: " + decision.summary(), DECIDED_BY);
-            case RETRY -> {
-                profile.setGovernmentIdStatus(VerificationStatus.PENDING);
-                profile.setGovernmentIdRejectionReason(null);
-                verificationAggregationService.recordProviderOutcome(userId, VerificationStatus.PENDING,
-                        "Smile ID's result came in after ops decided - the driver must verify their licence again: " + decision.summary(), DECIDED_BY);
-            }
-        }
-        driverProfileRepository.save(profile);
-        verificationAggregationService.publishOverride(userId, override.overallBefore(), override.verifiedBefore(), DECIDED_BY);
+    public void recordLateResult(String userId, SmileIdDecision decision) {
+        driverProfileRepository.findByUserId(userId).ifPresent(profile -> {
+            profile.setGovernmentIdDecidedDuringCheck(false);
+            driverProfileRepository.save(profile);
+            String said = switch (decision.kind()) {
+                case APPROVE -> "approved it";
+                case OPS -> "sent it for review";
+                case RETRY -> "asked the driver to try again";
+            };
+            verificationAggregationService.recordLateProviderResult(userId, profile.getGovernmentIdStatus(),
+                    decision.retryReason() != null ? decision.retryReason().name() : decision.outcome() == null ? null : decision.outcome().name(),
+                    "Smile ID's result came in after ops decided - ops' decision stands. Smile ID " + said + ": " + decision.summary(),
+                    DECIDED_BY);
+        });
     }
 
     /** Clear means a genuine licence with their face on it - it must also be in their name, with their number, not expired. */
