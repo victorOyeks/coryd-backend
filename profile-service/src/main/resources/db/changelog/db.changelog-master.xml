@@ -40,5 +40,6 @@
     <include file="db/changelog/029-driver-index.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/030-document-expiry-and-rider-index.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/031-ops-verification-overrides.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/032-directory-identity-and-last-trip.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

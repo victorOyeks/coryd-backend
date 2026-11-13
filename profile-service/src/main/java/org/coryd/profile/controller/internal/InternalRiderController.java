@@ -30,12 +30,13 @@ public class InternalRiderController {
     @GetMapping("/index")
     public ApiResponse<org.coryd.common.response.PagedResponse<org.coryd.profile.dto.RiderIndexView>> index(
             @RequestParam(required = false) org.coryd.common.enums.RiderDirectoryStatus status,
+            @RequestParam(required = false) org.coryd.common.enums.RiderIdentityStatus identity,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) org.coryd.common.enums.RiderDirectorySort sort,
             @RequestParam(required = false) org.springframework.data.domain.Sort.Direction direction,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(riderIndexService.directory(status, search, sort, direction, page, size));
+        return ApiResponse.ok(riderIndexService.directory(status, identity, search, sort, direction, page, size));
     }
 
     @GetMapping("/index/counts")

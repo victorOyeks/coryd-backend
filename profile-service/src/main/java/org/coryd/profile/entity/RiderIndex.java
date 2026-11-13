@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.coryd.common.enums.RiderDirectoryStatus;
+import org.coryd.common.enums.RiderIdentityStatus;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -19,7 +20,7 @@ import java.time.Instant;
 /**
  * One row per rider with everything the Riders Directory filters, sorts and searches on - one indexed query however many
  * riders there are. Rebuilt from the rider's profile whenever it changes (RiderIndexListener); trip numbers and
- * suspensions arrive as events. Never the source of truth - RiderIndexService can rebuild any row.
+ * suspensions arrive as events; identity changes rebuild the row too. Never the source of truth - RiderIndexService can rebuild any row.
  */
 @Entity
 @Table(name = "rider_index", schema = "profile")
@@ -55,12 +56,20 @@ public class RiderIndex {
     @Column(nullable = false, length = 20)
     private RiderDirectoryStatus directoryStatus;
 
+    /** Their identity (NIN) check, as the ops identity screen's tab - NOT_STARTED when they never submitted one. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private RiderIdentityStatus identityStatus = RiderIdentityStatus.NOT_STARTED;
+
     private Long trips;
     private Double ratingAvg;
     private Long ratingCount;
     private Integer reliabilityPercent;
     private Long reportsFiled;
     private BigDecimal totalSpent;
+    /** When their most recent completed trip ended - from trip-service with the numbers above. */
+    private Instant lastTripAt;
     /** When trip-service worked those numbers out - an older message is ignored. */
     private Instant statsAt;
 

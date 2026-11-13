@@ -99,6 +99,10 @@ public class DriverIndexService {
         row.setRatingCount(event.getRatingCount());
         row.setReliabilityPercent(event.getReliabilityPercent());
         row.setReportsFiled(event.getReportsFiled());
+        if (event.getLastTripAt() != null || event.getTrips() == 0) {
+            // No lastTripAt with trips on record is a sender that predates the field - keep what the row has.
+            row.setLastTripAt(event.getLastTripAt());
+        }
         row.setStatsAt(event.getComputedAt());
         save(row);
     }
@@ -143,7 +147,8 @@ public class DriverIndexService {
                 driverIndexRepository.count(base.and(DriverIndexSpecs.status(DriverDirectoryStatus.VERIFIED))),
                 driverIndexRepository.count(base.and(DriverIndexSpecs.status(DriverDirectoryStatus.PENDING))),
                 driverIndexRepository.count(base.and(DriverIndexSpecs.status(DriverDirectoryStatus.RESUBMITTED))),
-                driverIndexRepository.count(base.and(DriverIndexSpecs.status(DriverDirectoryStatus.SUSPENDED))));
+                driverIndexRepository.count(base.and(DriverIndexSpecs.status(DriverDirectoryStatus.SUSPENDED))),
+                driverIndexRepository.count(base.and(DriverIndexSpecs.lastTripSince(Instant.now().minus(RiderIndexService.ACTIVE_WINDOW)))));
     }
 
     @Transactional(readOnly = true)
@@ -237,6 +242,6 @@ public class DriverIndexService {
                 r.getDirectoryStatus(), r.getOverallStatus(), r.getSuspendedAt(), r.getSuspensionReason(),
                 r.getVehicleMake(), r.getVehicleModel(), r.getVehicleYear(), r.getVehicleColor(), r.getPlateNumber(),
                 r.getTrips(), r.getRatingAvg(), r.getRatingCount(), r.getReliabilityPercent(), r.getReportsFiled(),
-                r.getEarningsNet(), r.getEarningsGross());
+                r.getEarningsNet(), r.getEarningsGross(), r.getLastTripAt());
     }
 }

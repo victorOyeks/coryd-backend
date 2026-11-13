@@ -25,6 +25,7 @@ import java.time.LocalDate;
  * older upload-a-selfie submission, and is deleted once a decision is made).
  */
 @Entity
+@jakarta.persistence.EntityListeners(RiderIndexListener.class)
 @Table(name = "identity_verifications", schema = "profile")
 @Getter
 @Setter
