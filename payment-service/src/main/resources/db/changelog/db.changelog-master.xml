@@ -24,5 +24,6 @@
     <include file="db/changelog/013-subaccount-split-percentage.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/014-subaccount-settlement-schedule.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/015-ops-money.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/016-job-runs.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

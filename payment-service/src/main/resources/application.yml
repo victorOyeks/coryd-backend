@@ -98,6 +98,8 @@ ops:
 coryd:
   dev-tools:
     enabled: ${DEV_TOOLS_ENABLED:false}
+  job-runs:
+    schema: payment
 
 management:
   endpoints:

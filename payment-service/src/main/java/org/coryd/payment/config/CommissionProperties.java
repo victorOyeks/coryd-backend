@@ -1,7 +1,11 @@
 package org.coryd.payment.config;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import org.coryd.common.settings.PlatformSetting;
+import org.coryd.common.settings.PlatformSettings;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -18,11 +22,23 @@ import org.springframework.context.annotation.Configuration;
 public class CommissionProperties {
     private java.math.BigDecimal percentage = new java.math.BigDecimal("0.05");
 
+    /** Ops' runtime value (commission.percent, docs/ops-console/settings.md) - absent in slice tests. */
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @Autowired(required = false)
+    private PlatformSettings platformSettings;
+
+    /** The commission in effect, as a fraction: ops' percentage / 100, else COMMISSION_PERCENTAGE. */
+    public java.math.BigDecimal getPercentage() {
+        java.math.BigDecimal percent = PlatformSettings.decimal(platformSettings, PlatformSetting.COMMISSION_PERCENT, null);
+        return percent == null ? percentage : percent.movePointLeft(2);
+    }
+
     /**
      * Paystack's percentage_charge is OUR share (the main account's), not the driver's - so it is the
      * commission itself, 5 for 5%. Sending 95 once paid drivers 5% of their fares.
      */
     public java.math.BigDecimal paystackPercentageCharge() {
-        return percentage.multiply(new java.math.BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP);
+        return getPercentage().multiply(new java.math.BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 }

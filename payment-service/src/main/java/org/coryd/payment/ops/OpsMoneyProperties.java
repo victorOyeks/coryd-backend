@@ -1,7 +1,11 @@
 package org.coryd.payment.ops;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import org.coryd.common.settings.PlatformSetting;
+import org.coryd.common.settings.PlatformSettings;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -23,7 +27,17 @@ public class OpsMoneyProperties {
     /** Longest finance dashboard window, in days. */
     private int maxDashboardDays = 366;
 
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @Autowired(required = false)
+    private PlatformSettings platformSettings;
+
+    /** Ops' runtime value (money.approval-threshold), else OPS_MONEY_APPROVAL_THRESHOLD. */
+    public BigDecimal getApprovalThreshold() {
+        return PlatformSettings.decimal(platformSettings, PlatformSetting.MONEY_APPROVAL_THRESHOLD, approvalThreshold);
+    }
+
     public boolean needsApproval(BigDecimal amount) {
-        return amount != null && amount.compareTo(approvalThreshold) > 0;
+        return amount != null && amount.compareTo(getApprovalThreshold()) > 0;
     }
 }

@@ -75,7 +75,8 @@ public class SubaccountBackfill implements ApplicationRunner {
     }
 
     /** In test mode every driver shares one subaccount, so each code is updated once. */
-    private void syncSubaccounts() {
+    /** Public so a commission change (CommissionChangeListener) can re-sync every subaccount's split. */
+    public synchronized void syncSubaccounts() {
         BigDecimal current = commissionProperties.paystackPercentageCharge();
         String schedule = paystackProperties.getSettlementSchedule();
         List<PayoutRecipient> stale = payoutRecipientRepository.findByGatewaySubaccountCodeIsNotNull().stream()
