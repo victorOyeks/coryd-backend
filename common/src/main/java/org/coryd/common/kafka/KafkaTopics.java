@@ -74,4 +74,7 @@ public final class KafkaTopics {
     public static final String SOS_OPS_REALERT = "coryd-sos-ops-realert";
     /** Ops resolved or dismissed an issue report - the reporter is told, with ops' message. */
     public static final String ISSUE_REPORT_UPDATED = "coryd-issue-report-updated";
+
+    /** Ops Console (phase 6): a super admin invited an admin (or re-sent the invite) - notification-service emails the link. */
+    public static final String OPS_ADMIN_INVITED = "coryd-ops-admin-invited";
 }

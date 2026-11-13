@@ -217,4 +217,9 @@ public class KafkaTopicsConfig {
     public NewTopic issueReportUpdatedTopic() {
         return TopicBuilder.name(KafkaTopics.ISSUE_REPORT_UPDATED).partitions(3).replicas(1).build();
     }
+
+    @Bean
+    public NewTopic opsAdminInvitedTopic() {
+        return TopicBuilder.name(KafkaTopics.OPS_ADMIN_INVITED).partitions(1).replicas(1).build();
+    }
 }
