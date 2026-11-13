@@ -46,7 +46,8 @@ public class LicenceReviewService {
         JsonNode result = read(check.getRawResponse());
         JsonNode idFields = result == null ? null : field(result, "id_fields", "idFields");
         LicenceReviewResponse.LicenceDetails licence = idFields == null ? null : new LicenceReviewResponse.LicenceDetails(
-                fullName(idFields), text(idFields, "id_number", "idNumber"), text(idFields, "date_of_birth", "dateOfBirth"),
+                fullName(idFields), org.coryd.common.util.PiiMask.trailing(text(idFields, "id_number", "idNumber")),
+                org.coryd.common.util.PiiMask.birthYear(text(idFields, "date_of_birth", "dateOfBirth")),
                 text(idFields, "expiration_date", "expirationDate"));
 
         JobImages fetched = images(check, LicenceReviewService::kind);

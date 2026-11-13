@@ -205,8 +205,29 @@ class OpsPlatformApiTest {
                         .header("Authorization", admin))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.trips.posted").value(5))
-                .andExpect(jsonPath("$.data.revenue").isEmpty())
+                .andExpect(jsonPath("$.data.revenue").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.daily[1].tripsPosted").value(5))
+                .andExpect(jsonPath("$.data.daily[1].commission").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.daily[1]", org.hamcrest.Matchers.hasKey("payouts")))
                 .andExpect(jsonPath("$.data.unavailable[0]").value("payment-service"));
+
+        // trip-service down: its sections are null, mixed sections keep every field with trip's ones null
+        replies.put("/payment/internal/ops/money/finance/summary", new Reply(200, "{\"data\":{\"grossBookings\":{\"count\":0,\"amount\":0}}}"));
+        replies.put("/trip/internal/ops/dashboard", new Reply(503, "{\"message\":\"down\"}"));
+        mockMvc.perform(get("/dashboard").param("from", "2026-11-12").param("to", "2026-11-13").param("fresh", "true")
+                        .header("Authorization", admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trips").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.cancellations").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.recentActivity").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.activity").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.drivers.total").value(12))
+                .andExpect(jsonPath("$.data.drivers", org.hamcrest.Matchers.hasKey("onlineNow")))
+                .andExpect(jsonPath("$.data.drivers.onlineNow").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.riders.repeatInRange").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.daily[0].tripsPosted").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.daily[0].grossBookings").value(0))
+                .andExpect(jsonPath("$.data.unavailable[0]").value("trip-service"));
         mockMvc.perform(get("/dashboard").param("from", "2026-11-13").param("to", "2026-11-12").header("Authorization", admin))
                 .andExpect(status().isBadRequest());
     }
@@ -236,9 +257,23 @@ class OpsPlatformApiTest {
                 .andExpect(status().isOk()).andExpect(header().string("X-Report-Rows", "2")).andReturn();
         assertThat(revenue.getResponse().getContentAsString())
                 .startsWith("date,gross_bookings,payments,refunds,commission,payouts\r\n")
-                .contains("2026-11-13,4800,4,0,240,0\r\n");
-        mockMvc.perform(get("/reports/analytics/revenue").header("Authorization", admin))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.rows.length()").value(2));
+                .contains("2026-11-13,4800.00,4,0.00,240.00,0.00\r\n");
+        MvcResult preview = mockMvc.perform(get("/reports/analytics/revenue").param("limit", "1").header("Authorization", admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.rows.length()").value(1))
+                .andExpect(jsonPath("$.data.totalRows").value(2))
+                .andExpect(jsonPath("$.data.limited").value(true))
+                .andExpect(jsonPath("$.data.truncated").value(false))
+                .andExpect(jsonPath("$.data.columnTypes[1]").value("money"))
+                .andReturn();
+        assertThat(preview.getResponse().getContentAsString()).as("money as a number with 2 dp")
+                .contains("[\"2026-11-12\",0.00,0,0.00,0.00,0.00]");
+
+        // a trip-service preview: numbers sent as text or without their scale come out as their declared type
+        replies.put("/trip/internal/ops/analytics/trips", new Reply(200, "{\"data\":{\"report\":\"trips\",\"columns\":[\"trip_id\","
+                + "\"seat_capacity\",\"fare_per_seat\",\"posted_at\"],\"columnTypes\":[\"string\",\"integer\",\"money\",\"date\"],"
+                + "\"rows\":[[\"t-1\",\"4\",1500.5,\"2026-11-13 08:00\"]],\"totalRows\":1,\"truncated\":false,\"limited\":false}}"));
+        MvcResult trips = mockMvc.perform(get("/reports/analytics/trips").header("Authorization", admin)).andExpect(status().isOk()).andReturn();
+        assertThat(trips.getResponse().getContentAsString()).contains("[\"t-1\",4,1500.50,\"2026-11-13 08:00\"]");
     }
 
     @Test
@@ -248,6 +283,9 @@ class OpsPlatformApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.reports[0].report").value("trips"))
                 .andExpect(jsonPath("$.data.reports[1].report").value("revenue"))
+                .andExpect(jsonPath("$.data.reports[1].columnTypes[0]").value("date"))
+                .andExpect(jsonPath("$.data.reports[1].columnTypes[1]").value("money"))
+                .andExpect(jsonPath("$.data.reports[2].columnTypes[3]").value("decimal"))
                 .andExpect(jsonPath("$.data.reports[2].report").value("verification-funnel"))
                 .andExpect(jsonPath("$.data.emailed.length()").value(3))
                 .andExpect(jsonPath("$.data.maxCsvRows").value(50000));
@@ -283,7 +321,10 @@ class OpsPlatformApiTest {
                 .andExpect(jsonPath("$.data.services[?(@.service == 'payment-service')].status").value("DOWN"))
                 .andExpect(jsonPath("$.data.services[?(@.service == 'trip-service')].components.db").value("UP"))
                 .andExpect(jsonPath("$.data.jobs[?(@.job == 'RouteExpiryJob.run')].service").value("trip-service"))
-                .andExpect(jsonPath("$.data.integrations[?(@.integration == 'TERMII')].failures").value(6))
+                .andExpect(jsonPath("$.data.integrations[?(@.integration == 'TERMII' && @.operation == 'sms')].failures").value(6))
+                .andExpect(jsonPath("$.data.integrations[?(@.integration == 'FCM')].attempts").value(0))
+                .andExpect(jsonPath("$.data.integrations[?(@.integration == 'SMTP')].failures").value(0))
+                .andExpect(jsonPath("$.data.integrations[?(@.integration == 'TERMII_WHATSAPP')].service").value("notification-service"))
                 .andExpect(jsonPath("$.data.alerts[?(@.kind == 'JOB')]").isNotEmpty())
                 .andExpect(jsonPath("$.data.alerts[?(@.kind == 'INTEGRATION')]").isNotEmpty())
                 .andExpect(jsonPath("$.data.kafka.reachable").value(false));

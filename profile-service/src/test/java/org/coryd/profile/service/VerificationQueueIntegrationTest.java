@@ -189,6 +189,10 @@ class VerificationQueueIntegrationTest {
         assertThat(status.driver().firstName()).isEqualTo("Ada");
         assertThat(status.driver().licenceNumber()).isEqualTo("LAG12345678");
         assertThat(status.driver().dateOfBirth()).isEqualTo(LocalDate.of(1990, 1, 1));
+        assertThat(status.masked().driver().licenceNumber()).as("what ops sees").isNull();
+        assertThat(status.masked().driver().dateOfBirth()).isNull();
+        assertThat(status.masked().driver().licenceNumberMasked()).isEqualTo("\u2022\u2022\u2022\u2022\u2022\u2022\u20225678");
+        assertThat(status.masked().driver().birthYear()).isEqualTo(1990);
         assertThat(status.governmentId().submittedAt()).isNotNull();
         assertThat(status.vehicleRegistration().submittedAt()).isNotNull();
         assertThat(status.documents()).allSatisfy(d -> assertThat(d.submittedAt()).isNotNull());

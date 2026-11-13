@@ -26,5 +26,6 @@
     <include file="db/changelog/015-ops-money.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/016-job-runs.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/016-ops-audit-feed.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/017-phase7-audit-targets.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

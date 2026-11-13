@@ -169,7 +169,10 @@ class OpsServiceIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.driver.phone").value("08033334444"))
                 .andExpect(jsonPath("$.data.driver.ref").value("D-D1"))
-                .andExpect(jsonPath("$.data.driver.licenceNumber").value("LAG12345678"))
+                .andExpect(jsonPath("$.data.driver.licenceNumber").doesNotExist())
+                .andExpect(jsonPath("$.data.driver.dateOfBirth").doesNotExist())
+                .andExpect(jsonPath("$.data.driver.licenceNumberMasked").value("\u2022\u2022\u2022\u2022\u2022\u2022\u20225678"))
+                .andExpect(jsonPath("$.data.driver.birthYear").value(1990))
                 .andExpect(jsonPath("$.data.governmentId.submittedAt").value("2026-10-03T08:00:00Z"));
     }
 
@@ -394,7 +397,8 @@ class OpsServiceIntegrationTest {
         mockMvc.perform(get("/drivers/d-1/verification/licence").header("Authorization", bearer(UserRole.OPS_ADMIN)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.smileJobId").value("job-9"))
-                .andExpect(jsonPath("$.data.licence.licenceNumber").value("LAG12345678"))
+                .andExpect(jsonPath("$.data.licence.licenceNumber").doesNotExist())
+                .andExpect(jsonPath("$.data.licence.licenceNumberMasked").value("\u2022\u2022\u2022\u2022\u2022\u2022\u20225678"))
                 .andExpect(jsonPath("$.data.images[0].kind").value("LICENCE_FRONT"));
     }
 

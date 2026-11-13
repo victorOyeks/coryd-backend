@@ -36,15 +36,34 @@ public class DataSeeder implements ApplicationRunner {
         SeedFixtures.DRIVERS.forEach(driver -> seedUser(driver.phone(), driver.firstName(), driver.lastName(), UserRole.DRIVER));
         // OPS_ADMIN can't be self-assigned via signup/roles-add (AuthService blocks it) - this
         // seeder is the only way to get one in dev/test.
-        seedUser("08000000003", "Test", "Ops Admin", UserRole.OPS_ADMIN);
-        log.info("Seeded {} riders + {} drivers (phones {}-{} / {}-{}) and 1 ops admin (08000000003) - password: {}",
+        User admin = seedUser(OPS_ADMIN_PHONE, "Seed", "Ops Admin", UserRole.OPS_ADMIN);
+        giveSeedEmail(admin);
+        log.info("Seeded {} riders + {} drivers (phones {}-{} / {}-{}) and 1 ops admin (" + OPS_ADMIN_PHONE + " / " + OPS_ADMIN_EMAIL
+                        + ") - password: {}",
                 SeedFixtures.RIDERS.size(), SeedFixtures.DRIVERS.size(),
                 SeedFixtures.RIDERS.getFirst().phone(), SeedFixtures.RIDERS.getLast().phone(),
                 SeedFixtures.DRIVERS.getFirst().phone(), SeedFixtures.DRIVERS.getLast().phone(),
                 SeedFixtures.SEED_PASSWORD);
     }
 
-    private void seedUser(String phone, String firstName, String lastName, UserRole role) {
+    /**
+     * The seeded super admin. Named "Seed Ops Admin" with its own email so it can't be mistaken for the console's real test
+     * admin (admin@coryd.africa, also a "Test Ops Admin" until phase 7) in the team list or the audit log. Its access is
+     * unchanged; entries it made before keep the name recorded then ("Test Ops Admin").
+     */
+    static final String OPS_ADMIN_PHONE = "08000000003";
+    static final String OPS_ADMIN_EMAIL = "ops-seed@coryd.local";
+
+    /** Only when it has none and nobody else uses the address - an email someone set by hand is left alone. */
+    private void giveSeedEmail(User admin) {
+        if ((admin.getEmail() == null || admin.getEmail().isBlank())
+                && userRepository.findByEmail(OPS_ADMIN_EMAIL).filter(other -> !other.getId().equals(admin.getId())).isEmpty()) {
+            admin.setEmail(OPS_ADMIN_EMAIL);
+            userRepository.save(admin);
+        }
+    }
+
+    private User seedUser(String phone, String firstName, String lastName, UserRole role) {
         User user = userRepository.findByPhone(phone)
                 .orElseGet(() -> User.builder().phone(phone).build());
         user.setFirstName(firstName);
@@ -56,6 +75,6 @@ public class DataSeeder implements ApplicationRunner {
         user.setPasswordHash(passwordEncoder.encode(SeedFixtures.SEED_PASSWORD));
         user.setPhoneVerifiedAt(Instant.now());
         user.setTermsAcceptedAt(Instant.now());
-        userRepository.save(user);
+        return userRepository.save(user);
     }
 }

@@ -12,6 +12,7 @@ import org.coryd.common.audit.OpsAuditQuery;
 import org.coryd.common.enums.VerificationDecisionAction;
 import org.coryd.common.enums.VerificationStatus;
 import org.coryd.profile.entity.VerificationDecisionLog;
+import org.coryd.profile.privacy.PiiRevealLog;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +23,8 @@ import java.util.Set;
 /**
  * profile-service's part of the unified audit log: verification_decision_log - identity (NIN) decisions and driver
  * document decisions. Category VERIFICATION, target type VERIFICATION, target id the person decided on, subject the
- * document ("Insurance certificate") or "Identity (NIN)".
+ * document ("Insurance certificate") or "Identity (NIN)". Also pii_reveal_log - an admin revealing someone's full NIN,
+ * licence number or date of birth: category PRIVACY, action PII_REVEALED, target ACCOUNT (the person), subject the field.
  *
  * <p>Left out: PROVIDER_RESULT (Smile ID's own late result, not an ops action) and ATTEMPTS_RESET (ops-service records
  * the same reset in the account history, which the log already shows as LICENCE_/IDENTITY_ATTEMPTS_RESET). Entries from
@@ -39,11 +41,56 @@ public class ProfileAuditSource {
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
 
+    /** A reveal of a person's full NIN, licence number or date of birth (pii_reveal_log), category PRIVACY. */
+    public static final String PII_REVEALED = "PII_REVEALED";
+
+    /**
+     * Both tables, newest first: each is asked for up to size + 1 rows after the cursor (the same keyset - created_at desc,
+     * id desc - on both), the two are merged in that order and the first size kept.
+     */
     @Transactional(readOnly = true)
     public OpsAuditPage page(OpsAuditQuery q) {
-        if (!q.wantsCategory(OpsAuditCategory.VERIFICATION) || !q.wantsTargetType("VERIFICATION")) {
+        int limit = q.limit();
+        List<OpsAuditEntry> all = new java.util.ArrayList<>();
+        boolean more = false;
+        if (q.wantsCategory(OpsAuditCategory.VERIFICATION) && q.wantsTargetType("VERIFICATION")) {
+            OpsAuditPage decisions = decisions(q);
+            all.addAll(decisions.items());
+            more = decisions.hasMore();
+        }
+        if (q.wantsCategory(OpsAuditCategory.PRIVACY) && q.wantsTargetType("ACCOUNT")) {
+            OpsAuditPage reveals = reveals(q);
+            all.addAll(reveals.items());
+            more |= reveals.hasMore();
+        }
+        all.sort(java.util.Comparator.comparing(OpsAuditEntry::at).thenComparing(OpsAuditEntry::id).reversed());
+        return new OpsAuditPage(all.stream().limit(limit).toList(), more || all.size() > limit);
+    }
+
+    private OpsAuditPage reveals(OpsAuditQuery q) {
+        if (q.actions() != null && !q.actions().isEmpty() && q.actions().stream().noneMatch(a -> PII_REVEALED.equals(a.trim()))) {
             return new OpsAuditPage(List.of(), false);
         }
+        OpsAuditJpql jpql = OpsAuditJpql.from("PiiRevealLog")
+                .eq("e.actorId", OpsAuditQuery.blankToNull(q.actorId()))
+                .eq("e.userId", OpsAuditQuery.blankToNull(q.targetId()))
+                .range("e.createdAt", q.from(), q.to())
+                .before("e.createdAt", "e.id", q.beforeAt(), OpsAuditQuery.blankToNull(q.beforeId()))
+                .search(q.searchPattern(), "e.reason", "e.actorName", "e.userId");
+        int limit = q.limit();
+        List<PiiRevealLog> rows = jpql.fetch(entityManager, PiiRevealLog.class, "e.createdAt", "e.id", limit);
+        return new OpsAuditPage(rows.stream().limit(limit).map(this::entry).toList(), rows.size() > limit);
+    }
+
+    private OpsAuditEntry entry(PiiRevealLog r) {
+        ObjectNode after = objectMapper.createObjectNode();
+        after.put("field", r.getField().name());
+        after.put("shownAs", r.getMaskedValue());
+        return new OpsAuditEntry(r.getId(), r.getCreatedAt(), SOURCE, OpsAuditCategory.PRIVACY, PII_REVEALED, r.getActorId(),
+                r.getActorName(), "ACCOUNT", r.getUserId(), r.getField().label(), r.getReason(), null, after.toString(), null, null);
+    }
+
+    private OpsAuditPage decisions(OpsAuditQuery q) {
         OpsAuditJpql jpql = OpsAuditJpql.from("VerificationDecisionLog")
                 .notIn("e.action", EXCLUDED)
                 .eq("e.decidedById", OpsAuditQuery.blankToNull(q.actorId()))

@@ -41,7 +41,9 @@ public class AnalyticsController {
     static final String REVENUE = "revenue";
     static final String FUNNEL = "verification-funnel";
     static final List<String> REVENUE_COLUMNS = List.of("date", "gross_bookings", "payments", "refunds", "commission", "payouts");
+    static final List<String> REVENUE_TYPES = List.of("date", "money", "integer", "money", "money", "money");
     static final List<String> FUNNEL_COLUMNS = List.of("audience", "stage", "people", "percent_of_joined");
+    static final List<String> FUNNEL_TYPES = List.of("string", "string", "integer", "decimal");
     static final Set<String> PERIODS = Set.of("DAILY", "WEEKLY", "MONTHLY");
 
     private final PlatformClient client;
@@ -56,9 +58,9 @@ public class AnalyticsController {
             trip.forEach(r -> reports.add(((ObjectNode) r.deepCopy()).put("source", "trip-service").put("csv", true)));
         }
         reports.add(item(REVENUE, "Revenue", "Per Lagos day: booking payments, refunds, CoRyd's commission and payouts to drivers.",
-                REVENUE_COLUMNS, "payment-service"));
+                REVENUE_COLUMNS, REVENUE_TYPES, "payment-service"));
         reports.add(item(FUNNEL, "Verification funnel", "Drivers and riders who joined in the range, by how far they got: documents, approval, first trip.",
-                FUNNEL_COLUMNS, "profile-service"));
+                FUNNEL_COLUMNS, FUNNEL_TYPES, "profile-service"));
         ArrayNode emailed = out.putArray("emailed");
         for (String period : List.of("DAILY", "WEEKLY", "MONTHLY")) {
             emailed.addObject().put("period", period).put("send", "POST /ops/reports/emailed/" + period + "/send")
@@ -74,10 +76,18 @@ public class AnalyticsController {
                                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                          @RequestParam(defaultValue = "100") int limit) {
         if (REVENUE.equals(report) || FUNNEL.equals(report)) {
-            return ApiResponse.ok(local(report, from, to));
+            ObjectNode local = local(report, from, to);
+            int max = Math.max(1, Math.min(limit, 500));
+            ArrayNode rows = (ArrayNode) local.get("rows");
+            local.put("limited", rows.size() > max);
+            while (rows.size() > max) {
+                rows.remove(rows.size() - 1);
+            }
+            return ApiResponse.ok(local);
         }
-        return ApiResponse.ok(client.get(PlatformClient.Service.TRIP, "/internal/ops/analytics/" + slug(report),
-                Params.of().put("from", from).put("to", to).put("limit", limit).build()));
+        JsonNode preview = client.get(PlatformClient.Service.TRIP, "/internal/ops/analytics/" + slug(report),
+                Params.of().put("from", from).put("to", to).put("limit", limit).build());
+        return ApiResponse.ok(typed(preview));
     }
 
     /** Bounded (50,000 rows; X-Report-Truncated says when there were more) and streamed - never held in memory here. */
@@ -100,7 +110,7 @@ public class AnalyticsController {
             writer.write(Csv.line(header));
             for (JsonNode row : data.path("rows")) {
                 List<Object> cells = new ArrayList<>();
-                row.forEach(c -> cells.add(c.isNull() ? null : c.asText()));
+                row.forEach(c -> cells.add(c.isNull() ? null : c.isBigDecimal() ? c.decimalValue().toPlainString() : c.asText()));
                 writer.write(Csv.line(cells));
             }
             writer.flush();
@@ -151,6 +161,7 @@ public class AnalyticsController {
                 row.add(d.get("commission"));
                 row.add(d.get("payouts"));
             }
+            types(out, REVENUE_TYPES);
             out.put("report", REVENUE).put("title", "Revenue");
             out.set("from", summary.get("from"));
             out.set("to", summary.get("to"));
@@ -166,19 +177,68 @@ public class AnalyticsController {
                 row.add(s.get("people"));
                 row.add(s.get("percentOfJoined"));
             }
+            types(out, FUNNEL_TYPES);
             out.put("report", FUNNEL).put("title", "Verification funnel");
             out.set("from", funnel.get("from"));
             out.set("to", funnel.get("to"));
         }
-        out.put("timezone", "Africa/Lagos").put("totalRows", rows.size()).put("truncated", false);
+        out.put("timezone", "Africa/Lagos").put("totalRows", rows.size()).put("truncated", false).put("limited", false);
+        typed(out);
         return out;
     }
 
-    private ObjectNode item(String report, String title, String description, List<String> cols, String source) {
+    private void types(ObjectNode out, List<String> types) {
+        ArrayNode columnTypes = out.putArray("columnTypes");
+        types.forEach(columnTypes::add);
+    }
+
+    /**
+     * Every row value as its column's declared type (columnTypes): integer and decimal JSON numbers, money a number with 2
+     * decimal places, date/string text, boolean true/false; null stays null. Applied to every preview, so a number that
+     * came through as text (or lost its scale on the way) still reads right.
+     */
+    static JsonNode typed(JsonNode preview) {
+        if (!(preview instanceof ObjectNode out) || !out.path("rows").isArray() || !out.path("columnTypes").isArray()) {
+            return preview;
+        }
+        List<String> types = new ArrayList<>();
+        out.get("columnTypes").forEach(t -> types.add(t.asText()));
+        com.fasterxml.jackson.databind.node.JsonNodeFactory f = com.fasterxml.jackson.databind.node.JsonNodeFactory.withExactBigDecimals(true);
+        for (JsonNode row : out.get("rows")) {
+            if (!(row instanceof ArrayNode cells)) {
+                continue;
+            }
+            for (int c = 0; c < cells.size() && c < types.size(); c++) {
+                JsonNode v = cells.get(c);
+                if (v == null || v.isNull()) {
+                    continue;
+                }
+                try {
+                    switch (types.get(c)) {
+                        case "integer" -> cells.set(c, f.numberNode(new java.math.BigDecimal(v.asText()).longValue()));
+                        case "decimal" -> cells.set(c, f.numberNode(new java.math.BigDecimal(v.asText()).stripTrailingZeros()));
+                        case "money" -> cells.set(c, f.numberNode(new java.math.BigDecimal(v.asText()).setScale(2, java.math.RoundingMode.HALF_UP)));
+                        case "boolean" -> cells.set(c, f.booleanNode(v.isBoolean() ? v.booleanValue() : Boolean.parseBoolean(v.asText())));
+                        default -> cells.set(c, f.textNode(v.asText()));
+                    }
+                } catch (NumberFormatException ignored) {
+                    // leave a value that isn't a number as it came
+                }
+            }
+        }
+        if (!out.has("limited")) {
+            out.put("limited", out.path("totalRows").asLong() > out.get("rows").size());
+        }
+        return out;
+    }
+
+    private ObjectNode item(String report, String title, String description, List<String> cols, List<String> types, String source) {
         ObjectNode node = objectMapper.createObjectNode().put("report", report).put("title", title).put("description", description)
                 .put("source", source).put("csv", true);
         ArrayNode columns = node.putArray("columns");
         cols.forEach(columns::add);
+        ArrayNode columnTypes = node.putArray("columnTypes");
+        types.forEach(columnTypes::add);
         return node;
     }
 

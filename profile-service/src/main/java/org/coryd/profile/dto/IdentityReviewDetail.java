@@ -35,11 +35,18 @@ public record IdentityReviewDetail(
         Actions actions,
         List<VerificationDecisionHistoryItem> history
 ) {
+    /** "•••• 5040" - how the console shows the NIN (only the last four digits are kept). See docs/ops-console/privacy.md. */
+    @com.fasterxml.jackson.annotation.JsonProperty("ninMasked")
+    public String ninMasked() {
+        return org.coryd.common.util.PiiMask.nin(ninLast4);
+    }
+
     public record Person(String userId, String firstName, String lastName, String phone, String photoUrl, boolean rider, boolean driver) {
     }
 
-    /** What NIMC holds, kept when the check was approved - null until then. */
-    public record VerifiedRecord(String firstName, String middleName, String lastName, LocalDate dateOfBirth) {
+    /** What NIMC holds, kept when the check was approved - null until then. The date of birth as a year only; the full date
+     * is an audited reveal (DATE_OF_BIRTH, docs/ops-console/privacy.md). */
+    public record VerifiedRecord(String firstName, String middleName, String lastName, Integer birthYear) {
     }
 
     /**

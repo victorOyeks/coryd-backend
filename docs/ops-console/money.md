@@ -149,13 +149,20 @@ Same filters (not `type`, `sort`, paging). `data`: `{ "all": 412, "payment": 300
 ```json
 { "bookingId": "…", "paymentId": "…", "reference": "T123…", "paymentStatus": "PAID",
   "paid": 500.00, "refunded": 200.00, "refundPending": 0, "awaitingApproval": 0, "refundable": 300.00,
-  "duplicateChargeRefunded": 0, "approvalThreshold": 50000, "riderId": "…", "driverId": "…", "fareSettled": true }
+  "duplicateChargeRefunded": 0, "approvalThreshold": 50000, "riderId": "…", "driverId": "…", "fareSettled": true,
+  "blockedReason": null }
 ```
 
 - `refundable` is the most the next refund can be. `refunded + refundPending + awaitingApproval` never exceeds `paid`.
 - `fareSettled: false` means the seat is neither completed nor cancelled yet. Refunding **all** of it then also settles the seat
   as refunded (the trip's completion won't pay the driver for it, a later cancellation won't refund it again) - but the booking
   itself stays active in the app. To end a seat that won't be travelled, **cancel the booking** (Trips & Bookings) instead.
+- `blockedReason` (phase 7, B-524EA3): set when nothing may be refunded even though the figures alone would allow it;
+  `refundable` is then `0` and a refund (or approving one already waiting) is refused with `400` and the same text. Today one
+  case: the booking's fare hold is marked **refunded** (the booking was cancelled and its fare settled as gone back) but **no
+  refund of this payment** is on record - e.g. only a duplicate-charge refund, as on B-524EA3 (₦500 paid, rider cancelled,
+  ₦507.62 duplicate charge returned). → `"The fare was already returned on this booking - check Paystack before refunding"`.
+  Show it instead of the refund form; nothing to warn about client-side any more.
 - `404` when the booking has no payment.
 
 ### `POST /money/bookings/{bookingId}/refunds`
@@ -305,7 +312,7 @@ Errors: not `FAILED` → `400 "Only a failed payout can be retried - this one is
 ```json
 { "driverId": "…", "hasAccount": true, "canReceivePayouts": true,
   "accounts": [ { "id": "…", "bankName": "GTBank", "bankCode": "058", "accountName": "EMEKA OKAFOR",
-                  "accountNumberMasked": "******6789", "accountNumber": null, "isDefault": true, "linkedToPaystack": true,
+                  "accountNumberMasked": "••••••6789", "accountNumber": null, "isDefault": true, "linkedToPaystack": true,
                   "subaccountCode": "ACCT_…", "splitPercentage": 5.00, "settlementSchedule": "auto", "addedAt": "…" } ] }
 ```
 
@@ -314,7 +321,11 @@ default account is linked to a Paystack subaccount (otherwise the driver can't b
 
 ### `POST /money/drivers/{driverId}/payout-account/reveal`  body `{ "recipientId": "optional - default account", "reason": "required" }`
 
-Returns one account with `accountNumber` filled in. Audited as `PAYOUT_ACCOUNT_REVEALED` (who, which account, why). No reason → `400`; unknown account → `404`. Don't keep the number on screen longer than needed.
+Returns one account with `accountNumber` filled in, plus `revealedAt` and `expiresInSeconds: 60` - stop showing the number
+then. Audited as `PAYOUT_ACCOUNT_REVEALED` with the **driver** as the target (`target.id` = `target.driverId` = the driver;
+the account is `after.recipientId`, `after.shownAs` the masked number). No reason → `400` "Say why you need to see it - it
+goes in the audit log"; unknown account → `404`; over the reveal rate limit (30/hour per admin, shared with ID reveals) →
+`429`. Same rules as the ID reveal - see [privacy.md](privacy.md).
 
 ---
 

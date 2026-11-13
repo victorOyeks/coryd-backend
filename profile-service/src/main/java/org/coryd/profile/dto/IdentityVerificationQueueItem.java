@@ -19,4 +19,10 @@ public record IdentityVerificationQueueItem(
         VerificationCheckOutcome checkOutcome,
         String checkSummary
 ) {
+    /** "•••• 5040" - how the console shows the NIN (only the last four digits are kept). See docs/ops-console/privacy.md. */
+    @com.fasterxml.jackson.annotation.JsonProperty("ninMasked")
+    public String ninMasked() {
+        return org.coryd.common.util.PiiMask.nin(ninLast4);
+    }
+
 }

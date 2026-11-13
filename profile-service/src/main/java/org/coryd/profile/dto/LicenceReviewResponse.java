@@ -17,7 +17,9 @@ public record LicenceReviewResponse(
         List<Image> images,
         String imagesUnavailableReason
 ) {
-    public record LicenceDetails(String fullName, String licenceNumber, String dateOfBirth, String expirationDate) {
+    /** What Smile ID read off the licence - the number masked ("•••••••5678") and the date of birth as a year; the full values
+     * are an audited reveal (POST /ops/users/{id}/reveal, docs/ops-console/privacy.md). */
+    public record LicenceDetails(String fullName, String licenceNumberMasked, Integer birthYear, String expirationDate) {
     }
 
     /** kind: LICENCE_FRONT, LICENCE_BACK, SELFIE or OTHER. name is Smile ID's own name for it. */

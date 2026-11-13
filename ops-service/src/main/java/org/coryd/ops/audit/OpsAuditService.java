@@ -69,7 +69,7 @@ public class OpsAuditService {
             new Source(OpsAuditClient.IDENTITY, Set.of(OpsAuditCategory.ACCOUNT, OpsAuditCategory.TEAM), Set.of("ACCOUNT", "ADMIN")),
             new Source(OpsAuditClient.PAYMENT, Set.of(OpsAuditCategory.MONEY),
                     Set.of("BOOKING", "FARE_HOLD", "SETTLEMENT", "DRIVER", "MONEY_REQUEST", "PAYOUT_ACCOUNT")),
-            new Source(OpsAuditClient.PROFILE, Set.of(OpsAuditCategory.VERIFICATION), Set.of("VERIFICATION")),
+            new Source(OpsAuditClient.PROFILE, Set.of(OpsAuditCategory.VERIFICATION, OpsAuditCategory.PRIVACY), Set.of("VERIFICATION", "ACCOUNT")),
             new Source(OpsAuditClient.TRIP, Set.of(OpsAuditCategory.TRIPS, OpsAuditCategory.SAFETY),
                     Set.of("ROUTE", "BOOKING", "SOS", "ISSUE", "RATING")));
 
@@ -81,6 +81,32 @@ public class OpsAuditService {
     private static final Map<String, String> REF_PREFIX = Map.of("ROUTE", "T", "BOOKING", "B", "SOS", "S", "DRIVER", "D",
             "PAYOUT_ACCOUNT", "D");
     private static final Pattern REF = Pattern.compile("^[A-Za-z]{1,2}-([0-9A-Fa-f]{6})$");
+
+    /** How every system, provider or seed action is shown: no id, name "System" (docs/ops-console/audit-log.md). */
+    public static final String SYSTEM = "System";
+    /** Names the services record for actions no admin took: the system token ("system", "CoRyd System"), scheduled
+     * changes, Smile ID's automatic decisions and the dev seeders. */
+    static final Set<String> SYSTEM_NAMES = Set.of("SYSTEM", "CORYD SYSTEM", "SCHEDULED CHANGE", "SEED", "DATASEEDER", "SMILE_ID",
+            "SMILE ID", "SMILE_ID_NIN_LOOKUP_AND_LICENCE", "PREMBLY");
+    /** Targets whose id is a driver - target.driverId repeats it so the console needn't know which types those are. */
+    private static final Set<String> DRIVER_TARGETS = Set.of("DRIVER", "PAYOUT_ACCOUNT");
+
+    /**
+     * {id: null, name: "System"} for system/automatic/seed actions; the recorded admin otherwise; null only when nothing
+     * at all was recorded (account actions from before the history kept who did them).
+     */
+    static AuditItem.Actor actor(String actorId, String actorName) {
+        boolean noName = actorName == null || actorName.isBlank();
+        boolean systemId = actorId != null && actorId.trim().equalsIgnoreCase("system");
+        boolean systemName = !noName && SYSTEM_NAMES.contains(actorName.trim().toUpperCase(Locale.ROOT));
+        if (systemId || (actorId == null && systemName)) {
+            return new AuditItem.Actor(null, SYSTEM);
+        }
+        if (actorId == null && noName) {
+            return null;
+        }
+        return new AuditItem.Actor(actorId, noName ? null : actorName);
+    }
 
     private final OpsAuditClient auditClient;
     private final IdentityServiceClient identityServiceClient;
@@ -199,7 +225,7 @@ public class OpsAuditService {
             if (PERSON_TARGETS.contains(e.targetType()) && e.targetId() != null) {
                 people.add(e.targetId());
             }
-            if (e.actorId() != null && (e.actorName() == null || e.actorName().isBlank())) {
+            if (e.actorId() != null && !e.actorId().equalsIgnoreCase("system") && (e.actorName() == null || e.actorName().isBlank())) {
                 people.add(e.actorId());
             }
         }
@@ -217,9 +243,9 @@ public class OpsAuditService {
         String relatedRef = e.relatedId() == null ? null
                 : ref("MONEY".equals(e.category().name()) ? null : "T", e.relatedId());
         return new AuditItem(t.source() + ":" + e.id(), e.at(), t.source(), e.category(), e.action(),
-                e.actorId() == null && actorName == null ? null : new AuditItem.Actor(e.actorId(), actorName),
+                actor(e.actorId(), actorName),
                 new AuditItem.Target(e.targetType(), e.targetId(), ref(REF_PREFIX.get(e.targetType()), e.targetId()),
-                        target == null ? null : target.fullName()),
+                        target == null ? null : target.fullName(), DRIVER_TARGETS.contains(e.targetType()) ? e.targetId() : null),
                 e.subject(), e.reason(), json(e.before()), json(e.after()), e.amount(), e.relatedId(), relatedRef);
     }
 

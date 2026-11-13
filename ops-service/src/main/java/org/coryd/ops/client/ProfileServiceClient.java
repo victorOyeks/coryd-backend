@@ -143,10 +143,10 @@ public class ProfileServiceClient {
 
     /** The licence as Smile ID saw it - passed through as profile-service shapes it. */
     public JsonNode licenceReview(String driverId) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri("/drivers/{driverId}/verification/licence", driverId)
                 .retrieve()
-                .body(JsonNode.class));
+                .body(JsonNode.class)));
     }
 
     public List<VerificationDecisionHistoryItem> verificationHistory(String driverId) {
@@ -160,18 +160,18 @@ public class ProfileServiceClient {
 
     /** People whose identity check waits on ops - profile-service checks the forwarded token is OPS_ADMIN. */
     public JsonNode identityVerificationQueue(int page, int size) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri(b -> b.path("/identity-verification/queue").queryParam("page", page).queryParam("size", size).build())
                 .retrieve()
-                .body(JsonNode.class));
+                .body(JsonNode.class)));
     }
 
     /** Approvals on a partial name match not yet reviewed - profile-service checks the forwarded token is OPS_ADMIN. */
     public JsonNode partialNameMatches(int page, int size) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri(b -> b.path("/identity-verification/partial-name-matches").queryParam("page", page).queryParam("size", size).build())
                 .retrieve()
-                .body(JsonNode.class));
+                .body(JsonNode.class)));
     }
 
     public void markPartialNameMatchReviewed(String checkId) {
@@ -196,7 +196,7 @@ public class ProfileServiceClient {
     /** The identity (NIN) list - filtered, sorted and paged by profile-service, which checks the token is OPS_ADMIN. */
     public JsonNode identityPeople(IdentityReviewTab tab, String search, IdentityReviewRole role, IdentityReviewSort sort,
                                    Sort.Direction direction, int page, int size) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri(b -> {
                     b.path("/identity-verification/people").queryParam("page", page).queryParam("size", size);
                     if (tab != null) {
@@ -217,7 +217,7 @@ public class ProfileServiceClient {
                     return b.build();
                 })
                 .retrieve()
-                .body(JsonNode.class));
+                .body(JsonNode.class)));
     }
 
     public JsonNode identityPeopleCounts(String search, IdentityReviewRole role) {
@@ -237,17 +237,17 @@ public class ProfileServiceClient {
     }
 
     public JsonNode identityPerson(String userId) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri("/identity-verification/people/{userId}", userId)
                 .retrieve()
-                .body(JsonNode.class));
+                .body(JsonNode.class)));
     }
 
     public JsonNode identityPersonHistory(String userId) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
                 .uri("/identity-verification/people/{userId}/history", userId)
                 .retrieve()
-                .body(JsonNode.class));
+                .body(JsonNode.class)));
     }
 
     public JsonNode identityCheckImages(String userId, String checkId) {
@@ -284,12 +284,25 @@ public class ProfileServiceClient {
                 .body(JsonNode.class));
     }
 
-    /** Everything profile-service holds about one person, for the account profile screens. */
-    public JsonNode accountProfile(String userId) {
-        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
-                .uri("/internal/users/{userId}/ops-profile", userId)
+    /** One audited reveal of a person's full NIN, licence number or date of birth - profile-service records PII_REVEALED. */
+    public JsonNode revealPii(String userId, PiiField field, String reason) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("field", field.name());
+        body.put("reason", reason);
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
+                .uri("/internal/ops/users/{userId}/reveal", userId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
                 .retrieve()
                 .body(JsonNode.class));
+    }
+
+    /** Everything profile-service holds about one person, for the account profile screens. */
+    public JsonNode accountProfile(String userId) {
+        return org.coryd.ops.privacy.PiiRedactor.redact(DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/internal/users/{userId}/ops-profile", userId)
+                .retrieve()
+                .body(JsonNode.class)));
     }
 
     /** Name / email. Returns {changes:[{field,before,after}], ...}. */

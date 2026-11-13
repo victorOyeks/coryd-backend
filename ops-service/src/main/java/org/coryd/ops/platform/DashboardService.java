@@ -87,28 +87,29 @@ public class DashboardService {
         out.set("trips", t == null ? null : t.get("trips"));
         out.set("seats", t == null ? null : t.get("seats"));
 
-        ObjectNode drivers = objectMapper.createObjectNode();
-        if (p != null) {
-            drivers.put("total", p.path("driversTotal").asLong()).put("verified", p.path("driversVerified").asLong())
-                    .put("suspended", p.path("driversSuspended").asLong()).put("activeLast7Days", p.path("driversActiveLast7Days").asLong());
+        // A section fed by one service is null when that service didn't answer. drivers / riders mix two: each keeps every
+        // field, the missing service's ones null, and the section is null only when both are down - never {} or fields left out.
+        if (p == null && t == null) {
+            out.putNull("drivers");
+            out.putNull("riders");
+        } else {
+            ObjectNode drivers = out.putObject("drivers");
+            number(drivers, "total", p, "driversTotal");
+            number(drivers, "verified", p, "driversVerified");
+            number(drivers, "suspended", p, "driversSuspended");
+            number(drivers, "activeLast7Days", p, "driversActiveLast7Days");
+            JsonNode td = t == null ? null : t.path("drivers");
+            number(drivers, "activeInRange", td, "activeInRange");
+            number(drivers, "onTripNow", td, "onTripNow");
+            number(drivers, "onlineNow", td, "onlineNow");
+            ObjectNode riders = out.putObject("riders");
+            number(riders, "total", p, "ridersTotal");
+            number(riders, "suspended", p, "ridersSuspended");
+            number(riders, "activeLast7Days", p, "ridersActiveLast7Days");
+            JsonNode tr = t == null ? null : t.path("riders");
+            number(riders, "activeInRange", tr, "activeInRange");
+            number(riders, "repeatInRange", tr, "repeatInRange");
         }
-        if (t != null) {
-            drivers.set("activeInRange", t.path("drivers").get("activeInRange"));
-            drivers.set("onTripNow", t.path("drivers").get("onTripNow"));
-            drivers.set("onlineNow", t.path("drivers").get("onlineNow"));
-        }
-        out.set("drivers", drivers);
-
-        ObjectNode riders = objectMapper.createObjectNode();
-        if (p != null) {
-            riders.put("total", p.path("ridersTotal").asLong()).put("suspended", p.path("ridersSuspended").asLong())
-                    .put("activeLast7Days", p.path("ridersActiveLast7Days").asLong());
-        }
-        if (t != null) {
-            riders.set("activeInRange", t.path("riders").get("activeInRange"));
-            riders.set("repeatInRange", t.path("riders").get("repeatInRange"));
-        }
-        out.set("riders", riders);
 
         if (m != null) {
             ObjectNode revenue = objectMapper.createObjectNode();
@@ -132,17 +133,32 @@ public class DashboardService {
         } else {
             out.putNull("verification");
         }
-        ObjectNode cancellations = objectMapper.createObjectNode();
         if (t != null) {
+            ObjectNode cancellations = out.putObject("cancellations");
             cancellations.set("bySource", t.get("cancellationsBySource"));
             cancellations.set("byKind", t.get("cancellationsByKind"));
+        } else {
+            out.putNull("cancellations");
         }
-        out.set("cancellations", cancellations);
         out.set("daily", daily(from, to, t, m));
-        out.set("recentActivity", t == null ? objectMapper.createArrayNode() : t.get("recentActivity"));
+        out.set("recentActivity", t == null ? null : t.get("recentActivity"));
         ArrayNode missing = out.putArray("unavailable");
         unavailable.forEach(missing::add);
         return out;
+    }
+
+    /** Every daily row has all of these; a service that's down leaves its own null (and zero-activity days read 0 from it). */
+    static final List<String> TRIP_DAILY = List.of("tripsPosted", "tripsCompleted", "tripsCancelled", "bookings", "seatsBooked",
+            "cancellations", "grossFaresCompleted");
+    static final List<String> MONEY_DAILY = List.of("grossBookings", "payments", "refunds", "commission", "payouts");
+
+    private static void number(ObjectNode section, String field, JsonNode from, String key) {
+        JsonNode v = from == null ? null : from.get(key);
+        if (v == null || v.isMissingNode()) {
+            section.putNull(field);
+        } else {
+            section.set(field, v);
+        }
     }
 
     /** One row per Lagos day: trip-service's counts and payment-service's money side by side. */
@@ -151,6 +167,22 @@ public class DashboardService {
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
             ObjectNode day = objectMapper.createObjectNode().put("date", d.toString());
             days.put(d.toString(), day);
+        }
+        for (ObjectNode day : days.values()) {
+            for (String key : TRIP_DAILY) {
+                if (trip == null) {
+                    day.putNull(key);
+                } else {
+                    day.put(key, 0);
+                }
+            }
+            for (String key : MONEY_DAILY) {
+                if (money == null) {
+                    day.putNull(key);
+                } else {
+                    day.put(key, 0);
+                }
+            }
         }
         if (trip != null) {
             for (JsonNode d : trip.path("daily")) {

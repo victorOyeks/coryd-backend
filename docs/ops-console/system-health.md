@@ -23,7 +23,7 @@ timeout and a part that doesn't answer is reported, not fatal.
     { "service": "identity-service", "status": "UNREACHABLE" }
   ],
   "kafka": { "reachable": true, "error": null,
-             "groups": [ { "group": "coryd-notification-service", "state": "STABLE", "members": 1, "lag": 0,
+             "groups": [ { "group": "coryd-notification-service", "state": "STABLE", "members": 1, "lag": 0, "ephemeral": false,
                            "lagByTopic": { "coryd-otp-issued": 0, "coryd-booking-confirmed": 0 } } ] },
   "jobs": [
     { "service": "trip-service", "job": "RouteExpiryJob.run", "schedule": "every 300s after the last run",
@@ -41,9 +41,16 @@ timeout and a part that doesn't answer is reported, not fatal.
 }
 ```
 
-- **overall:** `OK` (no alerts) · `DEGRADED` (warnings) · `DOWN` (any critical).
+- **overall:** `OK` (no alerts) · `DEGRADED` (warnings) · `DOWN` (any critical). Only real problems count: a service not `UP`, a real consumer group that stopped with messages waiting - not abandoned live-stream groups (below).
 - **services:** each service's `/actuator/health` (status and component statuses). `UNREACHABLE` = no answer in 4 s. Not `UP` → `CRITICAL` alert. `kafkaConsumers` is common's check that every listener container is still running.
-- **kafka:** every consumer group whose name starts `coryd-` on the (shared) broker: state, members, and lag = end offset − committed offset, summed and per topic. Lag ≥ 1,000 → `WARNING`; lag with no members → `CRITICAL`. Unreachable broker → `reachable: false` and a warning.
+- **kafka:** every consumer group whose name starts `coryd-` on the (shared) broker: state, members, `ephemeral`, and lag = end offset − committed offset, summed and per topic. Lag ≥ 1,000 → `WARNING`; lag with no members → `CRITICAL`. Unreachable broker → `reachable: false` and a warning.
+  - **Ephemeral groups never alert** (phase 7). ops-service's live stream (`GET /ops/stream`) reads Kafka in a group of its own per
+    instance start, `coryd-ops-stream-<random>`. Each restart used to leave the old group behind, EMPTY, its "lag" growing forever -
+    read as a stopped consumer, so System Health showed **DOWN** for nothing. These groups (prefixes in
+    `ops.health.ephemeral-group-prefixes`, default `coryd-ops-stream-`) are listed with `"ephemeral": true` and skipped by the lag alerts.
+  - ops-service also cleans them up: on shutdown (after its listener stops) it deletes its own group, and at startup and hourly it
+    deletes any other `coryd-ops-stream-*` group that is EMPTY or DEAD (left by a crash). A group with members - another running
+    instance - is never touched. Best effort: an unreachable broker is logged and skipped (`ops.stream.group-cleanup=false` turns it off).
 - **jobs:** every `@Scheduled` job in trip-, payment-, profile- and notification-service, with its schedule, and its last run from that service's `job_runs` table (`lastRun: null` = hasn't run since this was deployed). Named `Class.method`:
   route expiry `RouteExpiryJob.run` · seat holds `SeatHoldExpiryJob.releaseExpiredHolds` · departure reminders `RouteDepartureReminderJob.sendUpcomingDepartureReminders` · suggested fares `SuggestedFareJob.recalculate` · SOS re-alert `SosRealertJob.run` · safety checks `TripSafetyJob.run` · stats resync `DriverStatsPublisher.syncAll`, `RiderStatsPublisher.syncAll`, `EarningsPublisher.syncAll`, `DriverIndexJobs.rebuildAll`, `RiderIndexJobs.rebuildAll` · settings `PlatformSettingsService.applyDue` · refund retry `RefundRetryJob.retry` · settlement sync `SettlementSyncService.syncAll` · document expiry `DocumentExpiryJob.checkExpiringDocuments` · reports `ReportJob.daily/weekly/monthly`, `NdpcThresholdJob.daily` · broadcasts `BroadcastSender.dispatchDue` (and more).
   A last run that `FAILED` → `WARNING`. Some jobs catch their own errors and log them, so they record `OK`; their failures show in the provider counts instead.
@@ -52,6 +59,9 @@ timeout and a part that doesn't answer is reported, not fatal.
   - **SMILE_ID** (profile-service): verification checks; failures = `PROVIDER_ERROR` (Smile ID or our call failed - not the driver's fault). `lastError` = the provider summary.
   - **TERMII** (`sms`, `voice`), **TERMII_WHATSAPP**, **FCM** (`push`), **SMTP** (`email`) (notification-service): `notification_log` rows; failure = not accepted by the provider; `lastError` = the provider's error code where recorded.
   - At least 5 attempts with ≥ 20% failed → `WARNING`.
+  - **Every provider is always listed** (phase 7): one with nothing in the window shows `attempts: 0, failures: 0` instead of being
+    missing - PAYSTACK (charges, refunds, settlements, ops refunds and retries), SMILE_ID (verification checks), TERMII (sms, voice),
+    TERMII_WHATSAPP (whatsapp), FCM (push), SMTP (email). A service that didn't answer has its row under `jobs` with an `error`.
 
 ## How job runs are recorded
 
