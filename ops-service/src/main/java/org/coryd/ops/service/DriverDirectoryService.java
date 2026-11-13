@@ -60,7 +60,9 @@ public class DriverDirectoryService {
                 parts.profileField("emergencyContacts"),
                 parts.accountField("suspensionHistory"),
                 parts.recentActions(),
-                parts.accountField("pendingDeletion"));
+                parts.accountField("pendingDeletion"),
+                AccountProfileParts.namePart(parts, "driver", "firstName"),
+                AccountProfileParts.namePart(parts, "driver", "lastName"));
     }
 
     static com.fasterxml.jackson.databind.JsonNode suspendedBy(AccountProfileParts.Parts parts) {

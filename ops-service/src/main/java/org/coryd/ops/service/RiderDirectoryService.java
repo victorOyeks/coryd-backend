@@ -63,7 +63,9 @@ public class RiderDirectoryService {
                 parts.profileField("emergencyContacts"),
                 parts.accountField("suspensionHistory"),
                 parts.recentActions(),
-                parts.accountField("pendingDeletion"));
+                parts.accountField("pendingDeletion"),
+                AccountProfileParts.namePart(parts, "rider", "firstName"),
+                AccountProfileParts.namePart(parts, "rider", "lastName"));
     }
 
     /** Checks the rider exists first, so an unknown id is a 404 rather than an empty history. */

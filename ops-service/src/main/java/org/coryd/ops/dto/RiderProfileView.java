@@ -21,7 +21,10 @@ public record RiderProfileView(
         JsonNode emergencyContacts,
         JsonNode suspensionHistory,
         JsonNode recentActions,
-        JsonNode pendingDeletion
+        JsonNode pendingDeletion,
+        /** As stored - what PATCH /users/{id}/details edits; don't split the display name. */
+        String firstName,
+        String lastName
 ) {
     public record Activity(Long totalTrips, Double rating, Long ratingCount, BigDecimal totalSpent, Integer reliabilityPercent,
                            Long reportsFiled) {

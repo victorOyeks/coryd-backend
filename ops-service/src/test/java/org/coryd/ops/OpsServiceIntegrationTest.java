@@ -1234,7 +1234,7 @@ class OpsServiceIntegrationTest {
                 + "\"reinstateReason\":\"Apologised\"},{\"suspendedAt\":\"2026-10-01T10:00:00Z\",\"reason\":\"Threatened a rider\"}],"
                 + "\"pendingDeletion\":null}}"));
         replies.put("/profile/internal/users/dddd4444-4/ops-profile", new Reply(200, "{\"data\":{\"userId\":\"dddd4444-4\","
-                + "\"driver\":{\"email\":\"aisha@x.ng\",\"verificationStatus\":\"APPROVED\",\"verifiedSince\":\"2026-02-03T09:00:00Z\","
+                + "\"driver\":{\"firstName\":\"Aisha Bello\",\"lastName\":\"Lawal\",\"email\":\"aisha@x.ng\",\"verificationStatus\":\"APPROVED\",\"verifiedSince\":\"2026-02-03T09:00:00Z\","
                 + "\"items\":[{\"item\":\"GOVERNMENT_ID\",\"status\":\"APPROVED\"}],\"licenceAttempts\":{\"used\":1,\"left\":4}},"
                 + "\"rider\":{\"email\":\"aisha@x.ng\"},\"vehicles\":[{\"id\":\"v-1\",\"plateNumber\":\"EKY-9-ZZ\",\"seatCapacity\":4,\"primary\":true}],"
                 + "\"emergencyContacts\":[{\"id\":\"c-1\",\"name\":\"Musa\",\"phone\":\"08011112222\",\"primary\":true}],"
@@ -1253,6 +1253,9 @@ class OpsServiceIntegrationTest {
                 .andExpect(jsonPath("$.data.account.lastSeenAt").value("2026-10-01T09:00:00Z"))
                 .andExpect(jsonPath("$.data.account.devices[0].deviceName").value("Aisha's Pixel"))
                 .andExpect(jsonPath("$.data.email").value("aisha@x.ng"))
+                // the stored parts, not a split of the display name - a two-word first name stays whole
+                .andExpect(jsonPath("$.data.firstName").value("Aisha Bello"))
+                .andExpect(jsonPath("$.data.lastName").value("Lawal"))
                 .andExpect(jsonPath("$.data.verification.status").value("APPROVED"))
                 .andExpect(jsonPath("$.data.verification.licenceAttempts.left").value(4))
                 .andExpect(jsonPath("$.data.verification.identity.status").value("APPROVED"))

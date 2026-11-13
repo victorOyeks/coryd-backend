@@ -59,6 +59,13 @@ class AccountProfileParts {
                 quietly("account history", () -> identityServiceClient.accountHistory(userId, 0, RECENT_ACTIONS)));
     }
 
+    /** firstName / lastName from profile-service's driver or rider part, as stored; null if that part or service is missing. */
+    static String namePart(Parts parts, String role, String field) {
+        JsonNode person = parts.profileField(role);
+        JsonNode value = person == null ? null : person.get(field);
+        return value == null || value.isNull() ? null : value.asText();
+    }
+
     DriverProfileView.Account account(Parts parts, String ref, Instant joinedAt) {
         return new DriverProfileView.Account(ref, joinedAt, text(parts.accountField("status")), parts.accountField("roles"),
                 parts.accountInstant("phoneVerifiedAt"), parts.accountInstant("lastSeenAt"), parts.accountInstant("sessionsValidAfter"),

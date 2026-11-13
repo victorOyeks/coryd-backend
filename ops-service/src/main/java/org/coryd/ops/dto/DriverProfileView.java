@@ -32,7 +32,10 @@ public record DriverProfileView(
         /** The latest 10 entries of the account history - the rest from GET /users/{id}/account-history. */
         JsonNode recentActions,
         /** A deletion the person asked for that was refused - {requestId, lastAttemptAt, blockers}; null if none. */
-        JsonNode pendingDeletion
+        JsonNode pendingDeletion,
+        /** As stored - what PATCH /users/{id}/details edits; don't split the display name. */
+        String firstName,
+        String lastName
 ) {
     /** suspendedBy: {id, name} of the admin - null for suspensions made before this was recorded. */
     public record Suspension(Instant suspendedAt, String reason, JsonNode suspendedBy) {

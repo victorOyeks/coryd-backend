@@ -158,7 +158,9 @@ One call each returns the whole profile.
   ],
   "recentActions": [ { "id": "…", "action": "SUSPENDED", "actor": { "id": "0b5e…", "name": "Ada Ops" }, "reason": "Threatened a rider",
                        "changes": [ { "field": "status", "before": "ACTIVE", "after": "SUSPENDED" } ], "at": "2026-10-01T10:00:00Z" } ],
-  "pendingDeletion": null
+  "pendingDeletion": null,
+  "firstName": "Aisha",
+  "lastName": "Lawal"
 }
 ```
 
@@ -177,6 +179,7 @@ One call each returns the whole profile.
 | `suspensionHistory` | Every suspension, oldest first. Each pairs with the reinstate that ended it; `reinstated*` are `null` while it's still in force. |
 | `recentActions` | The 10 latest history entries; see section 4 for the rest |
 | `pendingDeletion` | A deletion that was asked for and refused: `{ "requestId", "lastAttemptAt", "blockers": [ … ] }`. Otherwise `null`. |
+| `firstName`, `lastName` | As stored in profile-service (driver profile for drivers, rider profile for riders). Prefill the edit-details form from these - never split the display name. `null` if profile-service didn't answer. |
 
 ### Rider
 
@@ -193,7 +196,9 @@ The same `rider`, `status`, `suspension` and `activity` fields as before, plus:
   "emergencyContacts": [ … ],
   "suspensionHistory": [ … ],
   "recentActions": [ … ],
-  "pendingDeletion": null
+  "pendingDeletion": null,
+  "firstName": "Tolu",
+  "lastName": "Fashola"
 }
 ```
 
