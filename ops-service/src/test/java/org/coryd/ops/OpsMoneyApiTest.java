@@ -258,9 +258,12 @@ class OpsMoneyApiTest {
 
     private static void handle(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
-        requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().toString(), path,
-                exchange.getRequestHeaders().getFirst("Authorization"),
-                new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+        // The token-revocation bootstrap polls identity-service in the background from startup - not a call any test makes.
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        if (!path.endsWith("/token-revocations")) {
+            requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().toString(), path,
+                    exchange.getRequestHeaders().getFirst("Authorization"), body));
+        }
         Reply reply = replies.getOrDefault(path, new Reply(200, "{\"success\":true,\"data\":null}"));
         byte[] response = reply.body().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
