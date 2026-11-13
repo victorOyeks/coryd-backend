@@ -31,6 +31,12 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         if (accept != null && accept.contains("text/event-stream")) {
             return true;
         }
+        // A CSV download (reports, the audit export) runs to megabytes: cached, masked and logged whole, it reached the caller
+        // only after all of that - seconds per file, twice when ops-service relays trip-service's. LoggingInterceptor still
+        // logs the request line and status.
+        if (path.endsWith(".csv") || path.endsWith("/export")) {
+            return true;
+        }
         return path.startsWith("/actuator") || path.contains("/ws/") || path.endsWith("/ws")
                 || path.contains("/swagger-ui") || path.contains("/v3/api-docs") || path.contains("/webjars");
     }
