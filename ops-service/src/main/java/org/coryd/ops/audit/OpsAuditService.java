@@ -10,6 +10,7 @@ import org.coryd.common.audit.OpsAuditQuery;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.ops.client.IdentityServiceClient;
 import org.coryd.ops.client.OpsAuditClient;
+import org.coryd.ops.platform.Parallel;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -123,14 +125,17 @@ public class OpsAuditService {
 
     Merged merge(AuditFilter filter, AuditCursor cursor, int size) {
         validate(filter);
-        Map<String, OpsAuditPage> pages = new LinkedHashMap<>();
+        // The sources are asked at once, not one after another - an export is up to 20 of these rounds.
+        Map<String, CompletableFuture<OpsAuditPage>> calls = new LinkedHashMap<>();
         for (Source source : SOURCES) {
             if (!source.relevant(filter) || cursor.exhausted().contains(source.key())) {
                 continue;
             }
-            AuditCursor.Position pos = cursor.positions().get(source.key());
-            pages.put(source.key(), auditClient.page(source.key(), query(filter, pos, size)));
+            OpsAuditQuery query = query(filter, cursor.positions().get(source.key()), size);
+            calls.put(source.key(), Parallel.call(() -> auditClient.page(source.key(), query)));
         }
+        Map<String, OpsAuditPage> pages = new LinkedHashMap<>();
+        calls.forEach((key, call) -> pages.put(key, Parallel.join(call)));
         List<Tagged> all = new ArrayList<>();
         pages.forEach((key, page) -> {
             for (int i = 0; i < page.items().size(); i++) {
