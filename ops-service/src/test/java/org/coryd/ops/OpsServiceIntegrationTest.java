@@ -1,6 +1,5 @@
 package org.coryd.ops;
 
-import org.coryd.ops.controller.UserController;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -1142,10 +1141,10 @@ class OpsServiceIntegrationTest {
         assertThat(reinstate.get("opsUserName").asText()).isEqualTo("Ada Ops");
         assertThat(lastAuth.get()).isEqualTo(ops);
 
-        // TEMPORARY compatibility: the console on main posts reinstate with no body - accepted and recorded as such.
-        mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops)).andExpect(status().isOk());
-        JsonNode legacy = objectMapper.readTree(requests.get(requests.size() - 1).body());
-        assertThat(legacy.get("reason").asText()).isEqualTo(UserController.LEGACY_NO_REASON);
+        // A reinstate with no body (the console before phase 2) is refused: the reason is required.
+        int before = requests.size();
+        mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops)).andExpect(status().isBadRequest());
+        assertThat(requests).hasSize(before);
 
         replies.put("/identity/internal/users/u-1/reinstate", new Reply(400, "{\"success\":false,\"message\":\"This account isn't suspended\"}"));
         mockMvc.perform(post("/users/u-1/reinstate").header("Authorization", ops).contentType(MediaType.APPLICATION_JSON)

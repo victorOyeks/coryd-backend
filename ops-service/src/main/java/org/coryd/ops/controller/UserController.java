@@ -41,17 +41,11 @@ public class UserController {
         return ApiResponse.ok("Suspended", null);
     }
 
-    /**
-     * The console sends a reason. Sessions ended by the suspension stay ended - the person signs in again.
-     * TEMPORARY: the console released before phase 2 posts no body, so a missing body is still accepted and recorded as
-     * LEGACY_NO_REASON. Remove once the console that always sends a reason is on main (docs/plan-admin-portal.md).
-     */
-    public static final String LEGACY_NO_REASON = "No reason given (reinstated from an older console)";
-
+    /** The reason is required. Sessions ended by the suspension stay ended - the person signs in again. */
     @PostMapping("/{userId}/reinstate")
     public ApiResponse<Void> reinstate(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String userId,
-                                       @Valid @RequestBody(required = false) SuspendUserRequest request) {
-        accountOpsService.reinstate(userId, request == null ? LEGACY_NO_REASON : request.reason(), admin);
+                                       @Valid @RequestBody SuspendUserRequest request) {
+        accountOpsService.reinstate(userId, request.reason(), admin);
         return ApiResponse.ok("Reinstated", null);
     }
 

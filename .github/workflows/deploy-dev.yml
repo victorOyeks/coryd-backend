@@ -202,7 +202,7 @@ jobs:
               sudo systemctl restart coryd-$svc
 
               ok=false
-              for i in $(seq 1 60); do
+              for i in $(seq 1 120); do
                 status=$(wget -qO- "${health_urls[$svc]}" 2>/dev/null | grep -o '"status":"UP"' || echo "")
                 if [ -n "$status" ]; then
                   echo "  ✓ $svc healthy"
@@ -213,7 +213,7 @@ jobs:
               done
 
               if [ "$ok" = "false" ]; then
-                echo "  ✗ $svc did not become healthy in 300s — rolling back"
+                echo "  ✗ $svc did not become healthy in 600s — rolling back"
                 [ -f /opt/coryd-dev/$svc/app.jar.bak ] && \
                   cp /opt/coryd-dev/$svc/app.jar.bak /opt/coryd-dev/$svc/app.jar
                 sudo systemctl restart coryd-$svc
