@@ -60,6 +60,17 @@ public final class OpsAccessPolicy {
             new Rule(ANY, "/trips/**", OpsPermission.TRIPS_MANAGE),
             new Rule(ANY, "/bookings/**", OpsPermission.TRIPS_MANAGE),
             // safety and support
+            // Phase 6 platform: insights for every role; settings, broadcasts, emailed reports and health for super admins. The
+            // analytics paths sit under /reports, so they must come before the safety /reports/** rules below.
+            new Rule(GET, "/dashboard/**", OpsPermission.INSIGHTS_VIEW),
+            new Rule(GET, "/corridors/**", OpsPermission.INSIGHTS_VIEW),
+            new Rule(GET, "/reports/catalog", OpsPermission.INSIGHTS_VIEW),
+            new Rule(GET, "/reports/analytics/**", OpsPermission.INSIGHTS_VIEW),
+            new Rule(ANY, "/reports/emailed/**", OpsPermission.PLATFORM_MANAGE),
+            new Rule(ANY, "/settings/**", OpsPermission.PLATFORM_MANAGE),
+            new Rule(ANY, "/broadcasts/**", OpsPermission.PLATFORM_MANAGE),
+            new Rule(ANY, "/system/**", OpsPermission.PLATFORM_MANAGE),
+
             new Rule(GET, "/sos/**", OpsPermission.SAFETY_VIEW),
             new Rule(GET, "/reports/**", OpsPermission.SAFETY_VIEW),
             new Rule(GET, "/ratings/**", OpsPermission.SAFETY_VIEW),

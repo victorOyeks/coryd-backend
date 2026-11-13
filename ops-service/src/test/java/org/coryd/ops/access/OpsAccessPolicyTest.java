@@ -23,7 +23,7 @@ class OpsAccessPolicyTest {
         assertThat(OpsAccessPolicy.required("DELETE", "/users/u-1")).isEqualTo(OpsPermission.ACCOUNT_DELETE);
         assertThat(OpsAccessPolicy.required("GET", "/team/roles")).isEqualTo(OpsPermission.CONSOLE_BASICS);
         assertThat(OpsAccessPolicy.required("POST", "/stream/token")).isEqualTo(OpsPermission.CONSOLE_BASICS);
-        assertThat(OpsAccessPolicy.required("GET", "/settings")).isEqualTo(OpsAccessPolicy.SUPER_ADMIN_ONLY);
+        assertThat(OpsAccessPolicy.required("GET", "/not-yet-ruled")).as("an endpoint with no rule is super-admin only").isEqualTo(OpsAccessPolicy.SUPER_ADMIN_ONLY);
     }
 
     @Test
@@ -43,5 +43,26 @@ class OpsAccessPolicyTest {
             assertThat(role == OpsRole.SUPER_ADMIN || !role.can(OpsPermission.AUDIT_VIEW)).isTrue();
         }
         assertThat(OpsRole.effective(null)).isEqualTo(OpsRole.SUPER_ADMIN);
+    }
+
+    @Test
+    void platformInsightsAreForEveryRoleAndPlatformControlForSuperAdminsOnly() {
+        assertThat(OpsAccessPolicy.required("GET", "/dashboard")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
+        assertThat(OpsAccessPolicy.required("GET", "/corridors")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
+        assertThat(OpsAccessPolicy.required("GET", "/reports/catalog")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
+        assertThat(OpsAccessPolicy.required("GET", "/reports/analytics/revenue")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
+        assertThat(OpsAccessPolicy.required("GET", "/reports/analytics/revenue.csv")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
+        assertThat(OpsAccessPolicy.required("POST", "/reports/emailed/daily/send")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        assertThat(OpsAccessPolicy.required("GET", "/settings")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        assertThat(OpsAccessPolicy.required("PUT", "/settings/commission.percent")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        assertThat(OpsAccessPolicy.required("POST", "/broadcasts")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        assertThat(OpsAccessPolicy.required("GET", "/system/health")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        // Safety reports (issue reports) under the same /reports prefix keep their own permissions.
+        assertThat(OpsAccessPolicy.required("GET", "/reports/r-1")).isEqualTo(OpsPermission.SAFETY_VIEW);
+        assertThat(OpsAccessPolicy.required("POST", "/reports/r-1/resolve")).isEqualTo(OpsPermission.SAFETY_MANAGE);
+        for (OpsRole role : OpsRole.values()) {
+            assertThat(role.can(OpsPermission.INSIGHTS_VIEW)).as(role + " sees the dashboard").isTrue();
+            assertThat(role.can(OpsPermission.PLATFORM_MANAGE)).as(role + " changes settings").isEqualTo(role == OpsRole.SUPER_ADMIN);
+        }
     }
 }

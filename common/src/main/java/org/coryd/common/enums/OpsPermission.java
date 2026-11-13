@@ -34,6 +34,10 @@ public enum OpsPermission {
     MONEY_MANAGE("move money (refunds, approvals, payouts, debt) or reveal bank details"),
     /** The beta waitlist and marking people invited. */
     GROWTH_MANAGE("manage the beta waitlist"),
+
+    INSIGHTS_VIEW("view the dashboard, analytics reports and corridors"),
+
+    PLATFORM_MANAGE("change platform settings, send broadcasts or emailed reports, or view system health"),
     /** Dashboard metrics and the live stream - every ops role. */
     CONSOLE_BASICS("use the console");
 

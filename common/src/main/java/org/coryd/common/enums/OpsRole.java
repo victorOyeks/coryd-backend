@@ -15,14 +15,14 @@ public enum OpsRole {
     SUPER_ADMIN("Super admin", EnumSet.allOf(OpsPermission.class)),
     /** Identity checks, the verification queue, documents and their expiry; directories read-only. */
     VERIFICATION("Verification", EnumSet.of(OpsPermission.VERIFICATION_VIEW, OpsPermission.VERIFICATION_DECIDE,
-            OpsPermission.DIRECTORY_VIEW, OpsPermission.CONSOLE_BASICS)),
+            OpsPermission.DIRECTORY_VIEW, OpsPermission.INSIGHTS_VIEW, OpsPermission.CONSOLE_BASICS)),
     /** Money: transactions, refunds, approvals, payouts, earnings and debt, finance dashboard, pricing; trips read-only. */
     FINANCE("Finance", EnumSet.of(OpsPermission.MONEY_VIEW, OpsPermission.MONEY_MANAGE, OpsPermission.TRIPS_VIEW,
-            OpsPermission.DIRECTORY_VIEW, OpsPermission.CONSOLE_BASICS)),
+            OpsPermission.DIRECTORY_VIEW, OpsPermission.INSIGHTS_VIEW, OpsPermission.CONSOLE_BASICS)),
     /** Trips and bookings, SOS, reports, ratings, account actions; money read-only. */
     SUPPORT("Support", EnumSet.of(OpsPermission.TRIPS_VIEW, OpsPermission.TRIPS_MANAGE, OpsPermission.SAFETY_VIEW,
             OpsPermission.SAFETY_MANAGE, OpsPermission.ACCOUNT_MANAGE, OpsPermission.DIRECTORY_VIEW, OpsPermission.MONEY_VIEW,
-            OpsPermission.GROWTH_MANAGE, OpsPermission.CONSOLE_BASICS));
+            OpsPermission.GROWTH_MANAGE, OpsPermission.INSIGHTS_VIEW, OpsPermission.CONSOLE_BASICS));
 
     /** The JWT claim carrying it. */
     public static final String CLAIM = "opsRole";
