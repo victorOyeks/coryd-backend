@@ -69,12 +69,39 @@ public class DocumentExpiryService {
     @Value("${document-expiry.notify-cooldown:PT24H}")
     private Duration notifyCooldown = Duration.ofHours(24);
 
+    /** Configured reminder days - the defaults for ops' documents.* settings (docs/ops-console/settings.md). */
+    @Value("${document-expiry.reminder-days:14}")
+    private int reminderDays = SOON_DAYS;
+
+    @Value("${document-expiry.final-reminder-days:3}")
+    private int finalReminderDays = FINAL_REMINDER_DAYS;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.coryd.common.settings.PlatformSettings platformSettings;
+
+    /** Days before expiry of the first reminder - also the tracker's "expiring soon" window. */
+    int soonDays() {
+        return org.coryd.common.settings.PlatformSettings.integer(platformSettings,
+                org.coryd.common.settings.PlatformSetting.DOCUMENT_REMINDER_DAYS, reminderDays);
+    }
+
+    int finalReminderDays() {
+        int last = org.coryd.common.settings.PlatformSettings.integer(platformSettings,
+                org.coryd.common.settings.PlatformSetting.DOCUMENT_FINAL_REMINDER_DAYS, finalReminderDays);
+        return Math.max(0, Math.min(last, soonDays() - 1));
+    }
+
+    /** Today and the end of the "expiring soon" window, with the reminder days in effect. */
+    Window currentWindow() {
+        return window(soonDays());
+    }
+
     // ---- the tracker -----------------------------------------------------------------------------
 
     @Transactional(readOnly = true)
     public PagedResponse<DocumentExpiryView> tracker(DocumentExpiryTab tab, String search, DocumentExpirySort sort,
                                                      Sort.Direction direction, int page, int size) {
-        Window window = window();
+        Window window = currentWindow();
         Page<DriverDocument> rows = documentRepository.findAll(DocumentExpirySpecs.matching(Filter.tracked(tab, search), window, sort, direction),
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 50))));
         Map<String, DriverIndex> drivers = drivers(rows.getContent());
@@ -83,7 +110,7 @@ public class DocumentExpiryService {
 
     @Transactional(readOnly = true)
     public DocumentExpiryCounts counts(String search) {
-        Window window = window();
+        Window window = currentWindow();
         return new DocumentExpiryCounts(
                 count(Filter.tracked(null, search), window),
                 count(Filter.tracked(DocumentExpiryTab.EXPIRING_SOON, search), window),
@@ -99,7 +126,7 @@ public class DocumentExpiryService {
     public DocumentExpiryView document(String documentId) {
         DriverDocument doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found"));
-        return view(doc, driverIndexRepository.findById(doc.getDriverId()).orElse(null), window());
+        return view(doc, driverIndexRepository.findById(doc.getDriverId()).orElse(null), currentWindow());
     }
 
     // ---- ops reminders ---------------------------------------------------------------------------
@@ -109,9 +136,9 @@ public class DocumentExpiryService {
     public DocumentExpiryView notifyDriver(String documentId, String by) {
         DriverDocument doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found"));
-        Window window = window();
+        Window window = currentWindow();
         if (doc.getExpiresOn() == null || doc.getExpiresOn().isAfter(window.soonUntil())) {
-            throw new BadRequestException("Only a document expiring within " + SOON_DAYS + " days, or already expired, can be sent a reminder");
+            throw new BadRequestException("Only a document expiring within " + soonDays() + " days, or already expired, can be sent a reminder");
         }
         if (notifiedRecently(doc.getLastNotifiedAt())) {
             throw new BadRequestException("The driver was reminded at " + WHEN.format(doc.getLastNotifiedAt())
@@ -128,7 +155,7 @@ public class DocumentExpiryService {
      * leaves drivers pushed but not recorded as reminded.
      */
     public DocumentExpiryNotifyResult notifyAll(DocumentExpiryTab tab, String search, String by) {
-        Window window = window();
+        Window window = currentWindow();
         Instant cutoff = Instant.now().minus(notifyCooldown);
         long notifiable = inTransaction(() -> count(new Filter(true, tab, search, true, null), window));
         Filter due = new Filter(true, tab, search, true, cutoff);
@@ -159,7 +186,7 @@ public class DocumentExpiryService {
      * A batch at a time, each in its own transaction, with the pushes and trip-service's notice sent once it commits.
      */
     public int expireDue() {
-        Window window = window();
+        Window window = currentWindow();
         int done = 0;
         while (true) {
             Expired batch = inTransaction(() -> {
@@ -191,8 +218,8 @@ public class DocumentExpiryService {
 
     /** The 3-day reminder, then the 14-day one - each sent once per document, with the days actually left. */
     public int remindDue() {
-        Window window = window();
-        int sent = remind(p -> documentRepository.findDueThreeDayReminder(window.today(), window.today().plusDays(FINAL_REMINDER_DAYS), p),
+        Window window = currentWindow();
+        int sent = remind(p -> documentRepository.findDueThreeDayReminder(window.today(), window.today().plusDays(finalReminderDays()), p),
                 ids -> documentRepository.markThreeDayReminderSent(ids, Instant.now(), SYSTEM), window);
         sent += remind(p -> documentRepository.findDueFourteenDayReminder(window.today(), window.soonUntil(), p),
                 ids -> documentRepository.markFourteenDayReminderSent(ids, Instant.now(), SYSTEM), window);
@@ -239,8 +266,12 @@ public class DocumentExpiryService {
     // ---- helpers ---------------------------------------------------------------------------------
 
     static Window window() {
+        return window(SOON_DAYS);
+    }
+
+    static Window window(int soonDays) {
         LocalDate today = LocalDate.now(LAGOS);
-        return new Window(today, today.plusDays(SOON_DAYS));
+        return new Window(today, today.plusDays(soonDays));
     }
 
     private long count(Filter filter, Window window) {

@@ -64,6 +64,13 @@ rider-index:
 document-expiry:
   cron: ${DOCUMENT_EXPIRY_CRON:0 0 7 * * *}
   notify-cooldown: ${DOCUMENT_EXPIRY_NOTIFY_COOLDOWN:PT24H}
+  # Defaults for the Ops Console settings documents.expiry-reminder-days / documents.final-reminder-days.
+  reminder-days: ${DOCUMENT_EXPIRY_REMINDER_DAYS:14}
+  final-reminder-days: ${DOCUMENT_EXPIRY_FINAL_REMINDER_DAYS:3}
+
+coryd:
+  job-runs:
+    schema: profile
 
 # Ops verification queue: a licence still out with Smile ID joins it after this many minutes, and ops can decide it -
 # Smile ID's result overrides that decision when it arrives.
