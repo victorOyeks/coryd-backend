@@ -229,6 +229,19 @@ own "only your own" checks still apply); a service's system token (no ops role) 
 | payment | any | `/payout-recipients/drivers/**` (bank details) | `MONEY_MANAGE` |
 | trip | — | none: every ops endpoint is under `/internal/ops/**` and already needs the internal key | — |
 
+### Two reads that were open to any signed-in user
+
+| Endpoint | Who may read it now | Everyone else |
+|---|---|---|
+| profile `GET /drivers/{driverId}/documents` | the driver themself; another service (internal key); an ops admin with `VERIFICATION_VIEW` | `403 You can only view your own documents` |
+| payment `GET /payments/bookings/{bookingId}` (receipt / Pay Now status) | the rider who booked; the driver of that booking's trip (checked with trip-service); another service (internal key); an ops admin with `MONEY_VIEW` | `403 You can only view payments for your own bookings` |
+
+An ops admin without the permission gets the usual `403 Your ops role (X) can't …`. These answer **403**, not the 401 that
+older "only your own" checks in these services use (`You can only view your own payments/earnings`): the apps treat a
+401 as signed out. A booking with no payment still answers `404 No payment found for this booking`. If trip-service can't
+be reached, a driver (not the rider) is refused rather than shown the payment. No CoRyd service calls either endpoint;
+the mobile apps only ever read their own.
+
 ## 8. Configuration and rollout
 
 | Env (service) | Default | Meaning |

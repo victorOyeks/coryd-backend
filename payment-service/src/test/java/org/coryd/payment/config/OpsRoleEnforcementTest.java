@@ -50,6 +50,7 @@ class OpsRoleEnforcementTest {
     @MockBean PaymentService paymentService;
     @MockBean PaymentHistoryService paymentHistoryService;
     @MockBean org.coryd.payment.gateway.PaymentGatewayClient gatewayClient;
+    @MockBean org.coryd.payment.security.BookingPaymentAccess bookingPaymentAccess;
 
     private MockHttpServletRequestBuilder as(MockHttpServletRequestBuilder request, UserRole role, OpsRole opsRole) {
         return request.header("Authorization", "Bearer " + jwtUtil.generateToken("u-1", null, "Ada", "Ops", role, opsRole));
