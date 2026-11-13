@@ -35,55 +35,82 @@ public class OpsMoneyQueryRepository {
 
     static final String LAGOS_DAY = "cast((%s at time zone current_setting('TimeZone')) at time zone 'Africa/Lagos' as date)";
 
-    private static final String ROWS = """
-            select 'PAYMENT' as type, t.id, t.created_at as occurred_at, t.status, t.amount, t.gateway_reference as reference,
-                   t.booking_id,
-                   case when t.purpose = 'DEBT_REPAYMENT' then null else t.rider_id end as rider_id,
-                   case when t.purpose = 'DEBT_REPAYMENT' then t.rider_id else h.driver_id end as driver_id,
-                   t.purpose as kind, cast(null as varchar) as reason, t.card_type, t.card_last4
-            from payment.payment_transactions t
-            left join payment.fare_holds h on h.booking_id = t.booking_id
-            union all
-            select 'REFUND', r.id, coalesce(r.refunded_at, r.created_at), r.status, r.amount, t.gateway_reference,
-                   r.booking_id,
-                   case when r.kind = 'OVERPAYMENT' then null else r.user_id end,
-                   case when r.kind = 'OVERPAYMENT' then r.user_id else h.driver_id end,
-                   case when q.id is not null then 'MANUAL' else r.kind end, r.reason, t.card_type, t.card_last4
-            from payment.refunds r
-            left join payment.payment_transactions t on t.id = r.payment_transaction_id
-            left join payment.fare_holds h on h.booking_id = r.booking_id
-            left join payment.ops_money_requests q on q.refund_id = r.id
-            union all
-            select 'PAYOUT', s.id, coalesce(s.settlement_date, s.created_at),
-                   case lower(s.status) when 'success' then 'PAID' else upper(s.status) end,
-                   s.amount, s.gateway_settlement_id, cast(null as varchar), cast(null as varchar), s.driver_id,
-                   cast(null as varchar), cast(null as varchar), cast(null as varchar), cast(null as varchar)
-            from payment.driver_settlements s
-            """;
+    /**
+     * One select per transaction type, all with the same columns. Lists and counts are built per type rather than over a
+     * UNION of all three: a filter, sort and limit on one type's rows reach its own indexes (Postgres won't push a sort or a
+     * limit through a UNION of joins - over the union, every call read and joined every payment, refund and payout), and a
+     * count drops the joins it doesn't filter on. payer_id is the raw rider column behind rider_id, there only so a rider
+     * filter can use that column's index (rider_id is worked out per row, so no index can serve it).
+     */
+    private static final Map<TransactionType, String> ROWS = new EnumMap<>(Map.of(
+            TransactionType.PAYMENT, """
+                    select 'PAYMENT' as type, t.id, t.created_at as occurred_at, t.status, t.amount, t.gateway_reference as reference,
+                           t.booking_id,
+                           case when t.purpose = 'DEBT_REPAYMENT' then null else t.rider_id end as rider_id,
+                           case when t.purpose = 'DEBT_REPAYMENT' then t.rider_id else h.driver_id end as driver_id,
+                           t.purpose as kind, cast(null as varchar) as reason, t.card_type, t.card_last4, t.rider_id as payer_id
+                    from payment.payment_transactions t
+                    left join payment.fare_holds h on h.booking_id = t.booking_id
+                    """,
+            TransactionType.REFUND, """
+                    select 'REFUND' as type, r.id, coalesce(r.refunded_at, r.created_at) as occurred_at, r.status, r.amount,
+                           t.gateway_reference as reference, r.booking_id,
+                           case when r.kind = 'OVERPAYMENT' then null else r.user_id end as rider_id,
+                           case when r.kind = 'OVERPAYMENT' then r.user_id else h.driver_id end as driver_id,
+                           case when q.id is not null then 'MANUAL' else r.kind end as kind, r.reason, t.card_type, t.card_last4,
+                           r.user_id as payer_id
+                    from payment.refunds r
+                    left join payment.payment_transactions t on t.id = r.payment_transaction_id
+                    left join payment.fare_holds h on h.booking_id = r.booking_id
+                    left join payment.ops_money_requests q on q.refund_id = r.id
+                    """,
+            TransactionType.PAYOUT, """
+                    select 'PAYOUT' as type, s.id, coalesce(s.settlement_date, s.created_at) as occurred_at,
+                           case lower(s.status) when 'success' then 'PAID' else upper(s.status) end as status,
+                           s.amount, s.gateway_settlement_id as reference, cast(null as varchar) as booking_id,
+                           cast(null as varchar) as rider_id, s.driver_id, cast(null as varchar) as kind, cast(null as varchar) as reason,
+                           cast(null as varchar) as card_type, cast(null as varchar) as card_last4, cast(null as varchar) as payer_id
+                    from payment.driver_settlements s
+                    """));
 
     @PersistenceContext
     private EntityManager entityManager;
 
     // ---- Transactions list ---------------------------------------------------------------------------------------
 
+    /**
+     * A page of the merged list. Each type gives its own first offset + size rows in the list's order (a top-N read off
+     * its index), and the page is cut from those - the same rows a sort of every transaction would give, without reading
+     * them all.
+     */
     public List<TransactionRow> transactions(TransactionFilter filter, int page, int size) {
-        Where where = where(filter, true);
+        Where where = where(filter);
         String order = switch (filter.sort() == null ? TransactionFilter.Sort.NEWEST : filter.sort()) {
             case NEWEST -> "occurred_at desc, id desc";
             case OLDEST -> "occurred_at asc, id asc";
             case AMOUNT_DESC -> "amount desc, occurred_at desc, id desc";
             case AMOUNT_ASC -> "amount asc, occurred_at desc, id desc";
         };
-        Query query = entityManager.createNativeQuery("select * from (" + ROWS + ") x" + where.sql() + " order by " + order
+        List<String> perType = new ArrayList<>();
+        for (TransactionType type : types(filter)) {
+            perType.add("(select * from (" + ROWS.get(type) + ") b" + where.sql() + " order by " + order + " limit :upTo)");
+        }
+        Query query = entityManager.createNativeQuery("select * from (" + String.join(" union all ", perType) + ") x order by " + order
                 + " limit :limit offset :offset");
         where.bind(query);
+        long offset = (long) page * size;
+        query.setParameter("upTo", offset + size);
         query.setParameter("limit", size);
-        query.setParameter("offset", (long) page * size);
+        query.setParameter("offset", offset);
         List<TransactionRow> rows = new ArrayList<>();
         for (Object o : query.getResultList()) {
             rows.add(row((Object[]) o));
         }
         return rows;
+    }
+
+    private static List<TransactionType> types(TransactionFilter filter) {
+        return filter.type() == null ? List.of(TransactionType.values()) : List.of(filter.type());
     }
 
     private static TransactionRow row(Object[] r) {
@@ -93,24 +120,31 @@ public class OpsMoneyQueryRepository {
     }
 
     public java.util.Optional<TransactionRow> transaction(TransactionType type, String id) {
-        Query query = entityManager.createNativeQuery("select * from (" + ROWS + ") x where type = :type and id = :id");
-        query.setParameter("type", type.name());
+        Query query = entityManager.createNativeQuery("select * from (" + ROWS.get(type) + ") b where id = :id");
         query.setParameter("id", id);
         List<?> result = query.getResultList();
         return result.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(row((Object[]) result.get(0)));
     }
 
     public long countTransactions(TransactionFilter filter) {
-        Where where = where(filter, true);
-        Query query = entityManager.createNativeQuery("select count(*) from (" + ROWS + ") x" + where.sql());
+        Where where = where(filter);
+        List<String> perType = new ArrayList<>();
+        for (TransactionType type : types(filter)) {
+            perType.add("(select count(*) from (" + ROWS.get(type) + ") b" + where.sql() + ")");
+        }
+        Query query = entityManager.createNativeQuery("select " + String.join(" + ", perType));
         where.bind(query);
         return ((Number) query.getSingleResult()).longValue();
     }
 
     /** The tab badges: every filter but the type. */
     public Map<TransactionType, Long> countByType(TransactionFilter filter) {
-        Where where = where(filter, false);
-        Query query = entityManager.createNativeQuery("select type, count(*) from (" + ROWS + ") x" + where.sql() + " group by type");
+        Where where = where(filter);
+        List<String> perType = new ArrayList<>();
+        for (TransactionType type : TransactionType.values()) {
+            perType.add("select '" + type.name() + "', count(*) from (" + ROWS.get(type) + ") b" + where.sql());
+        }
+        Query query = entityManager.createNativeQuery(String.join(" union all ", perType));
         where.bind(query);
         Map<TransactionType, Long> counts = new EnumMap<>(TransactionType.class);
         for (TransactionType type : TransactionType.values()) {
@@ -125,9 +159,9 @@ public class OpsMoneyQueryRepository {
 
     /** Payout status tabs: every filter but the status. */
     public Map<String, Long> payoutCountsByStatus(TransactionFilter filter) {
-        TransactionFilter payouts = filter.withType(TransactionType.PAYOUT).withStatus(null);
-        Where where = where(payouts, true);
-        Query query = entityManager.createNativeQuery("select status, count(*) from (" + ROWS + ") x" + where.sql() + " group by status");
+        Where where = where(filter.withStatus(null));
+        Query query = entityManager.createNativeQuery("select status, count(*) from (" + ROWS.get(TransactionType.PAYOUT) + ") b"
+                + where.sql() + " group by status");
         where.bind(query);
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String status : List.of("PENDING", "PROCESSING", "PAID", "FAILED")) {
@@ -140,11 +174,9 @@ public class OpsMoneyQueryRepository {
         return counts;
     }
 
-    private Where where(TransactionFilter f, boolean withType) {
+    /** Every filter but the type - the type picks which rows are read at all. */
+    private Where where(TransactionFilter f) {
         Where w = new Where();
-        if (withType && f.type() != null) {
-            w.add("type = :type", "type", f.type().name());
-        }
         if (f.status() != null && !f.status().isBlank()) {
             w.add("status = :status", "status", f.status().trim().toUpperCase(Locale.ROOT));
         }
@@ -155,6 +187,10 @@ public class OpsMoneyQueryRepository {
             w.add("occurred_at < :to", "to", f.to());
         }
         idOrRef(w, "rider_id", "riderId", f.riderId());
+        if (f.riderId() != null && !f.riderId().isBlank() && !SHORT_REF.matcher(f.riderId().trim()).matches()) {
+            // Implied by rider_id = :riderId (a row's rider is always its payer), and indexed.
+            w.clauses.add("payer_id = :riderId");
+        }
         idOrRef(w, "driver_id", "driverId", f.driverId());
         idOrRef(w, "booking_id", "bookingId", f.bookingId());
         if (f.bookingIds() != null) {

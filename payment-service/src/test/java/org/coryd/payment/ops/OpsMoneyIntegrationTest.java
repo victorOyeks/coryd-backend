@@ -567,6 +567,35 @@ class OpsMoneyIntegrationTest {
     }
 
     @Test
+    void pagingTheTransactionsListGivesTheSameRowsAsOneBigPageForEverySort() {
+        // Payments, refunds and payouts interleaved in time, with tied amounts, so every page mixes the three types.
+        for (int i = 0; i < 6; i++) {
+            String booking = paidBooking(i % 2 == 0 ? "2000.00" : "3500.00");
+            if (i % 2 == 0) {
+                refundService.submit(booking, new ManualRefundRequest(new BigDecimal("500"), "Partial " + i, null), ADA);
+            }
+            settlement(i % 3 == 0 ? "failed" : "success", i % 2 == 0 ? "2000.00" : "1200.00");
+        }
+
+        for (TransactionFilter.Sort sort : TransactionFilter.Sort.values()) {
+            TransactionFilter filter = new TransactionFilter(null, null, null, null, null, null, null, null, null, null, null, sort);
+            List<String> whole = transactionQueryService.list(filter, 0, 100).content().stream().map(TransactionRow::id).toList();
+            List<String> paged = new java.util.ArrayList<>();
+            for (int page = 0; page < 5; page++) {
+                transactionQueryService.list(filter, page, 4).content().forEach(r -> paged.add(r.id()));
+            }
+            assertThat(whole).hasSize(15);
+            assertThat(paged).as("sort %s", sort).containsExactlyElementsOf(whole);
+        }
+
+        TransactionFilter byRider = new TransactionFilter(null, null, null, null, RIDER, null, null, null, null, null, null, null);
+        assertThat(transactionQueryService.list(byRider, 0, 100).content()).extracting(TransactionRow::type)
+                .containsOnly(TransactionType.PAYMENT, TransactionType.REFUND).hasSize(9);
+        assertThat(transactionQueryService.counts(byRider)).containsEntry("payment", 6L).containsEntry("refund", 3L)
+                .containsEntry("payout", 0L);
+    }
+
+    @Test
     void theFinanceDashboardSumsLagosDays() {
         String booking = paidBooking("4000.00");
         paidBooking("6000.00");
