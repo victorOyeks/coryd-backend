@@ -15,5 +15,7 @@ public enum WhatsAppMessageKind {
     /** data: who, route, rider_phone, driver, driver_phone, car, location */
     SOS_OPS,
     /** data: route, what, not_answered, answered_ok, car, location */
-    SAFETY_ESCALATED
+    SAFETY_ESCALATED,
+    /** data: title, message - an Ops Console broadcast (docs/ops-console/broadcasts.md). */
+    BROADCAST
 }

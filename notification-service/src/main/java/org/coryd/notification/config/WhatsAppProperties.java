@@ -35,6 +35,7 @@ public class WhatsAppProperties {
             case SOS_CONTACT -> templates.getSosContact();
             case SOS_OPS -> templates.getSosOps();
             case SAFETY_ESCALATED -> templates.getSafetyEscalated();
+            case BROADCAST -> templates.getBroadcast();
         };
         return id == null || id.isBlank() ? null : id.trim();
     }
@@ -57,5 +58,6 @@ public class WhatsAppProperties {
         private String sosContact;
         private String sosOps;
         private String safetyEscalated;
+        private String broadcast;
     }
 }

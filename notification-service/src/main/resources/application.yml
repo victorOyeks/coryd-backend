@@ -73,6 +73,19 @@ whatsapp:
     sos-contact: ${WHATSAPP_TEMPLATE_SOS_CONTACT:}
     sos-ops: ${WHATSAPP_TEMPLATE_SOS_OPS:}
     safety-escalated: ${WHATSAPP_TEMPLATE_SAFETY_ESCALATED:}
+    broadcast: ${WHATSAPP_TEMPLATE_BROADCAST:}
+
+# Ops Console broadcasts (docs/ops-console/broadcasts.md).
+broadcast:
+  rate-per-second: ${BROADCAST_RATE_PER_SECOND:10}
+  quiet-hours-start: ${BROADCAST_QUIET_HOURS_START:21:00}
+  quiet-hours-end: ${BROADCAST_QUIET_HOURS_END:07:00}
+  max-per-hour: ${BROADCAST_MAX_PER_HOUR:10}
+  check-ms: ${BROADCAST_CHECK_MS:5000}
+
+coryd:
+  job-runs:
+    schema: notification
 
 spring.mail:
   host: ${SMTP_HOST:localhost}

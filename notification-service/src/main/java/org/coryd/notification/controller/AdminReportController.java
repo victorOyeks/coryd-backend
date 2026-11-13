@@ -28,6 +28,7 @@ import java.util.List;
 public class AdminReportController {
 
     private final ReportService reportService;
+    private final org.coryd.notification.broadcast.BroadcastAuditWriter audit;
 
     /** date is any day inside the period to report on; omit it for today's period. */
     @PostMapping("/{period}")
@@ -37,6 +38,10 @@ public class AdminReportController {
                                   @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
                                   @RequestParam(required = false) List<String> to) {
         reportService.sendReportFor(period, date, principal.getActiveRole(), to);
+        // Ops Console phase 6: a report sent on demand is an ops action - recorded with who asked for it.
+        audit.write(principal.getUserId(), principal.getFullName(), "REPORT_SENT", "REPORT", period.name(), null,
+                java.util.Map.of("date", String.valueOf(date), "to", to == null ? "default recipients" : String.join(", ", to)),
+                "Sent on demand");
         return ApiResponse.ok("Report sent", null);
     }
 
