@@ -40,14 +40,14 @@ public class InternalOpsInsightController {
     public record CatalogItem(String report, String title, String description, List<String> columns) {
     }
 
-    @GetMapping("/internal/ops/reports")
+    @GetMapping("/internal/ops/analytics")
     public ApiResponse<List<CatalogItem>> catalog(@AuthenticationPrincipal CoRydUserDetails principal) {
         OpsAdmin.of(principal);
         return ApiResponse.ok(Arrays.stream(TripReports.values())
                 .map(r -> new CatalogItem(r.slug(), r.title(), r.description(), r.columns())).toList());
     }
 
-    @GetMapping("/internal/ops/reports/{report}")
+    @GetMapping("/internal/ops/analytics/{report}")
     public ApiResponse<OpsReportService.Preview> preview(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String report,
                                                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
@@ -60,7 +60,7 @@ public class InternalOpsInsightController {
      * The CSV, streamed. X-Report-Rows: the rows in the range; X-Report-Truncated: true when there were more than the
      * MAX_CSV_ROWS the file holds (narrow the range).
      */
-    @GetMapping(value = "/internal/ops/reports/{report}.csv")
+    @GetMapping(value = "/internal/ops/analytics/{report}.csv")
     public void csv(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String report,
                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,

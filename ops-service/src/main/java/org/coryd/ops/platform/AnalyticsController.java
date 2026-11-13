@@ -51,7 +51,7 @@ public class AnalyticsController {
     public ApiResponse<JsonNode> catalog() {
         ObjectNode out = objectMapper.createObjectNode();
         ArrayNode reports = out.putArray("reports");
-        JsonNode trip = client.get(PlatformClient.Service.TRIP, "/internal/ops/reports", null);
+        JsonNode trip = client.get(PlatformClient.Service.TRIP, "/internal/ops/analytics", null);
         if (trip != null) {
             trip.forEach(r -> reports.add(((ObjectNode) r.deepCopy()).put("source", "trip-service").put("csv", true)));
         }
@@ -76,7 +76,7 @@ public class AnalyticsController {
         if (REVENUE.equals(report) || FUNNEL.equals(report)) {
             return ApiResponse.ok(local(report, from, to));
         }
-        return ApiResponse.ok(client.get(PlatformClient.Service.TRIP, "/internal/ops/reports/" + slug(report),
+        return ApiResponse.ok(client.get(PlatformClient.Service.TRIP, "/internal/ops/analytics/" + slug(report),
                 Params.of().put("from", from).put("to", to).put("limit", limit).build()));
     }
 
@@ -107,7 +107,7 @@ public class AnalyticsController {
             return;
         }
         String slug = slug(report);
-        client.stream(PlatformClient.Service.TRIP, "/internal/ops/reports/" + slug + ".csv", Params.of().put("from", from).put("to", to).build(),
+        client.stream(PlatformClient.Service.TRIP, "/internal/ops/analytics/" + slug + ".csv", Params.of().put("from", from).put("to", to).build(),
                 response::setHeader, () -> {
                     response.setContentType("text/csv; charset=UTF-8");
                     try {

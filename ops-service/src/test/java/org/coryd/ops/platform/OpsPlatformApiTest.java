@@ -214,7 +214,7 @@ class OpsPlatformApiTest {
     @Test
     void csvExportsStreamThroughWithTheirHeadersAndRevenueIsLaidOutHere() throws Exception {
         String admin = bearer(UserRole.OPS_ADMIN, "ops-ada");
-        replies.put("/trip/internal/ops/reports/trips.csv", new Reply(200, "trip_id,status\r\nt-1,COMPLETED\r\n", "text/csv",
+        replies.put("/trip/internal/ops/analytics/trips.csv", new Reply(200, "trip_id,status\r\nt-1,COMPLETED\r\n", "text/csv",
                 Map.of("Content-Disposition", "attachment; filename=\"coryd-trips.csv\"", "X-Report-Rows", "1", "X-Report-Truncated", "false")));
         MvcResult csv = mockMvc.perform(get("/reports/analytics/trips.csv").param("from", "2026-11-01").param("to", "2026-11-13")
                         .header("Authorization", admin))
@@ -226,7 +226,7 @@ class OpsPlatformApiTest {
         assertThat(csv.getResponse().getContentAsString()).isEqualTo("trip_id,status\r\nt-1,COMPLETED\r\n");
         assertThat(URLDecoder.decode(requests.get(0).uri(), StandardCharsets.UTF_8)).contains("from=2026-11-01", "to=2026-11-13");
 
-        replies.put("/trip/internal/ops/reports/payroll.csv", new Reply(404, "{\"message\":\"No report called 'payroll'\"}"));
+        replies.put("/trip/internal/ops/analytics/payroll.csv", new Reply(404, "{\"message\":\"No report called 'payroll'\"}"));
         mockMvc.perform(get("/reports/analytics/payroll.csv").header("Authorization", admin)).andExpect(status().isNotFound());
 
         replies.put("/payment/internal/ops/money/finance/summary", new Reply(200, "{\"data\":{\"from\":\"2026-11-12\",\"to\":\"2026-11-13\","
@@ -243,7 +243,7 @@ class OpsPlatformApiTest {
 
     @Test
     void theCatalogListsTripReportsRevenueTheFunnelAndTheEmailedReports() throws Exception {
-        replies.put("/trip/internal/ops/reports", new Reply(200, "{\"data\":[{\"report\":\"trips\",\"title\":\"Trips\",\"columns\":[\"trip_id\"]}]}"));
+        replies.put("/trip/internal/ops/analytics", new Reply(200, "{\"data\":[{\"report\":\"trips\",\"title\":\"Trips\",\"columns\":[\"trip_id\"]}]}"));
         mockMvc.perform(get("/reports/catalog").header("Authorization", bearer(UserRole.OPS_ADMIN, "ops-ada")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.reports[0].report").value("trips"))

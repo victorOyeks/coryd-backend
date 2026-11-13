@@ -35,7 +35,7 @@ public class DashboardController {
     public ApiResponse<JsonNode> corridors(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                            @RequestParam(defaultValue = "200") int limit) {
-        return ApiResponse.ok(client.get(PlatformClient.Service.TRIP, "/internal/ops/reports/corridors",
+        return ApiResponse.ok(client.get(PlatformClient.Service.TRIP, "/internal/ops/analytics/corridors",
                 Params.of().put("from", from).put("to", to).put("limit", limit).build()));
     }
 }
