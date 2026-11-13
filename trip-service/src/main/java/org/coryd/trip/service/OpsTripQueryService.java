@@ -314,6 +314,9 @@ public class OpsTripQueryService {
         List<String> bookingIds = paid.stream().map(Booking::getId).toList();
         for (SosIncident sos : sosIncidentRepository.findByRoutePostIdOrBookingIdIn(route.getId(),
                 bookingIds.isEmpty() ? List.of("-") : bookingIds)) {
+            if (sos.getKind() == org.coryd.common.enums.SosKind.SAFETY_CHECK) {
+                continue; // already on the timeline as its SAFETY_CHECK entry
+            }
             entries.add(new OpsTimelineEntry(sos.getCreatedAt(), "SOS", sos.getTriggeredByRole() == null ? "RIDER" : sos.getTriggeredByRole(),
                     sos.getTriggeredBy(), null, sos.getBookingId(), null,
                     sos.getLatitude() == null ? null : "At " + sos.getLatitude() + "," + sos.getLongitude()));

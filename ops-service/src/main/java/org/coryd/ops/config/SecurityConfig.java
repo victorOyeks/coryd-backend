@@ -6,6 +6,7 @@ import org.coryd.common.security.PublicPaths;
 import org.coryd.common.security.filter.JwtFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -30,6 +31,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PublicPaths.OBSERVABILITY).permitAll()
                         .requestMatchers(PublicPaths.ERROR_DISPATCH).permitAll()
+                        // The live stream: EventSource can't send a header, so StreamController checks the stream token
+                        // (or an OPS_ADMIN bearer) itself. POST /stream/token is still OPS_ADMIN only.
+                        .requestMatchers(HttpMethod.GET, "/stream").permitAll()
                         .anyRequest().hasRole(UserRole.OPS_ADMIN.name()))
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

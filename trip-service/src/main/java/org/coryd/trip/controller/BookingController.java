@@ -255,6 +255,6 @@ public class BookingController {
     /** Account > Report an issue - bookingId lives in the body (nullable) since a trip isn't always selected. */
     @PostMapping("/report-issue")
     public ApiResponse<IssueReport> reportIssue(@AuthenticationPrincipal CoRydUserDetails principal, @Valid @RequestBody IssueReportRequest request) {
-        return ApiResponse.ok(bookingService.reportIssue(request, principal.getUserId()));
+        return ApiResponse.ok(bookingService.reportIssue(request, principal.getUserId(), principal.getActiveRole()));
     }
 }

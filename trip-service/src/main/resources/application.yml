@@ -175,6 +175,11 @@ trip:
     answer-minutes: ${TRIP_SAFETY_ANSWER_MINUTES:3}
     repeat-minutes: ${TRIP_SAFETY_REPEAT_MINUTES:60}
     watch-grace-minutes: ${TRIP_SAFETY_WATCH_GRACE_MINUTES:60}
+  # SOS queue (Ops Console): an SOS or unanswered safety check nobody in ops has acknowledged re-alerts ops once at each
+  # of these minutes after it was raised, over the same SMS / WhatsApp / email path as the first alert. See SosOpsProperties.
+  sos:
+    realert-minutes: ${SOS_REALERT_MINUTES:5,15,30}
+    realert-max-age-hours: ${SOS_REALERT_MAX_AGE_HOURS:12}
   # Rider demand: drivers see a route once this many different riders want it, and get the 7 PM push
   # when it reaches min-riders-for-alert and matches their own trips. See DemandProperties.
   demand:

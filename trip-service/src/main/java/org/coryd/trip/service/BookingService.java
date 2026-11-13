@@ -1605,8 +1605,12 @@ public class BookingService {
                                  String vehiclePlate, String routeSummary, Double latitude, Double longitude) {
         String bookingId = booking == null ? null : booking.getId();
         String role = callerId.equals(route.getDriverId()) ? "DRIVER" : "RIDER";
+        // Every emergency contact of whoever pressed SOS - the rider's people for a rider, the driver's
+        // for a driver. Contacts belong to the person, whichever role they're in.
+        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchEmergencyContacts(callerId);
+
         // opsNotifiedAt is when the alert left for ops (SOS_TRIGGERED below) - delivery per SMS and email
-        // is in notification-service's notification_log.
+        // is in notification-service's notification_log. contactsNotified is who it texted, for the Ops Console.
         SosIncident incident = sosIncidentRepository.save(SosIncident.builder()
                 .bookingId(bookingId)
                 .routePostId(route.getId())
@@ -1615,11 +1619,11 @@ public class BookingService {
                 .latitude(latitude)
                 .longitude(longitude)
                 .opsNotifiedAt(Instant.now())
+                .contactsNotified(OpsSosService.contactsJson(contacts == null ? List.of() : contacts.stream()
+                        .map(c -> new org.coryd.trip.dto.ops.OpsSosDtos.Contact(c.name(), c.phone())).toList()))
                 .build());
-
-        // Every emergency contact of whoever pressed SOS - the rider's people for a rider, the driver's
-        // for a driver. Contacts belong to the person, whichever role they're in.
-        List<ProfileServiceClient.RiderContact> contacts = profileServiceClient.fetchEmergencyContacts(callerId);
+        // The Ops Console's SOS badge moves now, not at the next 30-second check.
+        eventPublisher.publishEvent(new OpsCountsPublisher.Dirty());
 
         // Fan-out only, never the primary path - the incident is already saved above.
         kafkaTemplate.send(KafkaTopics.SOS_TRIGGERED, SosTriggeredEvent.builder()
@@ -1650,10 +1654,19 @@ public class BookingService {
 
     @Transactional
     public IssueReport reportIssue(IssueReportRequest request, String callerId) {
+        return reportIssue(request, callerId, null);
+    }
+
+    /** callerRole is the app's signed-in role - the reporter's side when no trip is selected; a trip's own booking decides otherwise. */
+    @Transactional
+    public IssueReport reportIssue(IssueReportRequest request, String callerId, org.coryd.common.enums.UserRole callerRole) {
+        String reporterRole = callerRole == org.coryd.common.enums.UserRole.DRIVER ? "DRIVER"
+                : callerRole == org.coryd.common.enums.UserRole.RIDER ? "RIDER" : null;
         if (request.bookingId() != null) {
             Booking booking = getOrThrow(request.bookingId());
             RoutePost route = routeOf(booking);
             requireParticipant(booking, route, callerId);
+            reporterRole = callerId.equals(booking.getRiderId()) ? "RIDER" : "DRIVER";
             driverStatsPublisher.changed(route.getDriverId());
             riderStatsPublisher.changed(booking.getRiderId());
         }
@@ -1665,7 +1678,9 @@ public class BookingService {
                 .description(request.description())
                 .referenceNumber(referenceNumber)
                 .status("OPEN")
+                .reporterRole(reporterRole)
                 .build());
+        eventPublisher.publishEvent(new OpsCountsPublisher.Dirty());
 
         kafkaTemplate.send(KafkaTopics.ISSUE_REPORTED, IssueReportedEvent.builder()
                 .issueId(issue.getId())

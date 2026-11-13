@@ -64,4 +64,14 @@ public final class KafkaTopics {
     public static final String TRIP_SAFETY_CHECK = "coryd-trip-safety-check";
     /** Nobody answered in time - ops is alerted. */
     public static final String TRIP_SAFETY_ESCALATED = "coryd-trip-safety-escalated";
+
+    /** Ops Console (phase 5): an SOS changed in ops' hands - acknowledged, noted, escalated, resolved, re-alerted - or an
+     * unanswered safety check opened as an SOS-queue incident. ops-service streams it to every open console. */
+    public static final String OPS_SOS_CHANGED = "coryd-ops-sos-changed";
+    /** The console's live badges (SOS by status, stuck trips, open reports) - sent by trip-service when they change. */
+    public static final String OPS_COUNTS_CHANGED = "coryd-ops-counts-changed";
+    /** An SOS nobody in ops has acknowledged after a threshold - notification-service alerts ops again. */
+    public static final String SOS_OPS_REALERT = "coryd-sos-ops-realert";
+    /** Ops resolved or dismissed an issue report - the reporter is told, with ops' message. */
+    public static final String ISSUE_REPORT_UPDATED = "coryd-issue-report-updated";
 }

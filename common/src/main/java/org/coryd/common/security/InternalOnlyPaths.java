@@ -24,4 +24,7 @@ public final class InternalOnlyPaths {
 
     /** Also covers the dev-only reset tooling (/internal/dev/**), called by trip-service - only reachable when coryd.dev-tools.enabled is true. */
     public static final String[] PAYMENT_SERVICE = {"/internal/**"};
+
+    /** Delivery records read by ops-service (which channel an SOS alert actually went out on). */
+    public static final String[] NOTIFICATION_SERVICE = {"/internal/**"};
 }

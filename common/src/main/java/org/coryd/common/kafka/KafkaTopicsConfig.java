@@ -197,4 +197,24 @@ public class KafkaTopicsConfig {
     public NewTopic identityVerificationChangedTopic() {
         return TopicBuilder.name(KafkaTopics.IDENTITY_VERIFICATION_CHANGED).partitions(3).replicas(1).build();
     }
+
+    @Bean
+    public NewTopic opsSosChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.OPS_SOS_CHANGED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic opsCountsChangedTopic() {
+        return TopicBuilder.name(KafkaTopics.OPS_COUNTS_CHANGED).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic sosOpsRealertTopic() {
+        return TopicBuilder.name(KafkaTopics.SOS_OPS_REALERT).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic issueReportUpdatedTopic() {
+        return TopicBuilder.name(KafkaTopics.ISSUE_REPORT_UPDATED).partitions(3).replicas(1).build();
+    }
 }

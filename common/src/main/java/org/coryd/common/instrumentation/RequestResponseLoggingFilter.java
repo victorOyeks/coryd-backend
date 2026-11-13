@@ -26,6 +26,11 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getServletPath();
+        // A Server-Sent Events stream stays open for minutes: wrapped in a caching response it would never reach the browser.
+        String accept = request.getHeader("Accept");
+        if (accept != null && accept.contains("text/event-stream")) {
+            return true;
+        }
         return path.startsWith("/actuator") || path.contains("/ws/") || path.endsWith("/ws")
                 || path.contains("/swagger-ui") || path.contains("/v3/api-docs") || path.contains("/webjars");
     }

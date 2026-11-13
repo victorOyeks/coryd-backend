@@ -1,5 +1,6 @@
 package org.coryd.trip.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -12,6 +13,8 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.RatingDirection;
+
+import java.time.Instant;
 
 
 @Entity
@@ -40,4 +43,22 @@ public class Rating extends BaseEntity {
     private Integer stars;
 
     private String comment;
+
+    /** Ops hid it: still on record, but in no average and shown only in the console. */
+    @JsonIgnore
+    private Instant hiddenAt;
+    @JsonIgnore
+    @Column(length = 36)
+    private String hiddenBy;
+    @JsonIgnore
+    @Column(length = 120)
+    private String hiddenByName;
+    @JsonIgnore
+    @Column(length = 500)
+    private String hiddenReason;
+
+    @JsonIgnore
+    public boolean isHidden() {
+        return hiddenAt != null;
+    }
 }

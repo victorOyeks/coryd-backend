@@ -36,6 +36,14 @@ services:
   internal:
     api-key: ${INTERNAL_API_KEY}
 
+# The console's live stream (GET /ops/stream) - see docs/ops-console/safety-support.md.
+ops:
+  stream:
+    token-ttl-seconds: ${OPS_STREAM_TOKEN_TTL_SECONDS:60}
+    max-connection-minutes: ${OPS_STREAM_MAX_CONNECTION_MINUTES:30}
+    heartbeat-seconds: ${OPS_STREAM_HEARTBEAT_SECONDS:15}
+    replay-size: ${OPS_STREAM_REPLAY_SIZE:500}
+
 management:
   endpoints:
     web:
