@@ -366,6 +366,12 @@ class OpsTripsAndBookingsApiTest {
 
     private static void handle(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
+        if (path.endsWith("/token-revocations")) {
+            // common's revocation registry loading its snapshot in the background at startup - it can land mid-test
+            exchange.sendResponseHeaders(503, -1);
+            exchange.close();
+            return;
+        }
         requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().toString(), path,
                 exchange.getRequestHeaders().getFirst("Authorization"),
                 new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));

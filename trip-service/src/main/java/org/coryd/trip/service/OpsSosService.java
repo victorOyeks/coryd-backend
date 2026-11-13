@@ -92,8 +92,8 @@ public class OpsSosService {
         Map<String, Booking> bookings = bookings(page.getContent());
         Map<String, TripSafetyAlert> alerts = alerts(page.getContent());
         Instant now = Instant.now();
-        return PagedResponse.from(page.map(s -> row(s, routes.get(s.getRoutePostId()), bookings.get(s.getBookingId()),
-                alerts.get(s.getSafetyAlertId()), now)));
+        return PagedResponse.from(page.map(s -> row(s, get(routes, s.getRoutePostId()), get(bookings, s.getBookingId()),
+                get(alerts, s.getSafetyAlertId()), now)));
     }
 
     /** Tab badges - every filter but the status. */
@@ -483,6 +483,11 @@ public class OpsSosService {
             }
             return cb.and(where.toArray(Predicate[]::new));
         };
+    }
+
+    /** Map.of() refuses a null key - an SOS with no booking (a driver's) or no safety check has one. */
+    private static <T> T get(Map<String, T> map, String key) {
+        return key == null ? null : map.get(key);
     }
 
     static Instant startOfLagosDay(LocalDate day) {

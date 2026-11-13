@@ -1273,6 +1273,8 @@ class BookingFlowIntegrationTest {
         assertThat(incident.getBookingId()).isNull();
         assertThat(incident.getRoutePostId()).isEqualTo(route.getId());
         assertThat(incident.getTriggeredByRole()).isEqualTo("DRIVER");
+        assertThat(incident.getStatus()).as("lands in the Ops Console's SOS queue").isEqualTo(org.coryd.common.enums.SosStatus.OPEN);
+        assertThat(incident.getContactsNotified()).as("who it texted, for the console").contains("Wife").contains("08050000000");
         verify(kafkaTemplate).send(eq(KafkaTopics.SOS_TRIGGERED), argThat(e -> {
             var event = (org.coryd.common.kafka.events.SosTriggeredEvent) e;
             return event.getBookingId() == null && route.getId().equals(event.getRoutePostId())

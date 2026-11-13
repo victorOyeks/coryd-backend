@@ -9,7 +9,7 @@ import java.time.Instant;
 
 /**
  * An SOS-queue incident changed: RAISED (only for an unanswered safety check - a pressed SOS is SOS_TRIGGERED),
- * ACKNOWLEDGED, NOTE_ADDED, ESCALATED, RESOLVED or REALERTED. Read by ops-service's live stream.
+ * ACKNOWLEDGED, NOTE, ESCALATED, RESOLVED or REALERTED. Read by ops-service's live stream.
  */
 @Data
 @Builder

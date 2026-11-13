@@ -55,7 +55,7 @@ public class OpsRatingService {
         Page<Rating> page = ratingRepository.findAll(spec(filter),
                 PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(Sort.Order.desc("createdAt"), Sort.Order.asc("id"))));
         Map<String, Booking> bookings = bookings(page.getContent());
-        return PagedResponse.from(page.map(r -> row(r, bookings.get(r.getBookingId()))));
+        return PagedResponse.from(page.map(r -> row(r, r.getBookingId() == null ? null : bookings.get(r.getBookingId()))));
     }
 
     /** Visible ratings someone received - average, count, 1-5 distribution - and how many ops hid. */

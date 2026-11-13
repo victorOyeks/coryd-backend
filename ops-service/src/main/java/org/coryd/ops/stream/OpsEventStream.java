@@ -3,7 +3,6 @@ package org.coryd.ops.stream;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -110,8 +109,7 @@ public class OpsEventStream {
                     send(subscriber, e.id(), e.type(), e.data());
                 }
             } catch (IOException e) {
-                subscribers.remove(connectionId);
-                emitter.completeWithError(e);
+                drop(subscriber, e);
             }
         }
         log.info("Ops stream opened for admin {} ({} open on this instance, {} replayed{})", adminId, subscribers.size(), replay.size(),
@@ -172,7 +170,7 @@ public class OpsEventStream {
     }
 
     private void send(Subscriber s, String id, String type, Object data) throws IOException {
-        SseEmitter.SseEventBuilder event = SseEmitter.event().name(type).data(objectMapper.writeValueAsString(data), MediaType.APPLICATION_JSON);
+        SseEmitter.SseEventBuilder event = SseEmitter.event().name(type).data(objectMapper.writeValueAsString(data));
         if (id != null) {
             event.id(id);
         }
@@ -181,10 +179,13 @@ public class OpsEventStream {
         }
     }
 
+    /** The console went away (closed tab, network) - forget it quietly; the broken connection has nothing to send an error to. */
     private void drop(Subscriber s, Exception e) {
-        subscribers.remove(s.connectionId());
+        if (subscribers.remove(s.connectionId()) != null) {
+            log.debug("Ops stream {} for admin {} closed: {}", s.connectionId(), s.adminId(), e.getMessage());
+        }
         try {
-            s.emitter().completeWithError(e);
+            s.emitter().complete();
         } catch (Exception ignored) {
             // already closed
         }

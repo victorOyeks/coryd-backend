@@ -44,6 +44,12 @@
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
+        <!-- The live stream's integration test runs a real broker: an event on Kafka reaches a connected console. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

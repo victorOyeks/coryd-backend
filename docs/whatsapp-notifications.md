@@ -13,6 +13,7 @@ makes no WhatsApp call.
 | SOS alert to emergency contacts | `SOS_TRIGGERED` | each emergency contact of whoever pressed SOS | that person's `whatsappOptIn` | `WHATSAPP_TEMPLATE_SOS_CONTACT` |
 | SOS alert to ops | `SOS_OPS_ALERT` | each `SOS_OPS_PHONES` number | none | `WHATSAPP_TEMPLATE_SOS_OPS` |
 | Unanswered "Are you OK?" check | `SAFETY_ESCALATED` | each `SOS_OPS_PHONES` number | none | `WHATSAPP_TEMPLATE_SAFETY_ESCALATED` |
+| SOS / unanswered check still unacknowledged in the Ops Console (5, 15, 30 min) | `SOS_OPS_REALERT` | each `SOS_OPS_PHONES` number | none | `WHATSAPP_TEMPLATE_SOS_OPS` (same template; `who` reads e.g. "rider (STILL UNACKNOWLEDGED after 5 min)") |
 
 Some notifications are not on this list:
 

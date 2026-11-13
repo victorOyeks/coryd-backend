@@ -6,13 +6,17 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.io.IOException;
 
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -65,5 +69,11 @@ public class StreamController {
         response.setHeader("X-Accel-Buffering", "no");
         response.setHeader("Cache-Control", "no-cache, no-transform");
         return stream.connect(adminId, lastEventId != null ? lastEventId : lastEventIdParam);
+    }
+
+    /** A console that closed its tab mid-send: nothing to answer, and not an error worth a JSON body (it couldn't be written anyway). */
+    @ExceptionHandler({AsyncRequestNotUsableException.class, IOException.class})
+    public void consoleWentAway() {
+        // the connection is gone
     }
 }
