@@ -372,6 +372,10 @@ class OpsSafetySupportIntegrationTest {
         assertThat(sosService.list(new OpsSosDtos.Filter(SosStatus.OPEN, SosKind.SAFETY_CHECK, null, null, null, null, null),
                 PageRequest.of(0, 20)).content()).hasSize(1);
 
+        TripSafetyAlert old = alertRepository.save(TripSafetyAlert.builder().routePostId(route.getId()).kind(TripSafetyAlert.Kind.SIGNAL_LOST)
+                .status(TripSafetyAlert.Status.ESCALATED).escalatedAt(Instant.now().minus(2, ChronoUnit.HOURS)).build());
+        assertThat(sosService.openForSafetyCheck(old.getId())).as("a replayed old escalation isn't news").isNull();
+
         sosService.acknowledge(incident.getId(), new OpsSosDtos.AcknowledgeRequest(null, ADMIN, "Ada Ops"));
         sosService.resolve(incident.getId(), new OpsSosDtos.ResolveRequest(SosOutcome.SAFE, "Rider's phone was off; driver confirmed all fine",
                 ADMIN, "Ada Ops"));

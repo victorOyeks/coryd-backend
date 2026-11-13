@@ -55,7 +55,7 @@ After an action, the response carries the item as it now stands; reload the deta
 One queue, two **kinds**:
 
 - **`SOS`** - a rider or driver pressed SOS in the app.
-- **`SAFETY_CHECK`** - the trip looked wrong (a long stop away from any pickup, far off the route, or the driver's phone went quiet), everyone on board was asked "Are you OK?", and **nobody answered in time** (3 minutes). If anyone answers "I need help" it's a real `SOS` straight away instead.
+- **`SAFETY_CHECK`** - the trip looked wrong (a long stop away from any pickup, far off the route, or the driver's phone went quiet), everyone on board was asked "Are you OK?", and **nobody answered in time** (3 minutes). If anyone answers "I need help" it's a real `SOS` straight away instead. (Checks escalated before this release aren't added.)
 
 Both are worked the same way. **Why one queue:** ops has one place to watch and one alert banner; an unanswered check is exactly as urgent as a press of the button (the person may be unable to press it), and needs the same acknowledge → call → resolve trail.
 

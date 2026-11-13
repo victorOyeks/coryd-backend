@@ -68,6 +68,8 @@ public class OpsSosService {
     private static final int LEGACY_NO_REALERT = 99;
     /** An escalation time a few minutes ahead is clock skew; much more is a typo. */
     private static final Duration FUTURE_TOLERANCE = Duration.ofMinutes(5);
+    /** An escalation older than this arriving now is a replay, not news. */
+    static final Duration SAFETY_CHECK_REPLAY_LIMIT = Duration.ofMinutes(30);
 
     private final SosIncidentRepository sosIncidentRepository;
     private final SosRealertRepository sosRealertRepository;
@@ -226,6 +228,13 @@ public class OpsSosService {
         TripSafetyAlert alert = tripSafetyAlertRepository.findById(alertId).orElse(null);
         if (alert == null) {
             log.warn("Safety check {} escalated but not found - no SOS-queue incident opened", alertId);
+            return null;
+        }
+        // trip-service reads this topic from the earliest offset: the first deploy (or a long outage) would otherwise open,
+        // and then re-alert, every check escalated in Kafka's retention. Ops was texted about those when they happened.
+        Instant escalatedAt = alert.getEscalatedAt() != null ? alert.getEscalatedAt() : alert.getCreatedAt();
+        if (escalatedAt != null && escalatedAt.isBefore(Instant.now().minus(SAFETY_CHECK_REPLAY_LIMIT))) {
+            log.info("Safety check {} escalated at {} - too old to open in the SOS queue now", alertId, escalatedAt);
             return null;
         }
         SosIncident incident;
