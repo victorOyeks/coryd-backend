@@ -68,13 +68,14 @@ public class InternalOpsInsightController {
         OpsAdmin.of(principal);
         TripReports which = TripReports.bySlug(report);
         LagosRange range = LagosRange.of(from, to, 30);
-        long total = reportService.count(which, range);
         response.setContentType("text/csv; charset=UTF-8");
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setHeader("Content-Disposition", "attachment; filename=\"coryd-" + which.slug() + "-" + range.from() + "-to-" + range.to() + ".csv\"");
-        response.setHeader("X-Report-Rows", String.valueOf(total));
-        response.setHeader("X-Report-Truncated", String.valueOf(total > reportService.maxCsvRows()));
         Writer writer = response.getWriter();
-        reportService.csv(which, range, writer);
+        // Headers are set before the first line is written - the total comes with the rows, so the report runs once.
+        reportService.csv(which, range, writer, total -> {
+            response.setHeader("X-Report-Rows", String.valueOf(total));
+            response.setHeader("X-Report-Truncated", String.valueOf(total > reportService.maxCsvRows()));
+        });
     }
 }

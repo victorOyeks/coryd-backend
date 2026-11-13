@@ -16,6 +16,7 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongConsumer;
 
 /**
  * Runs the trip-service reports: a JSON preview (first rows plus the full row count) and a CSV export streamed row by row
@@ -50,10 +51,22 @@ public class OpsReportService {
         LagosRange range = LagosRange.of(from, to, 30);
         int max = Math.max(1, Math.min(limit, MAX_PREVIEW_ROWS));
         MapSqlParameterSource p = params(range).addValue("limit", max);
-        long total = count(report, range);
-        List<List<Object>> rows = jdbc.query("select * from (" + report.sql() + ") q limit :limit", p, (rs, i) -> row(rs, report.columns().size()));
-        return new Preview(report.slug(), report.title(), range.from(), range.to(), LagosRange.LAGOS.getId(), report.columns(), rows, total,
-                total > rows.size());
+        int columns = report.columns().size();
+        long[] total = {0};
+        List<List<Object>> rows;
+        if (report.inIndexOrder()) {
+            total[0] = count(report, range);
+            rows = jdbc.query("select * from (" + report.sql() + ") q limit :limit", p, (rs, i) -> row(rs, columns));
+        } else {
+            // The total rides along on every row (a window over the whole result, before the limit), so the report runs once,
+            // not once to count and again for the rows.
+            rows = jdbc.query("select q.*, count(*) over () from (" + report.sql() + ") q limit :limit", p, (rs, i) -> {
+                total[0] = rs.getLong(columns + 1);
+                return row(rs, columns);
+            });
+        }
+        return new Preview(report.slug(), report.title(), range.from(), range.to(), LagosRange.LAGOS.getId(), report.columns(), rows, total[0],
+                total[0] > rows.size());
     }
 
     public long count(TripReports report, LagosRange range) {
@@ -63,18 +76,44 @@ public class OpsReportService {
 
     /** Writes the header and at most maxCsvRows rows; returns how many rows were written. */
     public int csv(TripReports report, LagosRange range, Writer out) {
+        return csv(report, range, out, total -> { });
+    }
+
+    /**
+     * As above, telling total (every row in the range, not just the ones written) before anything is written - for the
+     * response headers. Counted first for a report read in index order, else taken from the same single run as the rows.
+     */
+    public int csv(TripReports report, LagosRange range, Writer out, LongConsumer total) {
+        int columns = report.columns().size();
         MapSqlParameterSource p = params(range).addValue("limit", maxCsvRows);
+        boolean counted = report.inIndexOrder();
+        if (counted) {
+            total.accept(count(report, range));
+        }
+        String sql = counted ? "select * from (" + report.sql() + ") q limit :limit"
+                : "select q.*, count(*) over () from (" + report.sql() + ") q limit :limit";
         int[] written = {0};
         try {
-            out.write(Csv.line(new ArrayList<>(report.columns())));
-            jdbc.query("select * from (" + report.sql() + ") q limit :limit", p, (RowCallbackHandler) rs -> {
+            jdbc.query(sql, p, (RowCallbackHandler) rs -> {
                 try {
-                    out.write(Csv.line(row(rs, report.columns().size())));
+                    if (written[0] == 0) {
+                        if (!counted) {
+                            total.accept(rs.getLong(columns + 1));
+                        }
+                        out.write(Csv.line(new ArrayList<>(report.columns())));
+                    }
+                    out.write(Csv.line(row(rs, columns)));
                     written[0]++;
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
             });
+            if (written[0] == 0) {
+                if (!counted) {
+                    total.accept(0);
+                }
+                out.write(Csv.line(new ArrayList<>(report.columns())));
+            }
             out.flush();
         } catch (IOException e) {
             throw new UncheckedIOException(e);

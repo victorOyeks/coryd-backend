@@ -167,6 +167,24 @@ class OpsDashboardAndReportsIntegrationTest {
         assertThat(reportService.csv(TripReports.TRIPS, range, csv)).isEqualTo(3);
         assertThat(csv.toString().split("\r\n")).hasSize(4);
         assertThat(reportService.count(TripReports.TRIPS, range)).as("the header says how many there were").isEqualTo(5);
+
+        // The total for the headers comes from the same run, before the first line is written.
+        long[] total = {-1};
+        StringWriter told = new StringWriter();
+        assertThat(reportService.csv(TripReports.TRIPS, range, told, n -> {
+            assertThat(told.toString()).as("nothing written yet").isEmpty();
+            total[0] = n;
+        })).isEqualTo(3);
+        assertThat(total[0]).isEqualTo(5);
+        // Bookings are read in index order and counted first - same answer.
+        assertThat(reportService.csv(TripReports.BOOKINGS, range, new StringWriter(), n -> total[0] = n)).isEqualTo(3);
+        assertThat(total[0]).isEqualTo(5);
+
+        StringWriter empty = new StringWriter();
+        LagosRange nothing = LagosRange.of(today.minusDays(200), today.minusDays(199), 30);
+        assertThat(reportService.csv(TripReports.TRIPS, nothing, empty, n -> total[0] = n)).isZero();
+        assertThat(total[0]).isZero();
+        assertThat(empty.toString()).isEqualTo(String.join(",", TripReports.TRIPS.columns()) + "\r\n");
     }
 
     @Test
