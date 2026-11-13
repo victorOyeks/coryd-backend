@@ -91,16 +91,7 @@ public class SystemHealthService {
         } else {
             kafkaNode.put("reachable", kafka.reachable()).put("error", kafka.error());
             kafkaNode.set("groups", objectMapper.valueToTree(kafka.groups()));
-            for (KafkaLagReader.GroupLag g : kafka.groups()) {
-                if (g.lag() >= LAG_ALERT) {
-                    alerts.addObject().put("level", "WARNING").put("kind", "KAFKA_LAG")
-                            .put("message", g.group() + " is " + g.lag() + " messages behind");
-                }
-                if (g.members() == 0 && g.lag() > 0) {
-                    alerts.addObject().put("level", "CRITICAL").put("kind", "KAFKA_CONSUMER")
-                            .put("message", g.group() + " has no consumers and " + g.lag() + " messages waiting");
-                }
-            }
+            kafkaAlerts(kafka.groups(), alerts);
         }
         if (kafka == null || !kafka.reachable()) {
             alerts.addObject().put("level", "WARNING").put("kind", "KAFKA").put("message", "Consumer lag couldn't be read");
@@ -123,7 +114,9 @@ public class SystemHealthService {
                                     + job.path("lastRun").path("lastError").asText(""));
                 }
             }
-            for (JsonNode i : s.path("integrations")) {
+            ArrayNode reported = objectMapper.createArrayNode();
+            s.path("integrations").forEach(reported::add);
+            for (JsonNode i : withEveryProvider(e.getKey(), reported)) {
                 integrations.add(((ObjectNode) i.deepCopy()).put("service", e.getKey().label));
                 long attempts = i.path("attempts").asLong(0);
                 long failures = i.path("failures").asLong(0);
@@ -141,6 +134,51 @@ public class SystemHealthService {
         }
         out.put("overall", critical ? "DOWN" : alerts.isEmpty() ? "OK" : "DEGRADED");
         return out;
+    }
+
+    /**
+     * Lag alerts for real consumers only. Ephemeral groups (ops-service's per-instance live-stream groups) are skipped: an
+     * instance that restarted leaves its old group EMPTY with a growing "lag" that nobody will ever read - that was the
+     * false DOWN. A real group with lag and no members is a consumer that stopped: CRITICAL.
+     */
+    static void kafkaAlerts(List<KafkaLagReader.GroupLag> groups, ArrayNode alerts) {
+        for (KafkaLagReader.GroupLag g : groups) {
+            if (g.ephemeral()) {
+                continue;
+            }
+            if (g.lag() >= LAG_ALERT) {
+                alerts.addObject().put("level", "WARNING").put("kind", "KAFKA_LAG")
+                        .put("message", g.group() + " is " + g.lag() + " messages behind");
+            }
+            if (g.members() == 0 && g.lag() > 0) {
+                alerts.addObject().put("level", "CRITICAL").put("kind", "KAFKA_CONSUMER")
+                        .put("message", g.group() + " has no consumers and " + g.lag() + " messages waiting");
+            }
+        }
+    }
+
+    /** Every provider each service talks to, so one with nothing in the window still shows - with zero counts. */
+    static final Map<PlatformClient.Service, List<List<String>>> PROVIDERS = Map.of(
+            PlatformClient.Service.PAYMENT, List.of(List.of("PAYSTACK", "charges"), List.of("PAYSTACK", "refunds"),
+                    List.of("PAYSTACK", "settlements"), List.of("PAYSTACK", "ops refunds and retries")),
+            PlatformClient.Service.PROFILE, List.of(List.of("SMILE_ID", "verification checks")),
+            PlatformClient.Service.NOTIFICATION, List.of(List.of("TERMII", "sms"), List.of("TERMII", "voice"),
+                    List.of("TERMII_WHATSAPP", "whatsapp"), List.of("FCM", "push"), List.of("SMTP", "email")));
+
+    ArrayNode withEveryProvider(PlatformClient.Service service, ArrayNode reported) {
+        for (List<String> p : PROVIDERS.getOrDefault(service, List.of())) {
+            boolean present = false;
+            for (JsonNode i : reported) {
+                present |= p.get(0).equals(i.path("integration").asText()) && p.get(1).equalsIgnoreCase(i.path("operation").asText());
+            }
+            if (!present) {
+                ObjectNode zero = reported.addObject().put("integration", p.get(0)).put("operation", p.get(1)).put("attempts", 0)
+                        .put("failures", 0);
+                zero.putNull("lastFailureAt");
+                zero.putNull("lastError");
+            }
+        }
+        return reported;
     }
 
     private JsonNode actuator(PlatformClient.Service service) {

@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +55,8 @@ class PlatformSettingsPropagationIntegrationTest {
 
     @Autowired PlatformSettings settings;
     @Autowired KafkaLagReader lagReader;
+    @Autowired org.coryd.ops.stream.OpsStreamGroupJanitor janitor;
+    @Autowired org.coryd.ops.stream.OpsStreamKafkaConfig.StreamGroup streamGroup;
 
     @Test
     void aPublishedSettingReachesAnotherServiceWithinSeconds() throws Exception {
@@ -90,6 +93,43 @@ class PlatformSettingsPropagationIntegrationTest {
             assertThat(g.lag()).isEqualTo(3);
             assertThat(g.lagByTopic()).containsEntry(topic, 3L);
         });
+    }
+
+    /**
+     * The false DOWN: a live-stream group left behind by an earlier ops-service start (EMPTY, offsets behind) is listed as
+     * ephemeral and raises no alert, the janitor deletes it, and this instance's own stream group is left alone.
+     */
+    @Test
+    void anAbandonedLiveStreamGroupIsNeverAnAlertAndIsCleanedUp() throws Exception {
+        String topic = "coryd-stream-probe";
+        KafkaTemplate<String, Object> producer = producer();
+        for (int i = 0; i < 5; i++) {
+            producer.send(topic, "k" + i, Map.of("n", i)).get();
+        }
+        String abandoned = "coryd-ops-stream-dead1234";
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
+        config.put(ConsumerConfig.GROUP_ID_CONFIG, abandoned);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(config)) {
+            consumer.commitSync(Map.of(new TopicPartition(topic, 0), new OffsetAndMetadata(1)));
+        }
+
+        KafkaLagReader.Lag lag = lagReader.read();
+        KafkaLagReader.GroupLag group = lag.groups().stream().filter(g -> g.group().equals(abandoned)).findFirst().orElseThrow();
+        assertThat(group.ephemeral()).isTrue();
+        assertThat(group.members()).isZero();
+        assertThat(group.lag()).isEqualTo(4);
+        com.fasterxml.jackson.databind.node.ArrayNode alerts = new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode();
+        SystemHealthService.kafkaAlerts(List.of(group), alerts);
+        assertThat(alerts).as("an abandoned stream group is not a stopped consumer").isEmpty();
+        SystemHealthService.kafkaAlerts(List.of(new KafkaLagReader.GroupLag("coryd-notification-service-trip", "EMPTY", 0, 4,
+                Map.of(topic, 4L), false)), alerts);
+        assertThat(alerts).as("a real consumer group that stopped still is").hasSize(1);
+
+        assertThat(janitor.sweep()).contains(abandoned).doesNotContain(streamGroup.id());
+        assertThat(lagReader.read().groups()).extracting(KafkaLagReader.GroupLag::group).doesNotContain(abandoned);
     }
 
     private void awaitValue(BigDecimal expected) throws InterruptedException {

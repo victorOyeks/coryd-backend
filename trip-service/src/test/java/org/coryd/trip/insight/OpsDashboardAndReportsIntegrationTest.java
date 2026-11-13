@@ -30,6 +30,7 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
@@ -139,7 +140,7 @@ class OpsDashboardAndReportsIntegrationTest {
             assertThat(r.get(0)).isEqualTo("driver-a");
             assertThat(((Number) r.get(1)).longValue()).isEqualTo(2);
             assertThat(((Number) r.get(2)).longValue()).isEqualTo(1);
-            assertThat(r.get(8)).isEqualTo("3600");
+            assertThat(r.get(8)).as("money: a number, 2 dp").isEqualTo(new java.math.BigDecimal("3600.00"));
         });
         OpsReportService.Preview riders = reportService.preview(TripReports.RIDERS, today.minusDays(1), today, 100);
         assertThat(riders.totalRows()).as("the unpaid hold is no booking").isEqualTo(3);
@@ -149,7 +150,11 @@ class OpsDashboardAndReportsIntegrationTest {
             assertThat(((Number) r.get(3)).longValue()).isEqualTo(5);
         });
         assertThat(reportService.preview(TripReports.CANCELLATIONS, today.minusDays(1), today, 100).totalRows()).isEqualTo(2);
-        assertThat(reportService.preview(TripReports.BOOKINGS, today.minusDays(1), today, 2).rows()).as("limit").hasSize(2);
+        OpsReportService.Preview limited = reportService.preview(TripReports.BOOKINGS, today.minusDays(1), today, 2);
+        assertThat(limited.rows()).as("limit").hasSize(2);
+        assertThat(limited.limited()).as("the preview limit applied").isTrue();
+        assertThat(limited.truncated()).as("truncated only when the CSV cap is hit").isFalse();
+        assertThat(trips.limited()).isFalse();
 
         StringWriter csv = new StringWriter();
         int rows = reportService.csv(TripReports.BOOKINGS, LagosRange.of(today.minusDays(1), today, 30), csv);
@@ -157,6 +162,37 @@ class OpsDashboardAndReportsIntegrationTest {
         String[] lines = csv.toString().split("\r\n");
         assertThat(lines[0]).isEqualTo(String.join(",", TripReports.BOOKINGS.columns()));
         assertThat(lines).hasSize(6);
+    }
+
+    @Test
+    void everyReportColumnHasOneDeclaredTypeAndEveryValueMatchesIt() {
+        for (TripReports report : TripReports.values()) {
+            for (String column : report.columns()) {
+                assertThat(ReportColumnType.declared(column)).as(report.slug() + "." + column + " has a declared type").isTrue();
+            }
+            OpsReportService.Preview preview = reportService.preview(report, today.minusDays(1), today, 500);
+            assertThat(preview.columnTypes()).hasSameSizeAs(preview.columns());
+            for (List<Object> row : preview.rows()) {
+                for (int c = 0; c < row.size(); c++) {
+                    Object v = row.get(c);
+                    if (v == null) {
+                        continue;
+                    }
+                    String what = report.slug() + "." + preview.columns().get(c) + " = " + v;
+                    switch (preview.columnTypes().get(c)) {
+                        case "integer" -> assertThat(v).as(what).isInstanceOf(Long.class);
+                        case "decimal" -> assertThat(v).as(what).isInstanceOf(java.math.BigDecimal.class);
+                        case "money" -> assertThat(((java.math.BigDecimal) v).scale()).as(what).isEqualTo(2);
+                        case "date" -> assertThat((String) v).as(what).matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}");
+                        case "boolean" -> assertThat(v).as(what).isInstanceOf(Boolean.class);
+                        default -> assertThat(v).as(what).isInstanceOf(String.class);
+                    }
+                }
+            }
+        }
+        reportService.maxCsvRows(3);
+        assertThat(reportService.preview(TripReports.TRIPS, today.minusDays(1), today, 100).truncated())
+                .as("more rows than the CSV holds").isTrue();
     }
 
     @Test

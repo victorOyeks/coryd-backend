@@ -37,14 +37,15 @@ public class InternalOpsInsightController {
         return ApiResponse.ok(dashboardService.dashboard(from, to));
     }
 
-    public record CatalogItem(String report, String title, String description, List<String> columns) {
+    /** columnTypes: one per column - integer, decimal, money, date, string or boolean (ReportColumnType). */
+    public record CatalogItem(String report, String title, String description, List<String> columns, List<String> columnTypes) {
     }
 
     @GetMapping("/internal/ops/analytics")
     public ApiResponse<List<CatalogItem>> catalog(@AuthenticationPrincipal CoRydUserDetails principal) {
         OpsAdmin.of(principal);
         return ApiResponse.ok(Arrays.stream(TripReports.values())
-                .map(r -> new CatalogItem(r.slug(), r.title(), r.description(), r.columns())).toList());
+                .map(r -> new CatalogItem(r.slug(), r.title(), r.description(), r.columns(), ReportColumnType.labels(r.columns()))).toList());
     }
 
     @GetMapping("/internal/ops/analytics/{report}")

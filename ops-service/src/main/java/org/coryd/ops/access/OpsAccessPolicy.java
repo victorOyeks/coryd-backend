@@ -5,6 +5,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.util.AntPathMatcher;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Which ops permission each console endpoint needs - one table, first match wins. Paths are relative to /ops. Anything
@@ -16,7 +17,13 @@ public final class OpsAccessPolicy {
     /** No rule matched: only a SUPER_ADMIN gets through. */
     public static final OpsPermission SUPER_ADMIN_ONLY = null;
 
-    record Rule(HttpMethod method, String pattern, OpsPermission permission) {
+    /** alsoAllowed: other permissions that open the same endpoint (any one is enough) - empty for most rules. */
+    record Rule(HttpMethod method, String pattern, OpsPermission permission, Set<OpsPermission> alsoAllowed) {
+
+        Rule(HttpMethod method, String pattern, OpsPermission permission) {
+            this(method, pattern, permission, Set.of());
+        }
+
         boolean matches(String method, String path) {
             return (this.method == null || this.method.name().equalsIgnoreCase(method)) && MATCHER.match(pattern, path);
         }
@@ -53,6 +60,8 @@ public final class OpsAccessPolicy {
             new Rule(GET, "/account-deletions/**", OpsPermission.DIRECTORY_VIEW),
             new Rule(HttpMethod.PATCH, "/drivers/*/vehicles/*", OpsPermission.ACCOUNT_MANAGE),
             new Rule(HttpMethod.DELETE, "/users/*", OpsPermission.ACCOUNT_DELETE),
+            // the audited reveal of a full NIN / licence number / date of birth (privacy.md): verification or account admins
+            new Rule(HttpMethod.POST, "/users/*/reveal", OpsPermission.VERIFICATION_DECIDE, Set.of(OpsPermission.ACCOUNT_MANAGE)),
             new Rule(ANY, "/users/**", OpsPermission.ACCOUNT_MANAGE),
             // trips and bookings
             new Rule(GET, "/trips/**", OpsPermission.TRIPS_VIEW),
@@ -83,7 +92,20 @@ public final class OpsAccessPolicy {
     private OpsAccessPolicy() {
     }
 
-    /** The permission this request needs, or {@link #SUPER_ADMIN_ONLY}. */
+    /** Every permission that lets this request through (any one is enough); empty means super admins only. */
+    public static Set<OpsPermission> anyOf(String method, String path) {
+        for (Rule rule : RULES) {
+            if (rule.matches(method, path)) {
+                Set<OpsPermission> all = new java.util.LinkedHashSet<>();
+                all.add(rule.permission());
+                all.addAll(rule.alsoAllowed());
+                return all;
+            }
+        }
+        return Set.of();
+    }
+
+    /** The (first) permission this request needs, or {@link #SUPER_ADMIN_ONLY}. */
     public static OpsPermission required(String method, String path) {
         for (Rule rule : RULES) {
             if (rule.matches(method, path)) {
