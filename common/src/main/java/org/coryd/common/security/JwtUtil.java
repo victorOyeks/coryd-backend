@@ -7,6 +7,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.OpsRole;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.util.Names;
 import org.coryd.common.security.revocation.TokenRevocationRegistry;
@@ -63,13 +64,26 @@ public class JwtUtil {
     public static final String ISSUED_AT_MS_CLAIM = "iat_ms";
 
     public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole) {
+        return generateToken(userId, phone, firstName, lastName, activeRole, null);
+    }
+
+    /**
+     * opsRole is the ops admin's console role (OpsRole.CLAIM) - added only to an OPS_ADMIN session, and only when given;
+     * services that don't care about it never read it.
+     */
+    public String generateToken(String userId, String phone, String firstName, String lastName, UserRole activeRole,
+                                OpsRole opsRole) {
         long now = System.currentTimeMillis();
-        return Jwts.builder()
+        var builder = Jwts.builder()
                 .subject(userId)
                 .claim("phone", phone)
                 .claim("firstName", firstName)
                 .claim("lastName", lastName)
-                .claim("role", activeRole.name())
+                .claim("role", activeRole.name());
+        if (opsRole != null && activeRole == UserRole.OPS_ADMIN) {
+            builder.claim(OpsRole.CLAIM, opsRole.name());
+        }
+        return builder
                 .claim(ISSUED_AT_MS_CLAIM, now)
                 .issuedAt(new Date(now))
                 .expiration(new Date(now + expirationMs))
@@ -129,7 +143,8 @@ public class JwtUtil {
                 claims.get("phone", String.class),
                 firstName,
                 lastName,
-                UserRole.valueOf(claims.get("role", String.class))
+                UserRole.valueOf(claims.get("role", String.class)),
+                claims.get(OpsRole.CLAIM, String.class)
         );
     }
 }

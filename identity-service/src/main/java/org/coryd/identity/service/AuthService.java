@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.HeardAboutUs;
 import org.coryd.common.enums.OtpChannel;
+import org.coryd.common.enums.OpsRole;
 import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.exception.BadRequestException;
@@ -274,20 +275,37 @@ public class AuthService {
     public AuthResponse login(LoginRequest request) {
         UserRole activeRole = request.roleOrDefault();
 
-        User user = userRepository.findByPhone(PhoneNumbers.normalize(request.phone()))
-                .orElseThrow(() -> new BadRequestException("Incorrect phone number or password"));
+        // Ops admins sign in to the console with their email, sent in the same "phone" field.
+        boolean byEmail = request.phone().contains("@");
+        String wrong = byEmail ? "Incorrect email or password" : "Incorrect phone number or password";
+        User user = (byEmail ? findByEmail(request.phone()) : userRepository.findByPhone(PhoneNumbers.normalize(request.phone())))
+                .orElseThrow(() -> new BadRequestException(wrong));
 
         if (user.getPasswordHash() == null) {
-            throw new BadRequestException("Account setup is incomplete - finish onboarding before signing in");
+            throw new BadRequestException(byEmail
+                    ? "Finish setting up your account from the invite email before signing in"
+                    : "Account setup is incomplete - finish onboarding before signing in");
         }
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new BadRequestException("Incorrect phone number or password");
+            throw new BadRequestException(wrong);
         }
         if (!user.getRoles().contains(activeRole)) {
             throw new RoleNotHeldException("You don't have a " + activeRole + " account - please sign up first", user.getRoles());
         }
 
         return issueTokens(user, activeRole, request.device());
+    }
+
+    /** By email, ignoring case - and an admin created by hand with the email in the phone column (before emails existed). */
+    private Optional<User> findByEmail(String email) {
+        String normalized = email.trim().toLowerCase(java.util.Locale.ROOT);
+        return userRepository.findByEmail(normalized).or(() -> userRepository.findByPhone(email.trim()));
+    }
+
+    /** A console session for an ops admin who just set their password from an invite (OpsTeamService). */
+    @Transactional
+    public AuthResponse opsSession(User user) {
+        return issueTokens(user, UserRole.OPS_ADMIN, null, null);
     }
 
     /** In-app "switch to Driver mode" (or vice versa) for the first time: attach the role to the already-authenticated account, no OTP needed. */
@@ -516,7 +534,13 @@ public class AuthService {
      */
     private AuthResponse issueTokens(User user, UserRole activeRole, String deviceId, String familyId) {
         requireActive(user);
-        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(), activeRole);
+        if (activeRole == UserRole.OPS_ADMIN) {
+            requireOpsAccess(user);
+            user.setLastSeenAt(Instant.now());
+            userRepository.save(user);
+        }
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(), activeRole,
+                opsRoleFor(user, activeRole));
 
         String refreshTokenValue = UUID.randomUUID().toString();
         refreshTokenRepository.save(RefreshToken.builder()
@@ -534,8 +558,11 @@ public class AuthService {
 
     /** A new access token against an existing, unchanged refresh token - the retry path in {@link #handleSpentToken}. */
     private AuthResponse issueAccessTokenFor(User user, RefreshToken refreshToken) {
+        if (refreshToken.getActiveRole() == UserRole.OPS_ADMIN) {
+            requireOpsAccess(user);
+        }
         String accessToken = jwtUtil.generateToken(user.getId(), user.getPhone(), user.getFirstName(), user.getLastName(),
-                refreshToken.getActiveRole());
+                refreshToken.getActiveRole(), opsRoleFor(user, refreshToken.getActiveRole()));
         return buildAuthResponse(user, refreshToken.getActiveRole(), accessToken, refreshToken.getToken(),
                 refreshToken.getExpiresAt());
     }
@@ -547,6 +574,20 @@ public class AuthService {
         }
     }
 
+    public static final String OPS_DEACTIVATED_MESSAGE = "Your ops console access has been removed. Ask a super admin to restore it.";
+
+    /** A super admin removed this admin's console access - no console session, whichever way in. */
+    private static void requireOpsAccess(User user) {
+        if (user.getOpsDeactivatedAt() != null) {
+            throw new UnauthorizedException(OPS_DEACTIVATED_MESSAGE);
+        }
+    }
+
+    /** The console role on an OPS_ADMIN token (none stored = SUPER_ADMIN); nothing on any other session. */
+    private static OpsRole opsRoleFor(User user, UserRole activeRole) {
+        return activeRole == UserRole.OPS_ADMIN ? OpsRole.effective(user.getOpsRole()) : null;
+    }
+
     private AuthResponse buildAuthResponse(User user, UserRole activeRole, String accessToken,
                                            String refreshTokenValue, Instant refreshExpiresAt) {
         Set<String> roleNames = user.getRoles().stream().map(Enum::name).collect(Collectors.toSet());
@@ -554,9 +595,11 @@ public class AuthService {
         long refreshExpiresIn = Math.max(0, Duration.between(Instant.now(), refreshExpiresAt).getSeconds());
         // fullName carries only the first name - the key stays for the clients already bound to it,
         // with firstName/lastName alongside it for anything that needs the surname on its own.
+        OpsRole opsRole = opsRoleFor(user, activeRole);
         return new AuthResponse(user.getId(), user.getFirstName(), user.getFirstName(), user.getLastName(),
                 user.getPhone(), activeRole.name(), roleNames,
-                accessToken, expiresIn, refreshTokenValue, refreshExpiresIn);
+                accessToken, expiresIn, refreshTokenValue, refreshExpiresIn,
+                opsRole == null ? null : opsRole.name(), activeRole == UserRole.OPS_ADMIN ? user.getEmail() : null);
     }
 
     /** Everywhere the user is signed in, newest first. */

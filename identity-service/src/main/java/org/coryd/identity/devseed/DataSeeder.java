@@ -50,6 +50,9 @@ public class DataSeeder implements ApplicationRunner {
         user.setFirstName(firstName);
         user.setLastName(lastName);
         user.getRoles().add(role);
+        if (role == UserRole.OPS_ADMIN && user.getOpsRole() == null) {
+            user.setOpsRole(org.coryd.common.enums.OpsRole.SUPER_ADMIN);
+        }
         user.setPasswordHash(passwordEncoder.encode(SeedFixtures.SEED_PASSWORD));
         user.setPhoneVerifiedAt(Instant.now());
         user.setTermsAcceptedAt(Instant.now());

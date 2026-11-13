@@ -55,4 +55,4 @@ CREATE TABLE IF NOT EXISTS trip.job_runs (
 --changeset coryd:132-trip-dashboard-indexes
 -- The dashboard and reports filter bookings and audit rows by time.
 CREATE INDEX IF NOT EXISTS idx_bookings_created_at ON trip.bookings (created_at);
-CREATE INDEX IF NOT EXISTS idx_ops_audit_log_created ON trip.ops_audit_log (created_at);
+-- trip.ops_audit_log's time index comes from coryd:125 (created_at DESC, id DESC), which also serves these date ranges.

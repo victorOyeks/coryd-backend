@@ -81,4 +81,7 @@ public final class KafkaTopics {
      * change reaches every service within seconds. See PlatformSettingChangedEvent and docs/ops-console/settings.md.
      */
     public static final String PLATFORM_SETTINGS = "coryd-platform-settings";
+
+    /** Ops Console (phase 6): a super admin invited an admin (or re-sent the invite) - notification-service emails the link. */
+    public static final String OPS_ADMIN_INVITED = "coryd-ops-admin-invited";
 }

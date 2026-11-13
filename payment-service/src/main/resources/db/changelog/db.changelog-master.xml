@@ -25,5 +25,6 @@
     <include file="db/changelog/014-subaccount-settlement-schedule.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/015-ops-money.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/016-job-runs.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/016-ops-audit-feed.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

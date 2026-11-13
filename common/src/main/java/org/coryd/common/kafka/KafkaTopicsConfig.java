@@ -225,4 +225,9 @@ public class KafkaTopicsConfig {
                 .config("retention.ms", "-1")
                 .build();
     }
+
+    @Bean
+    public NewTopic opsAdminInvitedTopic() {
+        return TopicBuilder.name(KafkaTopics.OPS_ADMIN_INVITED).partitions(1).replicas(1).build();
+    }
 }

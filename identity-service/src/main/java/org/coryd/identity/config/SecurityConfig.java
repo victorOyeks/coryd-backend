@@ -50,6 +50,8 @@ public class SecurityConfig {
                                 "/auth/signup", "/auth/verify-otp", "/auth/resend-otp",
                                 "/auth/login", "/auth/refresh-token",
                                 "/auth/forgot-password", "/auth/reset-password",
+                                // an invited ops admin setting their password from the email link
+                                "/auth/ops-invite", "/auth/ops-invite/accept",
                                 // the website's beta waitlist form - no account yet
                                 "/beta-signups")
                         .permitAll()

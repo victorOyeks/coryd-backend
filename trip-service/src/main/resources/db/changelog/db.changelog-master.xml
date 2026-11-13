@@ -45,5 +45,6 @@
     <include file="db/changelog/034-cancellation-log-route-totals.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/035-ops-safety-support.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/036-ops-platform.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/036-ops-audit-feed.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>
