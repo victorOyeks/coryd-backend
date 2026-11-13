@@ -84,4 +84,21 @@ class PaymentAuditSourceIntegrationTest {
                 .items()).isEmpty();
         assertThat(source.page(new OpsAuditQuery("someone-else", null, null, null, null, null, null, null, null, null, 50)).items()).isEmpty();
     }
+
+    @Test
+    void coryd152MovesOlderPayoutAccountRevealsOntoTheDriver() throws Exception {
+        OpsMoneyAudit legacy = repository.save(OpsMoneyAudit.builder().actorId("fin-1").actorName("Fola Finance")
+                .action(OpsMoneyAudit.Action.PAYOUT_ACCOUNT_REVEALED).targetType(OpsMoneyAudit.TargetType.PAYOUT_ACCOUNT)
+                .targetId("recipient-9").afterState("{\"driverId\":\"driver-1\",\"accountNumber\":\"******6789\"}").reason("Check").build());
+
+        String sql = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/resources/db/changelog/017-phase7-audit-targets.sql"));
+        String update = sql.substring(sql.indexOf("UPDATE"));
+        jdbc.update(update.substring(0, update.lastIndexOf(';')));
+
+        OpsMoneyAudit moved = repository.findById(legacy.getId()).orElseThrow();
+        assertThat(moved.getTargetId()).isEqualTo("driver-1");
+        assertThat(moved.getAfterState()).contains("\"recipientId\": \"recipient-9\"").contains("BANK_ACCOUNT_NUMBER");
+        assertThat(source.page(new OpsAuditQuery(null, null, null, List.of("PAYOUT_ACCOUNT"), "driver-1", null, null, null, null, null, 10))
+                .items()).singleElement().satisfies(e -> assertThat(e.targetId()).isEqualTo("driver-1"));
+    }
 }
