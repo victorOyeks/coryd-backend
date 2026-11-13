@@ -5,9 +5,7 @@ import org.coryd.common.security.filter.InternalApiKeyFilter;
 import org.coryd.common.security.InternalOnlyPaths;
 import org.coryd.common.security.filter.JwtFilter;
 import org.coryd.common.security.PublicPaths;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -28,18 +26,17 @@ public class SecurityConfig {
     private final AccessDeniedHandler accessDeniedHandler;
 
     /**
-     * Only /dev/** is internal-only here, so the filter exists only when the dev tools do.
-     * Keeping the key injection on this method rather than a field means payment-service still
-     * boots without INTERNAL_API_KEY set whenever the dev tools are off.
+     * /internal/** (InternalOnlyPaths.PAYMENT_SERVICE) is service-to-service only and needs the internal key on every
+     * environment, like trip-, profile- and identity-service. It used to exist only with the dev tools on, which left
+     * /internal/** open to any signed-in user (a rider included) wherever the dev tools are off.
      */
     @Bean
-    @ConditionalOnProperty(name = "coryd.dev-tools.enabled", havingValue = "true")
     public InternalApiKeyFilter internalApiKeyFilter(@Value("${services.internal.api-key}") String internalApiKey) {
         return new InternalApiKeyFilter(List.of(InternalOnlyPaths.PAYMENT_SERVICE), internalApiKey);
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http, ObjectProvider<InternalApiKeyFilter> internalApiKeyFilter) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http, InternalApiKeyFilter internalApiKeyFilter) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -52,12 +49,8 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
-
-        InternalApiKeyFilter devGate = internalApiKeyFilter.getIfAvailable();
-        if (devGate != null) {
-            http.addFilterBefore(devGate, JwtFilter.class);
-        }
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(internalApiKeyFilter, JwtFilter.class);
 
         return http.build();
     }

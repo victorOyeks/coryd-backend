@@ -2,7 +2,7 @@
 
 Sidebar: **Drivers → Drivers Directory**.
 
-Every driver, with their car, trips, rating, earnings, reliability and status. From a row, ops opens the driver's profile, then their documents. They can suspend or reinstate the driver, sign them out everywhere, and edit their details and vehicle; see [accounts.md](accounts.md).
+Every driver, with their car, trips, rating, earnings, reliability, last trip and status. From a row, ops opens the driver's profile, then their documents. They can suspend or reinstate the driver, sign them out everywhere, and edit their details and vehicle; see [accounts.md](accounts.md).
 
 **Basics:**
 - **Base URL:** `https://api-dev.coryd.ng/ops`.
@@ -15,7 +15,7 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
 
 | Screen / control | Call |
 |---|---|
-| Header "N total drivers" and the tab badges | `GET /drivers/counts` |
+| Header "N total drivers", the tab badges and the KPI cards | `GET /drivers/counts` |
 | Table: tabs, search, sorting, paging | `GET /drivers` |
 | **View**: the driver's profile, with every section | `GET /drivers/{driverId}`; see [accounts.md](accounts.md) section 3 |
 | **Suspend Driver** / reinstate / sign out everywhere | `POST /users/{driverId}/suspend` · `/reinstate` · `/sign-out-everywhere`; see [accounts.md](accounts.md) section 2 |
@@ -35,12 +35,12 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
 |---|---|---|
 | `status` | none = **All** | `VERIFIED` · `PENDING` · `RESUBMITTED` · `SUSPENDED` |
 | `search` | none | Name, driver ref (`D-4F2A91`; the `D-` is optional), phone (4 or more digits), or plate (`KJA100`, spaces and dashes ignored) |
-| `sort` | newest sign-up first | `DRIVER_REF` · `NAME` · `VEHICLE` · `TRIPS` · `RATING` · `EARNINGS` · `RELIABILITY` · `STATUS` · `JOINED` |
+| `sort` | newest sign-up first | `DRIVER_REF` · `NAME` · `VEHICLE` · `TRIPS` · `RATING` · `EARNINGS` · `RELIABILITY` · `STATUS` · `JOINED` · `LAST_TRIP` |
 | `direction` | `ASC` | `ASC` · `DESC` |
 | `page` | `0` | 0-based |
 | `size` | `20` | max `50` |
 
-**Sorting:** missing values (no trips yet, no rating yet) always go last, whichever direction you sort. An unknown `status` or `sort` gets a `400`.
+**Sorting:** missing values (no trips yet, no rating yet, never driven for `LAST_TRIP`) always go last, whichever direction you sort. An unknown `status` or `sort` gets a `400`.
 
 ```json
 {
@@ -54,7 +54,8 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
       "reliabilityPercent": 91,
       "status": "VERIFIED",
       "verificationStatus": "APPROVED",
-      "joinedAt": "2026-01-12T09:00:00Z"
+      "joinedAt": "2026-01-12T09:00:00Z",
+      "lastTripAt": "2026-11-12T07:30:00Z"
     }
   ],
   "page": 0, "size": 20, "totalElements": 21, "totalPages": 2, "last": false
@@ -72,6 +73,7 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
 | Earning | `earnings`: lifetime takings after CoRyd's commission, in naira. `grossEarnings` is before commission. |
 | Reliability | `reliabilityPercent` for the bar. The share of paid seats the driver completed rather than cancelled. `null` until they've completed or cancelled one; show "–". |
 | Status | `status`; see below |
+| Last trip | `lastTripAt`: when the most recent completed ride on their trips ended (ISO instant). `null` if they've never completed one; show "Never" or "–". |
 | Footer "Showing 1–10 of N" | `page`, `size`, `totalElements` |
 
 **Suggested bar colours for reliability:** 85% and above teal, 70–84% amber, below 70% red.
@@ -89,16 +91,17 @@ Every driver, with their car, trips, rating, earnings, reliability and status. F
 
 **Where the numbers come from:**
 - Profile-service keeps one indexed row per driver, and the list is filtered, sorted and paged by the database. It stays fast however many drivers there are.
-- Trips, rating, reliability and reports come from trip-service. Earnings come from payment-service. Suspension comes from identity-service.
+- Trips, rating, reliability, reports and `lastTripAt` come from trip-service. Earnings come from payment-service. Suspension comes from identity-service.
 - Each is updated within seconds of a change, and every driver is re-synced nightly.
 - A driver who hasn't driven or earned yet shows `null` for those numbers; render a dash.
 
 ### Tab badges: `GET /drivers/counts?search=`
 ```json
-{ "all": 21, "verified": 12, "pending": 5, "resubmitted": 2, "suspended": 2 }
+{ "all": 21, "verified": 12, "pending": 5, "resubmitted": 2, "suspended": 2, "activeLast7Days": 9 }
 ```
 
-- Each driver is counted once.
+- Each driver is counted once in the status badges.
+- **KPI card:** `activeLast7Days` is drivers whose `lastTripAt` is within the last 7 × 24 hours (a rolling window, not calendar days). It overlaps the status counts.
 - Send the same `search` as the table.
 - The header "N total drivers in the pilot corridor" is `all` with no search.
 
@@ -245,7 +248,8 @@ The document screens' buttons work here too, including on documents that are alr
 ## 8. Checklist
 
 - [ ] Header total and tab badges from `/drivers/counts`, using the same `search` as the table.
-- [ ] Table from `/drivers`: tabs (`status`), search, sortable columns (`sort` + `direction`), page size and paging.
+- [ ] Table from `/drivers`: tabs (`status`), search, sortable columns (`sort` + `direction`, including `LAST_TRIP`), page size and paging.
+- [ ] Last trip from `lastTripAt` ("Never" when `null`); KPI card from `/drivers/counts` `activeLast7Days`.
 - [ ] Reliability bar colour from `reliabilityPercent`; dashes for `null` numbers.
 - [ ] Profile from `/drivers/{driverId}`: card, Verified badge, vehicle, performance, account, suspension banner.
 - [ ] **Suspend Driver** and **Reinstate Driver**, both with a reason dialog, refreshing afterwards.

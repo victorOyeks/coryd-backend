@@ -161,6 +161,35 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
         java.math.BigDecimal getSpent();
     }
 
+    /**
+     * When each rider's most recent completed trip ended: the time the booking was marked completed (as the receipt shows
+     * it), else the trip's completion, else the booking's last update. Riders with no completed trip are left out.
+     */
+    @Query(value = "select b.rider_id as userId, max(" + COMPLETED_AT + ") as lastTripAt"
+            + " from trip.bookings b join trip.route_posts r on r.id = b.route_post_id"
+            + " where b.rider_id in (:riderIds) and b.status = 'COMPLETED'"
+            + " group by b.rider_id", nativeQuery = true)
+    List<LastTrip> lastTripsForRiders(@Param("riderIds") Collection<String> riderIds);
+
+    /** lastTripsForRiders for drivers: the latest completed ride on any of their trips. */
+    @Query(value = "select r.driver_id as userId, max(" + COMPLETED_AT + ") as lastTripAt"
+            + " from trip.bookings b join trip.route_posts r on r.id = b.route_post_id"
+            + " where r.driver_id in (:driverIds) and b.status = 'COMPLETED'"
+            + " group by r.driver_id", nativeQuery = true)
+    List<LastTrip> lastTripsForDrivers(@Param("driverIds") Collection<String> driverIds);
+
+    /**
+     * A completed booking's completion time, for b joined to its route r. Hibernate stores Instants as UTC wall time in
+     * these TIMESTAMP columns, so the value is read back AT TIME ZONE 'UTC' - without it the JVM's zone would shift it.
+     */
+    String COMPLETED_AT = "coalesce((select max(h.created_at) from trip.booking_status_history h"
+            + " where h.booking_id = b.id and h.status = 'COMPLETED'), r.completed_at, b.updated_at) at time zone 'UTC'";
+
+    interface LastTrip {
+        String getUserId();
+        java.time.Instant getLastTripAt();
+    }
+
     /** Problems drivers reported on these riders' bookings - not the riders' own reports. */
     @Query(value = """
             select b.rider_id as riderId, count(*) as reports

@@ -3,6 +3,7 @@ package org.coryd.payment.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.payment.dto.OpsBookingPayment;
+import org.coryd.payment.dto.RefundKind;
 import org.coryd.payment.dto.RefundStatus;
 import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.entity.Refund;
@@ -44,11 +45,18 @@ public class OpsBookingPaymentService {
                     .orElseThrow();
             BigDecimal amountPaid = sum(paid.stream().map(PaymentTransaction::getAmount).toList());
             List<Refund> back = refunds.getOrDefault(id, List.of());
-            BigDecimal refunded = sum(back.stream().filter(r -> r.getStatus() == RefundStatus.REFUNDED).map(Refund::getAmount).toList());
-            BigDecimal pending = sum(back.stream().filter(r -> r.getStatus() == RefundStatus.PENDING).map(Refund::getAmount).toList());
+            // A duplicate charge's refund returns a different charge than the one in amountPaid (B-524EA3: ₦507.62 back
+            // against ₦500 paid - the duplicate's own amount, Paystack's fee included), so it is kept out of refunded.
+            List<Refund> ofThisPayment = back.stream().filter(r -> r.getKind() == RefundKind.CANCELLATION).toList();
+            BigDecimal refunded = sum(ofThisPayment.stream().filter(r -> r.getStatus() == RefundStatus.REFUNDED).map(Refund::getAmount).toList())
+                    .min(amountPaid);
+            BigDecimal pending = sum(ofThisPayment.stream().filter(r -> r.getStatus() == RefundStatus.PENDING).map(Refund::getAmount).toList())
+                    .min(amountPaid.subtract(refunded));
+            BigDecimal duplicates = sum(back.stream().filter(r -> r.getKind() == RefundKind.DUPLICATE_CHARGE && r.getStatus() == RefundStatus.REFUNDED)
+                    .map(Refund::getAmount).toList());
             return new OpsBookingPayment(id, shown.getStatus(), shown.getPaymentMethod(), shown.getCardType(), shown.getCardLast4(),
                     shown.getGatewayReference(), shown.getStatus() == PayoutStatus.PAID ? shown.getUpdatedAt() : null,
-                    amountPaid, refunded, pending, amountPaid.subtract(refunded).subtract(pending).max(BigDecimal.ZERO));
+                    amountPaid, refunded, pending, amountPaid.subtract(refunded).subtract(pending).max(BigDecimal.ZERO), duplicates);
         }).toList();
     }
 

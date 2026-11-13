@@ -111,7 +111,8 @@ class OpsTripsAndBookingsApiTest {
             mockMvc.perform(post("/bookings/b-1/cancel").header("Authorization", token).contentType(MediaType.APPLICATION_JSON)
                     .content("{\"reason\":\"x\",\"fault\":\"RIDER\"}")).andExpect(status().isForbidden());
         }
-        assertThat(requests).as("a refused caller never reaches trip-service").isEmpty();
+        // Only trip-service calls count: the token-revocation bootstrap may poll identity in the background at any time.
+        assertThat(requests).as("a refused caller never reaches trip-service").noneMatch(r -> r.path().startsWith("/trip"));
     }
 
     @Test
@@ -366,15 +367,12 @@ class OpsTripsAndBookingsApiTest {
 
     private static void handle(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
-        if (path.endsWith("/token-revocations")) {
-            // common's revocation registry loading its snapshot in the background at startup - it can land mid-test
-            exchange.sendResponseHeaders(503, -1);
-            exchange.close();
-            return;
+        // The token-revocation bootstrap polls identity-service in the background from startup - not a call any test makes.
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        if (!path.endsWith("/token-revocations")) {
+            requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().toString(), path,
+                    exchange.getRequestHeaders().getFirst("Authorization"), body));
         }
-        requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().toString(), path,
-                exchange.getRequestHeaders().getFirst("Authorization"),
-                new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
         Reply reply = replies.getOrDefault(path, new Reply(200, "{\"success\":true,\"data\":null}"));
         byte[] response = reply.body().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");

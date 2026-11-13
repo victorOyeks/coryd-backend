@@ -78,6 +78,7 @@ public class RiderStatsPublisher {
                 kafkaTemplate.send(KafkaTopics.RIDER_STATS_CHANGED, s.riderId(), RiderStatsChangedEvent.builder()
                         .riderId(s.riderId()).trips(s.trips()).ratingAvg(s.ratingAvg()).ratingCount(s.ratingCount())
                         .reliabilityPercent(s.reliabilityPercent()).reportsFiled(s.reportsFiled()).totalSpent(s.totalSpent())
+                        .lastTripAt(s.lastTripAt())
                         .computedAt(now).build());
             }
         } catch (Exception e) {

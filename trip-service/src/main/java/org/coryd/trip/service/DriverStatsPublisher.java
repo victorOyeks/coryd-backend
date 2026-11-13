@@ -78,7 +78,8 @@ public class DriverStatsPublisher {
             for (OpsDriverStats s : statsService.stats(driverIds)) {
                 kafkaTemplate.send(KafkaTopics.DRIVER_STATS_CHANGED, s.driverId(), DriverStatsChangedEvent.builder()
                         .driverId(s.driverId()).trips(s.trips()).ratingAvg(s.ratingAvg()).ratingCount(s.ratingCount())
-                        .reliabilityPercent(s.reliabilityPercent()).reportsFiled(s.reportsFiled()).computedAt(now).build());
+                        .reliabilityPercent(s.reliabilityPercent()).reportsFiled(s.reportsFiled()).lastTripAt(s.lastTripAt())
+                        .computedAt(now).build());
             }
         } catch (Exception e) {
             log.warn("Could not send driver stats for {}: {}", driverIds, e.getMessage());

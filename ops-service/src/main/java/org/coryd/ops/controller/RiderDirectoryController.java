@@ -3,6 +3,7 @@ package org.coryd.ops.controller;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.RiderDirectorySort;
 import org.coryd.common.enums.RiderDirectoryStatus;
+import org.coryd.common.enums.RiderIdentityStatus;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.ops.dto.RiderDirectoryCounts;
@@ -26,15 +27,16 @@ public class RiderDirectoryController {
 
     private final RiderDirectoryService riderDirectoryService;
 
-    /** status is omitted for the "All" tab. Newest sign-up first unless sorted. */
+    /** status is omitted for the "All" tab; identity narrows to one identity (NIN) status. Newest sign-up first unless sorted. */
     @GetMapping
     public ApiResponse<PagedResponse<RiderDirectoryItem>> riders(@RequestParam(required = false) RiderDirectoryStatus status,
+                                                                 @RequestParam(required = false) RiderIdentityStatus identity,
                                                                  @RequestParam(required = false) String search,
                                                                  @RequestParam(required = false) RiderDirectorySort sort,
                                                                  @RequestParam(required = false) Sort.Direction direction,
                                                                  @RequestParam(defaultValue = "0") int page,
                                                                  @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(riderDirectoryService.riders(status, search, sort, direction, page, size));
+        return ApiResponse.ok(riderDirectoryService.riders(status, identity, search, sort, direction, page, size));
     }
 
     @GetMapping("/counts")

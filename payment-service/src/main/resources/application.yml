@@ -87,6 +87,13 @@ services:
 commission:
   percentage: ${COMMISSION_PERCENTAGE:0.05}
 
+# Ops Console money (docs/ops-console/money.md). A manual refund, refund/payout retry or debt adjustment for more than
+# approval-threshold naira needs a second admin to approve it.
+ops:
+  money:
+    approval-threshold: ${OPS_MONEY_APPROVAL_THRESHOLD:50000}
+    stuck-refund-minutes: ${OPS_MONEY_STUCK_REFUND_MINUTES:60}
+
 # Destructive test-only endpoints (see org.coryd.payment.dev). Off unless explicitly enabled.
 coryd:
   dev-tools:

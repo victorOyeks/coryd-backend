@@ -19,7 +19,7 @@ import java.time.LocalDate;
 
 
 @Entity
-@jakarta.persistence.EntityListeners(DriverIndexListener.class)
+@jakarta.persistence.EntityListeners({DriverIndexListener.class, RiderIndexListener.class})
 @Table(name = "driver_profiles", schema = "profile")
 @Getter
 @Setter

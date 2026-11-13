@@ -2,10 +2,12 @@ package org.coryd.profile.service;
 
 import org.coryd.common.enums.RiderDirectorySort;
 import org.coryd.common.enums.RiderDirectoryStatus;
+import org.coryd.common.enums.RiderIdentityStatus;
 import org.coryd.profile.entity.RiderIndex;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,6 +19,15 @@ final class RiderIndexSpecs {
 
     static Specification<RiderIndex> status(RiderDirectoryStatus status) {
         return (root, query, cb) -> status == null ? null : cb.equal(root.get("directoryStatus"), status);
+    }
+
+    static Specification<RiderIndex> identity(RiderIdentityStatus identity) {
+        return (root, query, cb) -> identity == null ? null : cb.equal(root.get("identityStatus"), identity);
+    }
+
+    /** Completed a trip at or after since. */
+    static Specification<RiderIndex> lastTripSince(Instant since) {
+        return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("lastTripAt"), since);
     }
 
     /** Name (contains), the R- reference (starts with), or phone (4+ digits, contains). */
@@ -53,6 +64,7 @@ final class RiderIndexSpecs {
             case REPORTS -> "reportsFiled";
             case STATUS -> "directoryStatus";
             case JOINED -> "joinedAt";
+            case LAST_TRIP -> "lastTripAt";
         };
         return orderBy(column, direction == Sort.Direction.DESC);
     }
