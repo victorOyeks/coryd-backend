@@ -3,6 +3,7 @@ package org.coryd.profile.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.RiderDirectorySort;
 import org.coryd.common.enums.RiderDirectoryStatus;
+import org.coryd.common.enums.RiderIdentityStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.events.RiderStatsChangedEvent;
 import org.coryd.common.response.PagedResponse;
@@ -20,6 +21,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
@@ -31,7 +33,7 @@ import java.util.stream.Collectors;
 
 /**
  * rider_index: one row per rider for the Ops Console's Riders Directory. refresh() rebuilds a row from the rider's profile
- * and identity; trip numbers and suspensions are written as their events arrive. Only accounts holding the rider role
+ * and identity (the account, and their identity (NIN) check); trip numbers and suspensions are written as their events arrive. Only accounts holding the rider role
  * are listed - a driver who saved an emergency contact has a rider profile but isn't a rider.
  */
 @Service
@@ -41,6 +43,10 @@ public class RiderIndexService {
     private final RiderIndexRepository riderIndexRepository;
     private final RiderProfileRepository riderProfileRepository;
     private final IdentityServiceClient identityServiceClient;
+    private final RiderIdentityStatuses identityStatuses;
+
+    /** The "active in the last 7 days" count: a completed trip within this long of now. */
+    static final Duration ACTIVE_WINDOW = Duration.ofDays(7);
 
     @Transactional
     public void refresh(String riderId) {
@@ -54,7 +60,7 @@ public class RiderIndexService {
         if (row == null || row.getPhone() == null || row.getJoinedAt() == null) {
             contact = identityServiceClient.contacts(List.of(riderId)).stream().findFirst().orElse(null);
         }
-        build(row, profile, contact);
+        build(row, profile, contact, identityStatuses.of(riderId));
     }
 
     /** refresh() for many riders, with one identity call - the backfill and nightly rebuild. */
@@ -64,6 +70,7 @@ public class RiderIndexService {
                 .collect(Collectors.toMap(RiderProfile::getUserId, Function.identity(), (a, b) -> a));
         Map<String, IdentityServiceClient.Contact> contacts = identityServiceClient.contacts(riderIds).stream()
                 .collect(Collectors.toMap(IdentityServiceClient.Contact::userId, Function.identity(), (a, b) -> a));
+        Map<String, RiderIdentityStatus> identity = identityStatuses.of(profiles.keySet());
         int done = 0;
         for (String riderId : riderIds) {
             RiderProfile profile = profiles.get(riderId);
@@ -71,7 +78,7 @@ public class RiderIndexService {
                 riderIndexRepository.findById(riderId).ifPresent(riderIndexRepository::delete);
                 continue;
             }
-            if (build(riderIndexRepository.findById(riderId).orElse(null), profile, contacts.get(riderId))) {
+            if (build(riderIndexRepository.findById(riderId).orElse(null), profile, contacts.get(riderId), identity.get(riderId))) {
                 done++;
             }
         }
@@ -91,6 +98,10 @@ public class RiderIndexService {
         row.setReliabilityPercent(event.getReliabilityPercent());
         row.setReportsFiled(event.getReportsFiled());
         row.setTotalSpent(event.getTotalSpent());
+        if (event.getLastTripAt() != null || event.getTrips() == 0) {
+            // No lastTripAt with trips on record is a sender that predates the field - keep what the row has.
+            row.setLastTripAt(event.getLastTripAt());
+        }
         row.setStatsAt(event.getComputedAt());
         save(row);
     }
@@ -108,10 +119,10 @@ public class RiderIndexService {
     // ---- reading ---------------------------------------------------------------------------------
 
     @Transactional(readOnly = true)
-    public PagedResponse<RiderIndexView> directory(RiderDirectoryStatus status, String search, RiderDirectorySort sort,
-                                                   Sort.Direction direction, int page, int size) {
+    public PagedResponse<RiderIndexView> directory(RiderDirectoryStatus status, RiderIdentityStatus identity, String search,
+                                                   RiderDirectorySort sort, Sort.Direction direction, int page, int size) {
         Specification<RiderIndex> spec = RiderIndexSpecs.search(search).and(RiderIndexSpecs.status(status))
-                .and(RiderIndexSpecs.sort(sort, direction));
+                .and(RiderIndexSpecs.identity(identity)).and(RiderIndexSpecs.sort(sort, direction));
         Page<RiderIndex> rows = riderIndexRepository.findAll(spec, PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 50))));
         return PagedResponse.from(rows.map(RiderIndexService::view));
     }
@@ -121,7 +132,9 @@ public class RiderIndexService {
         Specification<RiderIndex> base = RiderIndexSpecs.search(search);
         return new RiderIndexCounts(riderIndexRepository.count(base),
                 riderIndexRepository.count(base.and(RiderIndexSpecs.status(RiderDirectoryStatus.ACTIVE))),
-                riderIndexRepository.count(base.and(RiderIndexSpecs.status(RiderDirectoryStatus.SUSPENDED))));
+                riderIndexRepository.count(base.and(RiderIndexSpecs.status(RiderDirectoryStatus.SUSPENDED))),
+                riderIndexRepository.count(base.and(RiderIndexSpecs.identity(RiderIdentityStatus.APPROVED))),
+                riderIndexRepository.count(base.and(RiderIndexSpecs.lastTripSince(Instant.now().minus(ACTIVE_WINDOW)))));
     }
 
     @Transactional(readOnly = true)
@@ -133,7 +146,8 @@ public class RiderIndexService {
     // ---- building a row --------------------------------------------------------------------------
 
     /** false when the account isn't a rider - any row for it is removed. contact may be null (identity unreachable). */
-    private boolean build(RiderIndex existing, RiderProfile profile, IdentityServiceClient.Contact contact) {
+    private boolean build(RiderIndex existing, RiderProfile profile, IdentityServiceClient.Contact contact,
+                          RiderIdentityStatus identityStatus) {
         String riderId = profile.getUserId();
         if (contact != null && !contact.isRider()) {
             if (existing != null) {
@@ -148,6 +162,7 @@ public class RiderIndexService {
         String name = (Objects.toString(profile.getFirstName(), "") + " " + Objects.toString(profile.getLastName(), "")).trim();
         row.setNameKey(name.isEmpty() ? null : name.toLowerCase(Locale.ROOT));
         row.setPhotoUrl(profile.getPhotoUrl());
+        row.setIdentityStatus(identityStatus == null ? RiderIdentityStatus.NOT_STARTED : identityStatus);
         if (row.getJoinedAt() == null) {
             row.setJoinedAt(profile.getCreatedAt());
         }
@@ -192,6 +207,7 @@ public class RiderIndexService {
     private static RiderIndexView view(RiderIndex r) {
         return new RiderIndexView(r.getRiderId(), r.getFirstName(), r.getLastName(), r.getPhone(), r.getPhotoUrl(), r.getJoinedAt(),
                 r.getDirectoryStatus(), r.getSuspendedAt(), r.getSuspensionReason(),
-                r.getTrips(), r.getRatingAvg(), r.getRatingCount(), r.getReliabilityPercent(), r.getReportsFiled(), r.getTotalSpent());
+                r.getTrips(), r.getRatingAvg(), r.getRatingCount(), r.getReliabilityPercent(), r.getReportsFiled(), r.getTotalSpent(),
+                r.getIdentityStatus(), r.getLastTripAt());
     }
 }

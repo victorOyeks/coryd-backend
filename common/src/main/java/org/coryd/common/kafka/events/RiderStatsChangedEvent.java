@@ -25,5 +25,13 @@ public class RiderStatsChangedEvent {
     private Integer reliabilityPercent;
     private long reportsFiled;
     private BigDecimal totalSpent;
+    /** When their most recent completed trip ended - null when they have none (or from a sender that predates it). */
+    private Instant lastTripAt;
     private Instant computedAt;
+
+    /** The constructor from before lastTripAt, kept so existing callers still compile; lastTripAt is null. */
+    public RiderStatsChangedEvent(String riderId, long trips, Double ratingAvg, long ratingCount, Integer reliabilityPercent,
+                                  long reportsFiled, BigDecimal totalSpent, Instant computedAt) {
+        this(riderId, trips, ratingAvg, ratingCount, reliabilityPercent, reportsFiled, totalSpent, null, computedAt);
+    }
 }

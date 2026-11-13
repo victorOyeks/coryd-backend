@@ -55,6 +55,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -627,8 +628,9 @@ class BookingFlowIntegrationTest {
             assertThat(s.ratingCount()).isEqualTo(1);
             assertThat(s.reliabilityPercent()).as("1 completed, 1 paid seat the driver cancelled; the unpaid hold doesn't count").isEqualTo(50);
             assertThat(s.reportsFiled()).as("the rider's report, not the driver's own").isEqualTo(1);
+            assertThat(s.lastTripAt()).isEqualTo(completedAt(ridden));
         });
-        assertThat(stats.get(1)).isEqualTo(new org.coryd.trip.dto.OpsDriverStats("driver-nobody", 0, null, 0, null, 0));
+        assertThat(stats.get(1)).isEqualTo(new org.coryd.trip.dto.OpsDriverStats("driver-nobody", 0, null, 0, null, 0, null));
         assertThat(opsDriverStatsService.stats(List.of())).isEmpty();
     }
 
@@ -694,8 +696,9 @@ class BookingFlowIntegrationTest {
                     .isEqualTo(50);
             assertThat(s.reportsFiled()).as("the driver's report on them, not their own").isEqualTo(1);
             assertThat(s.totalSpent()).isEqualByComparingTo(reload(ridden).getFareTotal());
+            assertThat(s.lastTripAt()).as("the completed trip - not the later cancellations").isEqualTo(completedAt(ridden));
         });
-        assertThat(stats.get(1)).isEqualTo(new org.coryd.trip.dto.OpsRiderStats("rider-nobody", 0, null, 0, null, 0, BigDecimal.ZERO));
+        assertThat(stats.get(1)).isEqualTo(new org.coryd.trip.dto.OpsRiderStats("rider-nobody", 0, null, 0, null, 0, BigDecimal.ZERO, null));
         assertThat(opsRiderStatsService.stats(List.of())).isEmpty();
     }
 
@@ -734,6 +737,63 @@ class BookingFlowIntegrationTest {
         clearInvocations(kafkaTemplate);
         assertThat(riderStatsPublisher.syncAll()).isEqualTo(2);
         verify(kafkaTemplate, times(2)).send(eq(KafkaTopics.RIDER_STATS_CHANGED), anyString(), any());
+    }
+
+    @Test
+    void lastTripAtIsWhenTheLatestCompletedTripEndedAndGoesOutOnCompletionAndInTheNightlySync() {
+        RoutePost first = route(4);
+        Booking earlier = book(first, RIDER, 1);
+        confirm(earlier);
+        start(first);
+        pickUp(earlier);
+        bookingService.completeTrip(earlier.getId(), DRIVER);
+        bookingService.completeRoute(first.getId(), DRIVER);
+        jdbcTemplate.update("update trip.booking_status_history set created_at = created_at - interval '3 days' where booking_id = ?",
+                earlier.getId());
+
+        RoutePost second = route(4);
+        Booking later = book(second, RIDER, 1);
+        confirm(later);
+        start(second);
+        pickUp(later);
+        clearInvocations(kafkaTemplate);
+        bookingService.completeTrip(later.getId(), DRIVER);
+        Instant latest = completedAt(later);
+
+        verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && latest.equals(s.getLastTripAt())));
+        verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaTopics.DRIVER_STATS_CHANGED), eq(DRIVER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.DriverStatsChangedEvent s && latest.equals(s.getLastTripAt())));
+
+        Booking cancelled = book(route(4), RIDER, 1);
+        confirm(cancelled);
+        bookingService.cancelByRider(cancelled.getId(), RIDER);
+        Booking otherCancelled = book(route(4), OTHER_RIDER, 1);
+        confirm(otherCancelled);
+        bookingService.cancelByRider(otherCancelled.getId(), OTHER_RIDER);
+
+        assertThat(opsRiderStatsService.stats(List.of(RIDER)).get(0).lastTripAt()).as("the latest completed trip; cancellations don't count")
+                .isEqualTo(latest).isAfter(completedAt(earlier));
+        assertThat(opsDriverStatsService.stats(List.of(DRIVER)).get(0).lastTripAt()).isEqualTo(latest);
+        assertThat(opsRiderStatsService.stats(List.of(OTHER_RIDER)).get(0).lastTripAt()).as("never completed a trip").isNull();
+
+        clearInvocations(kafkaTemplate);
+        riderStatsPublisher.syncAll();
+        driverStatsPublisher.syncAll();
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && latest.equals(s.getLastTripAt())));
+        verify(kafkaTemplate).send(eq(KafkaTopics.RIDER_STATS_CHANGED), eq(OTHER_RIDER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.RiderStatsChangedEvent s && s.getLastTripAt() == null));
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_STATS_CHANGED), eq(DRIVER), argThat(e ->
+                e instanceof org.coryd.common.kafka.events.DriverStatsChangedEvent s && latest.equals(s.getLastTripAt())));
+    }
+
+    /** When the booking was marked completed, as stored. */
+    private Instant completedAt(Booking booking) {
+        return historyRepository.findByBookingIdOrderByCreatedAtAsc(booking.getId()).stream()
+                .filter(h -> h.getStatus() == BookingStatus.COMPLETED)
+                .map(org.coryd.trip.entity.BookingStatusHistory::getCreatedAt)
+                .reduce((a, b) -> b).orElseThrow();
     }
 
     @Test

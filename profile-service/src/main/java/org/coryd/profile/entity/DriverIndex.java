@@ -101,6 +101,8 @@ public class DriverIndex {
     private Long ratingCount;
     private Integer reliabilityPercent;
     private Long reportsFiled;
+    /** When the most recent completed ride on their trips ended - from trip-service with the numbers above. */
+    private Instant lastTripAt;
     private Instant statsAt;
 
     // From payment-service, as last sent.

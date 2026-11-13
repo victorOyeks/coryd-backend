@@ -470,13 +470,16 @@ public class ProfileServiceClient {
     }
 
     /** The Riders Directory - filtered, sorted and paged by profile-service's rider index. */
-    public RiderIndexPage riderIndex(RiderDirectoryStatus status, String search, RiderDirectorySort sort,
-                                     Sort.Direction direction, int page, int size) {
+    public RiderIndexPage riderIndex(RiderDirectoryStatus status, org.coryd.common.enums.RiderIdentityStatus identity, String search,
+                                     RiderDirectorySort sort, Sort.Direction direction, int page, int size) {
         return DownstreamCalls.data(SERVICE, objectMapper, RiderIndexPage.class, () -> restClient.get()
                 .uri(b -> {
                     b.path("/internal/riders/index").queryParam("page", page).queryParam("size", size);
                     if (status != null) {
                         b.queryParam("status", status);
+                    }
+                    if (identity != null) {
+                        b.queryParam("identity", identity);
                     }
                     if (search != null && !search.isBlank()) {
                         b.queryParam("search", search);
@@ -532,7 +535,7 @@ public class ProfileServiceClient {
     public record IndexedRider(String riderId, String firstName, String lastName, String phone, String photoUrl, Instant joinedAt,
                                RiderDirectoryStatus status, Instant suspendedAt, String suspensionReason,
                                Long trips, Double ratingAvg, Long ratingCount, Integer reliabilityPercent, Long reportsFiled,
-                               BigDecimal totalSpent) {
+                               BigDecimal totalSpent, org.coryd.common.enums.RiderIdentityStatus identityStatus, Instant lastTripAt) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -545,7 +548,7 @@ public class ProfileServiceClient {
                                 Instant suspendedAt, String suspensionReason,
                                 String vehicleMake, String vehicleModel, Integer vehicleYear, String vehicleColor, String plateNumber,
                                 Long trips, Double ratingAvg, Long ratingCount, Integer reliabilityPercent, Long reportsFiled,
-                                BigDecimal earningsNet, BigDecimal earningsGross) {
+                                BigDecimal earningsNet, BigDecimal earningsGross, Instant lastTripAt) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

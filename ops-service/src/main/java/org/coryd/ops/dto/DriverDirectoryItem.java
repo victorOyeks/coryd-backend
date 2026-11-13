@@ -10,7 +10,7 @@ import java.time.Instant;
 /**
  * One row of the Drivers Directory. earnings is the driver's lifetime takings after CoRyd's commission, grossEarnings
  * before it. reliabilityPercent is null until they've completed or cancelled a paid seat. Any number that couldn't be
- * loaded is null, and the row still shows.
+ * loaded is null, and the row still shows. lastTripAt is when the latest completed ride on their trips ended (null if none).
  */
 public record DriverDirectoryItem(
         DriverSummary driver,
@@ -23,7 +23,8 @@ public record DriverDirectoryItem(
         Integer reliabilityPercent,
         DriverDirectoryStatus status,
         VerificationStatus verificationStatus,
-        Instant joinedAt
+        Instant joinedAt,
+        Instant lastTripAt
 ) {
     public record Vehicle(String make, String model, Integer year, String color, String plateNumber) {
     }

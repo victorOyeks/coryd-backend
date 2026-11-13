@@ -73,7 +73,7 @@ public class IdentityReviewService {
     /** decidedBy values of an automatic approval - the approvals ops can't take back. */
     static final Set<String> PROVIDER_DECIDERS = Set.of(IdentityVerificationDecider.SMILE_ID, DriverIdentity.DECIDED_BY, "PREMBLY");
     static final int REASON_MAX = 500;
-    private static final List<SmileIdCheckType> NIN_CHECKS = List.of(SmileIdCheckType.NIN, SmileIdCheckType.NIN_LOOKUP);
+    static final List<SmileIdCheckType> NIN_CHECKS = List.of(SmileIdCheckType.NIN, SmileIdCheckType.NIN_LOOKUP);
     private static final List<VerificationCheckType> NIN_RESULTS = List.of(VerificationCheckType.NIN_FACE, VerificationCheckType.NIN_LOOKUP);
 
     private final IdentityVerificationRepository identityVerificationRepository;
@@ -563,7 +563,7 @@ public class IdentityReviewService {
                 .reduce(IdentityReviewService::newer).orElse(null);
     }
 
-    private static SmileIdCheck newer(SmileIdCheck a, SmileIdCheck b) {
+    static SmileIdCheck newer(SmileIdCheck a, SmileIdCheck b) {
         return compareInstants(a.getUpdatedAt(), b.getUpdatedAt()) >= 0 ? a : b;
     }
 
@@ -572,6 +572,10 @@ public class IdentityReviewService {
     }
 
     private int maxAttempts(SmileIdCheck check) {
+        return maxAttempts(check, properties);
+    }
+
+    static int maxAttempts(SmileIdCheck check, SmileIdProperties properties) {
         return check != null && check.getCheckType() == SmileIdCheckType.NIN_LOOKUP ? properties.getNinLookupMaxAttempts() : SmileIdCheck.MAX_ATTEMPTS;
     }
 

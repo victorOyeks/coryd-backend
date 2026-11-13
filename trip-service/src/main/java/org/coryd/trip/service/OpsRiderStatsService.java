@@ -9,13 +9,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** The Riders Directory's per-rider numbers, for many riders in three queries. */
+/** The Riders Directory's per-rider numbers, for many riders in four queries. */
 @Service
 @RequiredArgsConstructor
 public class OpsRiderStatsService {
@@ -35,6 +37,7 @@ public class OpsRiderStatsService {
                 .collect(Collectors.toMap(RatingRepository.RatingSummary::getRateeId, Function.identity()));
         Map<String, Long> reports = bookingRepository.countReportsAgainstRiders(ids).stream()
                 .collect(Collectors.toMap(BookingRepository.RiderReportCount::getRiderId, BookingRepository.RiderReportCount::getReports));
+        Map<String, Instant> lastTrips = lastTrips(bookingRepository.lastTripsForRiders(ids));
         return ids.stream().map(id -> {
             BookingRepository.RiderTripCounts t = trips.get(id);
             long completed = t == null || t.getCompleted() == null ? 0 : t.getCompleted();
@@ -42,7 +45,14 @@ public class OpsRiderStatsService {
             Integer reliability = completed + missed == 0 ? null : (int) Math.round(completed * 100.0 / (completed + missed));
             RatingRepository.RatingSummary r = ratings.get(id);
             return new OpsRiderStats(id, completed, r == null ? null : r.getAvgStars(), r == null || r.getRatingCount() == null ? 0 : r.getRatingCount(),
-                    reliability, reports.getOrDefault(id, 0L), t == null || t.getSpent() == null ? BigDecimal.ZERO : t.getSpent());
+                    reliability, reports.getOrDefault(id, 0L), t == null || t.getSpent() == null ? BigDecimal.ZERO : t.getSpent(),
+                    lastTrips.get(id));
         }).toList();
+    }
+
+    static Map<String, Instant> lastTrips(List<BookingRepository.LastTrip> rows) {
+        Map<String, Instant> byId = new HashMap<>();
+        rows.forEach(r -> byId.put(r.getUserId(), r.getLastTripAt()));
+        return byId;
     }
 }

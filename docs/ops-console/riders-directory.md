@@ -2,7 +2,7 @@
 
 Sidebar: **Riders → Riders Directory**.
 
-Every rider, with their trips, reliability, rating, spend, reports and status. From a row, ops opens the rider's profile, then their trip history and receipts. They can suspend or reinstate the rider, sign them out everywhere, and edit their name and email; see [accounts.md](accounts.md).
+Every rider, with their identity status, trips, reliability, rating, spend, last trip, reports and status. From a row, ops opens the rider's profile, then their trip history and receipts. They can suspend or reinstate the rider, sign them out everywhere, and edit their name and email; see [accounts.md](accounts.md).
 
 **Basics:**
 - **Base URL:** `https://api-dev.coryd.ng/ops`.
@@ -15,7 +15,7 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
 
 | Screen / control | Call |
 |---|---|
-| Header "N registered riders" and the tab badges | `GET /riders/counts` |
+| Header "N registered riders", the tab badges and the KPI cards | `GET /riders/counts` |
 | Table: tabs, search, sorting, paging | `GET /riders` |
 | **View**: the rider's profile, with every section | `GET /riders/{riderId}`; see [accounts.md](accounts.md) section 3 |
 | **Suspend Account** / reinstate / sign out everywhere | `POST /users/{riderId}/suspend` · `/reinstate` · `/sign-out-everywhere`; see [accounts.md](accounts.md) section 2 |
@@ -31,13 +31,14 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
 | Param | Default | Values |
 |---|---|---|
 | `status` | none = **All** | `ACTIVE` · `SUSPENDED` |
+| `identity` | none = any | `NOT_STARTED` · `PENDING` · `IN_REVIEW` · `FAILED` · `APPROVED` · `LOCKED_OUT`; combines with `status` and `search` |
 | `search` | none | Name, rider ref (`R-4F2A91`; the `R-` is optional), or phone (4 or more digits) |
-| `sort` | newest sign-up first | `RIDER_REF` · `NAME` · `TRIPS` · `RETENTION` · `RATING` · `TOTAL_SPENT` · `REPORTS` · `STATUS` · `JOINED` |
+| `sort` | newest sign-up first | `RIDER_REF` · `NAME` · `TRIPS` · `RETENTION` · `RATING` · `TOTAL_SPENT` · `REPORTS` · `STATUS` · `JOINED` · `LAST_TRIP` |
 | `direction` | `ASC` | `ASC` · `DESC` |
 | `page` | `0` | 0-based |
 | `size` | `20` | max `50` |
 
-**Sorting:** missing values (no trips yet, no rating yet) always go last, whichever direction you sort. An unknown `status` or `sort` gets a `400`.
+**Sorting:** missing values (no trips yet, no rating yet, never travelled for `LAST_TRIP`) always go last, whichever direction you sort. An unknown `status`, `identity` or `sort` gets a `400`.
 
 ```json
 {
@@ -50,7 +51,9 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
       "totalSpent": 157000.00,
       "reportsFiled": 0,
       "status": "ACTIVE",
-      "joinedAt": "2026-01-12T09:00:00Z"
+      "joinedAt": "2026-01-12T09:00:00Z",
+      "identityStatus": "APPROVED",
+      "lastTripAt": "2026-11-10T18:05:00Z"
     }
   ],
   "page": 0, "size": 10, "totalElements": 62, "totalPages": 7, "last": false
@@ -68,7 +71,20 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
 | Total spent | `totalSpent`, in naira: the fares of their completed trips. Format it as "₦157k". |
 | Report filed | `reportsFiled`: problems drivers reported on this rider's trips. "—" for 0. |
 | Status | `status`: green "✓ ACTIVE" or red "✕ SUSPENDED" |
+| Identity | `identityStatus`; see the table below |
+| Last trip | `lastTripAt`: when their most recent completed trip ended (ISO instant). `null` if they've never completed one; show "Never" or "–". |
 | Footer "Showing 1–10 of N" | `page`, `size`, `totalElements` |
+
+**`identityStatus`**: the rider's identity (NIN) check, exactly as the Rider Identity screen files it (see [rider-identity.md](rider-identity.md)), plus `NOT_STARTED`:
+
+| Value | Meaning |
+|---|---|
+| `NOT_STARTED` | Never submitted an identity check |
+| `PENDING` | Started a check that hasn't finished (Smile ID still checking, or they left mid-check) |
+| `IN_REVIEW` | Waiting for an ops decision |
+| `FAILED` | Smile ID failed the last check (they were asked to try again), or ops rejected it |
+| `APPROVED` | Verified, by Smile ID or by ops |
+| `LOCKED_OUT` | Not verified and every try used; the app tells them to contact support |
 
 **Suggested bar colours:** 85% and above teal, 70–84% amber, below 70% red. Those are the same as the drivers' reliability bar.
 
@@ -76,15 +92,19 @@ Every rider, with their trips, reliability, rating, spend, reports and status. F
 - Profile-service keeps one indexed row per rider, and the list is filtered, sorted and paged by the database.
 - Trips, rating, reliability, reports and spend come from trip-service, within seconds of a trip ending, a rating or a report. Every rider is re-synced nightly.
 - Suspensions come from identity-service.
+- `identityStatus` changes the moment the rider's identity check does (a submission, Smile ID's result, an ops decision, a reset of their tries), and every rider is rebuilt nightly.
+- `lastTripAt` arrives with the trip numbers, within seconds of a trip completing, and is re-synced nightly.
 
 ### Tab badges: `GET /riders/counts?search=`
 
 ```json
-{ "all": 62, "active": 52, "suspended": 10 }
+{ "all": 62, "active": 52, "suspended": 10, "verified": 40, "activeLast7Days": 31 }
 ```
 
 - Send the same `search` as the table.
 - The header "N registered riders in the pilot" is `all` with no search.
+- **KPI cards:** `verified` is riders whose `identityStatus` is `APPROVED`; `activeLast7Days` is riders whose `lastTripAt` is within the last 7 × 24 hours (a rolling window, not calendar days).
+- `active` is the **Active** tab (not suspended), not `activeLast7Days`.
 
 ---
 
@@ -274,7 +294,9 @@ Dates are matched in Lagos time. A word that is both a name and a date, like "Su
 ## 8. Checklist
 
 - [ ] Header total and tab badges from `/riders/counts`, using the same `search` as the table.
-- [ ] Table from `/riders`: tabs (`status`), search, sortable columns (`sort` + `direction`), page size and paging.
+- [ ] Table from `/riders`: tabs (`status`), identity filter (`identity`), search, sortable columns (`sort` + `direction`, including `LAST_TRIP`), page size and paging.
+- [ ] Identity badge from `identityStatus`, last trip from `lastTripAt` ("Never" when `null`).
+- [ ] KPI cards from `/riders/counts`: `all`, `verified`, `activeLast7Days`.
 - [ ] Retention bar from `reliabilityPercent`; dashes for `null` numbers; "₦157k" from `totalSpent`.
 - [ ] Profile from `/riders/{riderId}`: card, status badge, account, activity.
 - [ ] **Suspend Account** and **Reinstate Account**, both with a reason dialog, refreshing afterwards.

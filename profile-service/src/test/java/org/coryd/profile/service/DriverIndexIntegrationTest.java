@@ -229,6 +229,43 @@ class DriverIndexIntegrationTest {
         assertThat(index.counts("okafor").all()).isEqualTo(1);
     }
 
+    @Test
+    void lastTripAtComesWithTheTripNumbers() {
+        submitAll("aaaa-1", "Emeka", "Okafor", "LND-441-AA");
+        Instant now = Instant.now();
+        Instant trip = now.minus(3, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+
+        index.applyStats(stats("aaaa-1", 5, trip, now));
+        assertThat(index.driver("aaaa-1").lastTripAt()).isEqualTo(trip);
+        index.applyStats(stats("aaaa-1", 4, now.minus(9, ChronoUnit.DAYS), now.minus(1, ChronoUnit.HOURS)));
+        assertThat(index.driver("aaaa-1").lastTripAt()).as("an older message is ignored").isEqualTo(trip);
+        index.applyStats(stats("aaaa-1", 5, 4.0, 90, now.plusSeconds(1)));
+        assertThat(index.driver("aaaa-1").lastTripAt()).as("a sender without lastTripAt leaves it alone").isEqualTo(trip);
+        index.applyStats(stats("aaaa-1", 0, null, now.plusSeconds(2)));
+        assertThat(index.driver("aaaa-1").lastTripAt()).isNull();
+    }
+
+    @Test
+    void sortingByLastTripPutsDriversWhoNeverDroveLastAndCountsTheActiveOnes() {
+        seedFour();
+        Instant now = Instant.now();
+        index.applyStats(stats("aaaa1111-1", 213, now.minus(2, ChronoUnit.DAYS), now.plusSeconds(1)));
+        index.applyStats(stats("bbbb2222-2", 283, now.minus(8, ChronoUnit.DAYS), now.plusSeconds(1)));
+        index.applyStats(stats("dddd4444-4", 100, now.minus(1, ChronoUnit.HOURS), now.plusSeconds(1)));
+
+        assertThat(names(index.directory(null, null, DriverDirectorySort.LAST_TRIP, Sort.Direction.DESC, 0, 20).content()))
+                .containsExactly("Aisha Lawal", "Emeka Okafor", "Fatima Bello", "Kingsley Nwosu");
+        assertThat(names(index.directory(null, null, DriverDirectorySort.LAST_TRIP, Sort.Direction.ASC, 0, 20).content()))
+                .as("never drove still last").containsExactly("Fatima Bello", "Emeka Okafor", "Aisha Lawal", "Kingsley Nwosu");
+        assertThat(index.counts(null).activeLast7Days()).isEqualTo(2);
+        assertThat(index.counts("bello").activeLast7Days()).as("same search as the table").isZero();
+    }
+
+    private static DriverStatsChangedEvent stats(String driverId, long trips, Instant lastTripAt, Instant at) {
+        return DriverStatsChangedEvent.builder().driverId(driverId).trips(trips).ratingCount(0).reportsFiled(0)
+                .lastTripAt(lastTripAt).computedAt(at).build();
+    }
+
     // ---- startup backfill and nightly rebuild -----------------------------------------------------
 
     @Test

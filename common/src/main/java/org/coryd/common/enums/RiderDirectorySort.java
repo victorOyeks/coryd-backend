@@ -11,5 +11,7 @@ public enum RiderDirectorySort {
     TOTAL_SPENT,
     REPORTS,
     STATUS,
-    JOINED
+    JOINED,
+    /** When they last completed a trip - riders who never have go last. */
+    LAST_TRIP
 }

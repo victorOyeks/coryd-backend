@@ -111,7 +111,8 @@ class OpsTripsAndBookingsApiTest {
             mockMvc.perform(post("/bookings/b-1/cancel").header("Authorization", token).contentType(MediaType.APPLICATION_JSON)
                     .content("{\"reason\":\"x\",\"fault\":\"RIDER\"}")).andExpect(status().isForbidden());
         }
-        assertThat(requests).as("a refused caller never reaches trip-service").isEmpty();
+        // Only trip-service calls count: the token-revocation bootstrap may poll identity in the background at any time.
+        assertThat(requests).as("a refused caller never reaches trip-service").noneMatch(r -> r.path().startsWith("/trip"));
     }
 
     @Test

@@ -22,7 +22,7 @@ import java.time.Instant;
  * Smile ID side: the open job, when it started, and the tries used.
  */
 @Entity
-@jakarta.persistence.EntityListeners(DriverIndexListener.class)
+@jakarta.persistence.EntityListeners({DriverIndexListener.class, RiderIndexListener.class})
 @Table(name = "smile_id_checks", schema = "profile")
 @Getter
 @Setter

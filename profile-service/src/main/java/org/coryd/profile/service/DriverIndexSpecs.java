@@ -92,8 +92,14 @@ final class DriverIndexSpecs {
             case RELIABILITY -> "reliabilityPercent";
             case STATUS -> "directoryStatus";
             case JOINED -> "joinedAt";
+            case LAST_TRIP -> "lastTripAt";
         };
         return orderBy(column, direction == Sort.Direction.DESC);
+    }
+
+    /** Completed a ride as the driver at or after since. */
+    static Specification<DriverIndex> lastTripSince(java.time.Instant since) {
+        return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("lastTripAt"), since);
     }
 
     /**
