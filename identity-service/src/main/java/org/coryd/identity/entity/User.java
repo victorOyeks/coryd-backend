@@ -17,6 +17,7 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import org.coryd.common.entity.BaseEntity;
 import org.coryd.common.enums.HeardAboutUs;
+import org.coryd.common.enums.OpsRole;
 import org.coryd.common.enums.UserRole;
 
 import java.time.Instant;
@@ -32,8 +33,13 @@ import java.util.Set;
 @AllArgsConstructor
 public class User extends BaseEntity {
 
-    @Column(nullable = false, unique = true, length = 20)
+    /** Null only for an ops admin invited by email (they sign in with the email). */
+    @Column(unique = true, length = 20)
     private String phone;
+
+    /** Ops admins only: the console sign-in, stored lower case, unique. Null for riders and drivers. */
+    @Column(length = 254)
+    private String email;
 
     @Column(length = 100)
     private String firstName;
@@ -72,6 +78,32 @@ public class User extends BaseEntity {
      * forward - a reinstate doesn't revive old tokens. Null when nothing was ever revoked.
      */
     private Instant tokensValidAfter;
+
+    /** The console role of an OPS_ADMIN account; null counts as SUPER_ADMIN (OpsRole.effective). */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private OpsRole opsRole;
+
+    /** The super admin who invited this ops admin, and when - null for admins created before invites. */
+    @Column(length = 36)
+    private String invitedBy;
+
+    @Column(length = 150)
+    private String invitedByName;
+
+    private Instant invitedAt;
+
+    /** Set while a super admin has this admin's console access removed: OPS_ADMIN sign-in refused, sessions ended. */
+    private Instant opsDeactivatedAt;
+
+    @Column(length = 36)
+    private String opsDeactivatedBy;
+
+    @Column(length = 500)
+    private String opsDeactivationReason;
+
+    /** Last console sign-in, token refresh or console load (ops admins only). */
+    private Instant lastSeenAt;
 
     /** "How did you hear about us?" from signup - first answer wins. */
     @Enumerated(EnumType.STRING)

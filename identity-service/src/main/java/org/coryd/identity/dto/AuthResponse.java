@@ -13,6 +13,9 @@ public record AuthResponse(
         String accessToken,
         long expiresIn,
         String refreshToken,
-        long refreshExpiresIn
+        long refreshExpiresIn,
+        // ops console sessions only (null otherwise): the admin's ops role and sign-in email
+        String opsRole,
+        String email
 ) {
 }

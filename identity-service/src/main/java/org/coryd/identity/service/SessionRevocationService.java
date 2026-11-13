@@ -49,6 +49,18 @@ public class SessionRevocationService implements TokenRevocationSource {
         publish(event(user.getId(), now, !user.isActive(), reason, now));
     }
 
+    /**
+     * Access tokens issued until now stop working everywhere, but refresh tokens and devices are left alone - the next
+     * refresh hands out a token that says what changed (an ops admin's new ops role).
+     */
+    @Transactional
+    public void cutOffAccessTokens(User user, String reason) {
+        Instant now = Instant.now();
+        user.setTokensValidAfter(now);
+        userRepository.save(user);
+        publish(event(user.getId(), now, !user.isActive(), reason, now));
+    }
+
     /** The account's suspension changed without a new cut-off (a reinstate): every service learns it's no longer suspended. */
     @Transactional
     public void publishState(User user, String reason) {
