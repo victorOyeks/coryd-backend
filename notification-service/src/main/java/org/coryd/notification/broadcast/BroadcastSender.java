@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Sends due broadcasts, one at a time, on its own thread - never a request thread, and never the shared scheduler thread
  * (a long send would hold up the report jobs). For each: resolve the audience into recipients once (announcement opt-outs
  * skipped unless urgent), then send recipient by recipient at broadcast.rate-per-second through the same gateways as every
- * other notification, recording each channel's outcome. Checks for a cancellation every few recipients; a non-urgent
+ * other notification, recording each channel's outcome. Checks for a cancellation before every recipient (one primary-key read); a non-urgent
  * broadcast still going when quiet hours start pauses and resumes when they end.
  */
 @Slf4j
@@ -48,7 +48,6 @@ public class BroadcastSender implements DisposableBean {
 
     public static final String EVENT_TYPE = "BROADCAST";
     static final int BATCH = 100;
-    static final int CANCEL_CHECK_EVERY = 10;
 
     private final BroadcastRepository broadcasts;
     private final BroadcastRecipientRepository recipients;
@@ -192,7 +191,6 @@ public class BroadcastSender implements DisposableBean {
     Outcome send(Broadcast b) throws InterruptedException {
         List<BroadcastChannel> channels = Arrays.stream(b.getChannels().split(",")).map(BroadcastChannel::valueOf).toList();
         SendPacer pacer = pacerFactory.create(properties.getRatePerSecond());
-        int sinceCheck = 0;
         while (true) {
             List<BroadcastRecipient> batch = recipients.batch(b.getId(), BroadcastRecipient.Status.PENDING,
                     PageRequest.of(0, BATCH));
@@ -202,7 +200,7 @@ public class BroadcastSender implements DisposableBean {
             Set<String> whatsappOff = channels.contains(BroadcastChannel.WHATSAPP)
                     ? lookups.whatsappOff(batch.stream().map(BroadcastRecipient::getUserId).toList()) : Set.of();
             for (BroadcastRecipient r : batch) {
-                if (sinceCheck++ % CANCEL_CHECK_EVERY == 0 && broadcasts.statusOf(b.getId()) == Broadcast.Status.CANCELLED) {
+                if (broadcasts.statusOf(b.getId()) == Broadcast.Status.CANCELLED) {
                     return Outcome.CANCELLED;
                 }
                 if (!b.isUrgent() && properties.isQuiet(clock.instant())) {

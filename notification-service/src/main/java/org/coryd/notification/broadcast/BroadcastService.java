@@ -94,7 +94,7 @@ public class BroadcastService {
     public BroadcastDtos.View create(BroadcastDtos.ComposeRequest request, OpsAdmin admin) {
         Validated v = validate(request, true);
         Instant now = clock.instant();
-        long lastHour = broadcasts.countByCreatedAtAfterAndStatusNot(now.minus(Duration.ofHours(1)), Broadcast.Status.CANCELLED);
+        long lastHour = broadcasts.countByCreatedAtAfterAndStatusNot(Instant.now().minus(Duration.ofHours(1)), Broadcast.Status.CANCELLED);
         if (lastHour >= properties.getMaxPerHour()) {
             throw new BadRequestException("Only " + properties.getMaxPerHour() + " broadcasts can be created in an hour - try again later");
         }

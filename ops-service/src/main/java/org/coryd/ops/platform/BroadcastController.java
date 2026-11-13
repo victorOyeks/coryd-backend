@@ -30,7 +30,7 @@ public class BroadcastController {
             throw new org.coryd.common.exception.BadRequestException("Send the message, its channels and audience");
         }
         return SettingsController.relay(client.send(PlatformClient.Service.NOTIFICATION, HttpMethod.POST, BASE + "/preview", null,
-                body.checked(false)));
+                wire(body.checked(false))));
     }
 
     @PostMapping
@@ -38,7 +38,7 @@ public class BroadcastController {
         if (body == null) {
             throw new org.coryd.common.exception.BadRequestException("Send the message, its channels and audience");
         }
-        return SettingsController.relay(client.send(PlatformClient.Service.NOTIFICATION, HttpMethod.POST, BASE, null, body.checked(true)));
+        return SettingsController.relay(client.send(PlatformClient.Service.NOTIFICATION, HttpMethod.POST, BASE, null, wire(body.checked(true))));
     }
 
     @GetMapping
@@ -64,5 +64,18 @@ public class BroadcastController {
     public ApiResponse<JsonNode> cancel(@PathVariable String id, @RequestBody(required = false) PlatformRequests.Reason body) {
         PlatformRequests.requireReason(body == null ? null : body.reason());
         return SettingsController.relay(client.send(PlatformClient.Service.NOTIFICATION, HttpMethod.POST, BASE + "/" + id + "/cancel", null, body));
+    }
+
+    /** sendAt as ISO-8601 on the wire. */
+    static java.util.Map<String, Object> wire(PlatformRequests.Broadcast b) {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("title", b.title());
+        out.put("body", b.body());
+        out.put("channels", b.channels());
+        out.put("audience", b.audience());
+        out.put("urgent", b.urgent());
+        out.put("sendAt", b.sendAt() == null ? null : b.sendAt().toString());
+        out.put("reason", b.reason());
+        return out;
     }
 }

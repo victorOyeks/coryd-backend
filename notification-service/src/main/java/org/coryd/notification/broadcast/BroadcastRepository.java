@@ -21,10 +21,11 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, String> {
             + " and b.scheduledFor <= :now order by b.scheduledFor")
     List<String> findDue(@Param("now") Instant now, Pageable pageable);
 
-    /** Takes a due broadcast for this sender - 1 when it was still SCHEDULED, 0 when another instance took it or ops cancelled it. */
+    /** Takes a due broadcast (scheduled for now or earlier) for this sender - 1 when it was still SCHEDULED, 0 when another instance took it or ops cancelled it. */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update Broadcast b set b.status = org.coryd.notification.broadcast.Broadcast.Status.SENDING, b.startedAt = coalesce(b.startedAt, :now),"
-            + " b.updatedAt = :now where b.id = :id and b.status = org.coryd.notification.broadcast.Broadcast.Status.SCHEDULED")
+            + " b.updatedAt = :now where b.id = :id and b.status = org.coryd.notification.broadcast.Broadcast.Status.SCHEDULED"
+            + " and b.scheduledFor <= :now")
     int claim(@Param("id") String id, @Param("now") Instant now);
 
     @Query("select b.status from Broadcast b where b.id = :id")

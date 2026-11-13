@@ -36,6 +36,14 @@ services:
   internal:
     api-key: ${INTERNAL_API_KEY}
 
+# ops-service reads no platform setting itself, so it doesn't follow them (docs/ops-console/settings.md).
+coryd:
+  platform-settings:
+    bootstrap:
+      enabled: ${OPS_PLATFORM_SETTINGS_BOOTSTRAP:false}
+    kafka:
+      enabled: ${OPS_PLATFORM_SETTINGS_KAFKA:false}
+
 # The console's live stream (GET /ops/stream) - see docs/ops-console/safety-support.md.
 ops:
   stream:

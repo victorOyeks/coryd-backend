@@ -73,7 +73,7 @@ public class InternalOpsInsightController {
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setHeader("Content-Disposition", "attachment; filename=\"coryd-" + which.slug() + "-" + range.from() + "-to-" + range.to() + ".csv\"");
         response.setHeader("X-Report-Rows", String.valueOf(total));
-        response.setHeader("X-Report-Truncated", String.valueOf(total > OpsReportService.MAX_CSV_ROWS));
+        response.setHeader("X-Report-Truncated", String.valueOf(total > reportService.maxCsvRows()));
         Writer writer = response.getWriter();
         reportService.csv(which, range, writer);
     }

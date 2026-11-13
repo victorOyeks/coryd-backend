@@ -30,6 +30,18 @@ public class OpsReportService {
 
     private final NamedParameterJdbcTemplate jdbc;
 
+    /** The export cap - MAX_CSV_ROWS; lowered only by tests. */
+    private int maxCsvRows = MAX_CSV_ROWS;
+
+    public int maxCsvRows() {
+        return maxCsvRows;
+    }
+
+    /** Tests only. */
+    public void maxCsvRows(int rows) {
+        this.maxCsvRows = rows;
+    }
+
     public record Preview(String report, String title, LocalDate from, LocalDate to, String timezone, List<String> columns,
                           List<List<Object>> rows, long totalRows, boolean truncated) {
     }
@@ -49,9 +61,9 @@ public class OpsReportService {
         return n == null ? 0 : n;
     }
 
-    /** Writes the header and at most MAX_CSV_ROWS rows; returns how many rows were written. */
+    /** Writes the header and at most maxCsvRows rows; returns how many rows were written. */
     public int csv(TripReports report, LagosRange range, Writer out) {
-        MapSqlParameterSource p = params(range).addValue("limit", MAX_CSV_ROWS);
+        MapSqlParameterSource p = params(range).addValue("limit", maxCsvRows);
         int[] written = {0};
         try {
             out.write(Csv.line(new ArrayList<>(report.columns())));

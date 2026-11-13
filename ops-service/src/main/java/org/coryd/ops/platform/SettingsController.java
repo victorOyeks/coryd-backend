@@ -50,7 +50,15 @@ public class SettingsController {
         if (body == null) {
             PlatformRequests.requireReason(null);
         }
-        return relay(client.send(PlatformClient.Service.TRIP, HttpMethod.PUT, BASE + "/" + key, null, body.checked()));
+        PlatformRequests.SettingUpdate checked = body.checked();
+        // ISO-8601 on the wire, whatever this client's JSON settings would do with an Instant.
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("value", checked.value());
+        out.put("reason", checked.reason());
+        if (checked.effectiveFrom() != null) {
+            out.put("effectiveFrom", checked.effectiveFrom().toString());
+        }
+        return relay(client.send(PlatformClient.Service.TRIP, HttpMethod.PUT, BASE + "/" + key, null, out));
     }
 
     @PostMapping("/{key}/cancel-scheduled")
