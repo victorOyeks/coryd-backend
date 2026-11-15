@@ -219,6 +219,56 @@ class RiderIndexIntegrationTest {
     }
 
     @Test
+    void twoRefreshesOfTheSameRiderAtOnceBothSucceedAndLeaveOneRow() throws Exception {
+        rider("aaaa1111-1", "Emeka", "Okafor", "08053636321", null, null);
+        riderIndexRepository.deleteAll();
+        // Both look the rider up before either writes - the moment the old save-or-insert raced into the primary key.
+        java.util.concurrent.CyclicBarrier bothLooked = new java.util.concurrent.CyclicBarrier(2);
+        org.mockito.Mockito.doAnswer(inv -> {
+            try {
+                bothLooked.await(3, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                // A writer that already holds the row lock makes the other wait - nothing to line up.
+            }
+            return List.of(contacts.get("aaaa1111-1"));
+        }).when(identityServiceClient).contacts(any());
+
+        CompletableFuture<Void> a = CompletableFuture.runAsync(() -> index.refresh("aaaa1111-1"));
+        CompletableFuture<Void> b = CompletableFuture.runAsync(() -> index.refresh("aaaa1111-1"));
+        CompletableFuture.allOf(a, b).get(30, java.util.concurrent.TimeUnit.SECONDS);
+
+        assertThat(riderIndexRepository.count()).isEqualTo(1);
+        assertThat(index.rider("aaaa1111-1").phone()).isEqualTo("08053636321");
+    }
+
+    @Test
+    void aRiderWhoseRowFailsDoesNotStopTheBackfillOrTheRebuild() {
+        for (int i = 0; i < 3; i++) {
+            String id = "rider-" + i;
+            contacts.put(id, new IdentityServiceClient.Contact(id, "0802" + i, null, null, null, Set.of("RIDER")));
+            riderProfileRepository.save(RiderProfile.builder().userId(id).firstName("Rider").lastName(String.valueOf(i)).build());
+        }
+        riderIndexRepository.deleteAll();
+        jdbcTemplate.execute("""
+                create or replace function profile.test_refuse_rider_1() returns trigger language plpgsql as $$
+                begin
+                    if new.rider_id = 'rider-1' then raise exception 'refused for the test'; end if;
+                    return new;
+                end $$""");
+        jdbcTemplate.execute("create trigger test_refuse_rider_1 before insert or update on profile.rider_index"
+                + " for each row execute function profile.test_refuse_rider_1()");
+        try {
+            assertThat(jobs.backfill()).isEqualTo(2);
+            assertThat(riderIndexRepository.findAll()).extracting(r -> r.getRiderId()).containsExactlyInAnyOrder("rider-0", "rider-2");
+            assertThat(jobs.rebuildAll()).as("the rider after the failing one is still rebuilt").isEqualTo(2);
+        } finally {
+            jdbcTemplate.execute("drop trigger if exists test_refuse_rider_1 on profile.rider_index");
+            jdbcTemplate.execute("drop function if exists profile.test_refuse_rider_1()");
+        }
+        assertThat(jobs.backfill()).as("picked up once it can be written").isEqualTo(1);
+    }
+
+    @Test
     void anUnknownRiderIsNotFound() {
         assertThatThrownBy(() -> index.rider("nope")).isInstanceOf(ResourceNotFoundException.class).hasMessage("Rider not found");
     }
