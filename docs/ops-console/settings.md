@@ -28,8 +28,21 @@ straight away or at a time you choose, every service picks it up within seconds,
 | `pricing.fare-tolerance-percent` | PRICING | DECIMAL | % | 0 – 100 | `PRICING_FARE_TOLERANCE_PERCENT` (0) | trip-service: pricing monitor outliers (`GET /ops/money/pricing`) |
 | `documents.expiry-reminder-days` | DOCUMENTS | INTEGER | days | 7 – 60 | `DOCUMENT_EXPIRY_REMINDER_DAYS` (14) | profile-service: first expiry reminder, the tracker's "expiring soon" window, who "Notify" may remind |
 | `documents.final-reminder-days` | DOCUMENTS | INTEGER | days | 1 – 7 | `DOCUMENT_EXPIRY_FINAL_REMINDER_DAYS` (3) | profile-service: last expiry reminder. Must be fewer days than the first reminder. |
+| `onboarding.reminders-enabled` | ONBOARDING | BOOLEAN | | true / false | `ONBOARDING_REMINDERS_ENABLED` (true) | notification-service: daily onboarding reminders ([onboarding-reminders.md](onboarding-reminders.md)) |
+| `onboarding.reminder-time` | ONBOARDING | TIME_OF_DAY | Lagos time | 00:00 – 23:59 | `ONBOARDING_REMINDER_TIME` (08:00) | notification-service: when they go out (never inside quiet hours - waits for them to end) |
+| `onboarding.reminder-daily-days` | ONBOARDING | INTEGER | days | 1 – 60 | `ONBOARDING_REMINDER_DAILY_DAYS` (14) | notification-service: reminded every day for this many days after sign-up / last progress |
+| `onboarding.reminder-then-every-days` | ONBOARDING | INTEGER | days | 1 – 30 | `ONBOARDING_REMINDER_EVERY_DAYS` (3) | notification-service: then every this many days, until they finish |
+| `verification.digest-enabled` | NOTIFICATIONS | BOOLEAN | | true / false | `VERIFICATION_DIGEST_ENABLED` (true) | notification-service: verification officers' morning digest email |
+| `verification.digest-time` | NOTIFICATIONS | TIME_OF_DAY | Lagos time | 00:00 – 23:59 | `VERIFICATION_DIGEST_TIME` (08:00) | notification-service: when the digest goes out |
+| `verification.digest-highlight-days` | NOTIFICATIONS | INTEGER | days | 1 – 30 | `VERIFICATION_DIGEST_HIGHLIGHT_DAYS` (3) | notification-service: rows waiting longer than this are highlighted |
+| `verification.digest-extra-recipients` | NOTIFICATIONS | EMAIL_LIST | addresses | at most 10 | `VERIFICATION_DIGEST_EXTRA_RECIPIENTS` (none) | notification-service: also send the digest to these addresses |
 
 - **Values travel as strings** in one spelling: `"5"`, `"7.5"`, `"5,15,30"`. Decimals: at most 2 places. Lists are sorted and de-duplicated for you.
+- **Types** (`type`): `INTEGER`, `DECIMAL`, `INTEGER_LIST`, and (onboarding reminders, 2026-11-15) `BOOLEAN` (`"true"` / `"false"`;
+  yes/no/on/off/1/0 accepted on the way in - show a switch), `TIME_OF_DAY` (`"08:00"`, 24-hour, Lagos time; `"8:00"` accepted -
+  show a time picker), `EMAIL_LIST` (lower-case addresses, sorted, de-duplicated, comma-separated, at most 10, or `"none"` for no
+  addresses - show a list of address chips; send `"none"` to clear it). For these three `min` and `max` are `null`.
+  Values are up to 1000 characters (coryd:170 widened the columns from 200).
 - **`legal: true`** (commission, late fee, free window): the value is in the published Terms of Service. Show the warning the
   PRD asks for, and prefer scheduling. The server adds a `warnings` entry to the response.
 - **Default** = what the service uses when ops has never set a value, or after a reset. It's the env var the service always
