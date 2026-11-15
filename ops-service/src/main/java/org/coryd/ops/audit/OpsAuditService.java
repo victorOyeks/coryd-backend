@@ -46,7 +46,7 @@ import java.util.stream.Stream;
  *
  * Correct for any page size because every row of the true top {@code size} must be in its own source's top
  * {@code size}. Cost: up to sources x size rows read per page. No total count (it would mean counting four tables on
- * every filter change). Rows written while paging can be missed if they're older than the cursor (they aren't - audit
+ * every filter change - five tables). Rows written while paging can be missed if they're older than the cursor (they aren't - audit
  * rows are written at "now").
  */
 @Service
@@ -73,7 +73,8 @@ public class OpsAuditService {
                     Set.of("BOOKING", "FARE_HOLD", "SETTLEMENT", "DRIVER", "MONEY_REQUEST", "PAYOUT_ACCOUNT")),
             new Source(OpsAuditClient.PROFILE, Set.of(OpsAuditCategory.VERIFICATION, OpsAuditCategory.PRIVACY), Set.of("VERIFICATION", "ACCOUNT")),
             new Source(OpsAuditClient.TRIP, Set.of(OpsAuditCategory.TRIPS, OpsAuditCategory.SAFETY),
-                    Set.of("ROUTE", "BOOKING", "SOS", "ISSUE", "RATING")));
+                    Set.of("ROUTE", "BOOKING", "SOS", "ISSUE", "RATING")),
+            new Source(OpsAuditClient.NOTIFICATION, Set.of(OpsAuditCategory.NOTIFICATIONS), Set.of("BROADCAST", "REPORT", "NOTIFICATION_JOB")));
 
     public static final Set<String> TARGET_TYPES = SOURCES.stream().flatMap(s -> s.targetTypes().stream())
             .collect(Collectors.toCollection(java.util.TreeSet::new));

@@ -25,22 +25,25 @@ public class OpsAuditClient {
     public static final String PROFILE = "PROFILE";
     public static final String TRIP = "TRIP";
     public static final String PAYMENT = "PAYMENT";
+    public static final String NOTIFICATION = "NOTIFICATION";
 
     private final Map<String, RestClient> clients = new LinkedHashMap<>();
     private final Map<String, String> serviceNames = Map.of(IDENTITY, "identity-service", PROFILE, "profile-service",
-            TRIP, "trip-service", PAYMENT, "payment-service");
+            TRIP, "trip-service", PAYMENT, "payment-service", NOTIFICATION, "notification-service");
     private final ObjectMapper objectMapper;
 
     public OpsAuditClient(@Value("${services.identity.url}") String identityUrl,
                           @Value("${services.profile.url}") String profileUrl,
                           @Value("${services.trip.url}") String tripUrl,
                           @Value("${services.payment.url}") String paymentUrl,
+                          @Value("${services.notification.url}") String notificationUrl,
                           @Value("${services.internal.api-key}") String internalApiKey,
                           JwtUtil jwtUtil, ObjectMapper objectMapper) {
         clients.put(IDENTITY, OpsRestClients.build(identityUrl, internalApiKey, jwtUtil));
         clients.put(PROFILE, OpsRestClients.build(profileUrl, internalApiKey, jwtUtil));
         clients.put(TRIP, OpsRestClients.build(tripUrl, internalApiKey, jwtUtil));
         clients.put(PAYMENT, OpsRestClients.build(paymentUrl, internalApiKey, jwtUtil));
+        clients.put(NOTIFICATION, OpsRestClients.build(notificationUrl, internalApiKey, jwtUtil));
         this.objectMapper = objectMapper;
     }
 

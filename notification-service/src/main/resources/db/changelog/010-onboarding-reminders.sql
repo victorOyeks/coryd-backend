@@ -39,3 +39,7 @@ CREATE TABLE IF NOT EXISTS notification.daily_job_runs (
 -- The bell feed's onboarding reminders carry the step to open (and for which role), as the push does.
 ALTER TABLE notification.user_notifications ADD COLUMN IF NOT EXISTS step VARCHAR(30);
 ALTER TABLE notification.user_notifications ADD COLUMN IF NOT EXISTS role VARCHAR(10);
+
+--changeset coryd:174-notification-ops-audit-feed-index
+-- The unified audit feed pages ops_audit_log newest first by (created_at desc, id desc), as every other source.
+CREATE INDEX IF NOT EXISTS idx_notification_ops_audit_feed ON notification.ops_audit_log (created_at DESC, id DESC);
