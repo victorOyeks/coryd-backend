@@ -127,6 +127,15 @@ token unchanged) updates the existing row instead of failing on the unique
 constraint, and a different account logging into the same physical device
 correctly re-points that token to the new user.
 
+Both endpoints act only for the signed-in user: `{userId}` must be the user in
+the bearer token (or the call must come from another CoRyd service with the
+internal API key). Any other id gets
+`403 You can only manage your own notifications` and nothing is registered or
+removed - so a token can only ever move to the account that is signed in on
+that phone now, never onto someone else's account (`NotificationOwnership`).
+The bell (`/notifications/...`) and preferences (`/preferences/users/{userId}`)
+endpoints follow the same rule.
+
 ---
 
 ## Client (FE) Integration
@@ -143,7 +152,11 @@ Content-Type: application/json
 }
 ```
 
+`{userId}` is the signed-in user's own id. Another id gets `403`.
+
 ### Step 2 - Remove token on logout
+
+Call it before clearing the session - it needs the user's own bearer token.
 
 ```
 DELETE /notification/device-tokens/users/{userId}?fcmToken=<fcm_device_token>

@@ -53,6 +53,7 @@ Priority: **Must** means the app is wrong or confusing without the change. **Sho
 | Money | Ops refunds reuse `REFUND_ISSUED` and `DRIVER_OWED_CHANGED`. A debt adjustment adds an `OPS_ADJUSTMENT` entry to the driver's owed history with no push | Render `OPS_ADJUSTMENT`, with a signed amount and a note | Should |
 | Broadcasts | New push `BROADCAST`, with `referenceId` set to the broadcast id. The bell entry has `eventType: BROADCAST` | Open the bell. Make sure the announcements switch writes `promotionalOptIn` | **Must** (handle the type) |
 | Privacy | `GET /profile/drivers/{id}/documents` and `GET /payment/payments/bookings/{id}` now return `403` for other people | Nothing if the app only reads its own. Don't treat these 403s as sign-out | Nice |
+| Privacy | The bell, preferences and device-token endpoints (`/notification/notifications/…`, `/notification/preferences/users/{userId}`, `/notification/device-tokens/users/{userId}`) now act only for the signed-in user: another user's id gets `403 You can only manage your own notifications`, another user's notification id gets `404`. New `GET /notification/preferences/users/{userId}` reads the switches | Always send the signed-in user's own id (from the token you're using, not a cached one). Read the switches with the new GET | Should |
 | Settings | Ops can change the booking window, cancellation fee and free-cancellation window, document-reminder days and commission at runtime | Don't hard-code 10 minutes, 25%, 2 hours, 14 days or 5%. Read `bookableUntil`, `holdExpiresAt` and the commission-rate endpoint | Should |
 | WhatsApp | A WhatsApp OTP resend falls back to SMS while WhatsApp is off. `whatsappOptIn` exists as a preference | Optional "WhatsApp messages" switch | Nice |
 
@@ -81,6 +82,8 @@ Every push and bell entry follows the same rules. Most pushes in this guide are 
 ### Bell entry: `GET /notification/notifications/{userId}`
 
 Newest first. Unread count: `GET /notification/notifications/{userId}/unread-count`. Mark read: `POST /notification/notifications/{notificationId}/read`. Mark all read: `POST /notification/notifications/users/{userId}/read-all`.
+
+`{userId}` must be the signed-in user's own id, and a notification can only be marked read by its owner. See [section 12](#12-privacy-and-security).
 
 ```json
 {
@@ -535,7 +538,8 @@ PUT /notification/preferences/users/{userId}?promotionalOptIn=false
 ```
 
 Either flag can be sent alone; one you don't send keeps its value. Both default to `true`. The response is the current preferences: `{ userId, promotionalOptIn, whatsappOptIn, … }`.
-- **There is no GET.** To show the switches' current state, call the PUT with no parameters. It returns the stored values (and creates the defaults if there's no row).
+- **To show the switches' current state, use the new `GET /notification/preferences/users/{userId}`.** It returns the same shape without changing anything (the defaults, both `true`, if the person has never set them; nothing is stored). The old workaround, a PUT with no parameters, still works.
+- `{userId}` must be the signed-in user's own id, or the call gets `403` (section 12).
 - The onboarding reminders (section 3) and every trip, verification and account notification **ignore** this switch.
 
 ---
@@ -563,8 +567,24 @@ Platform Settings in the console change these values at runtime, and every servi
 - **New `403`s for reading other people's data:**
   - `GET /profile/drivers/{driverId}/documents` returns `403 You can only view your own documents` unless it's the driver themself.
   - `GET /payment/payments/bookings/{bookingId}` returns `403` as in section 9.
+  - **Notifications, preferences and device tokens act only for the signed-in user.** Before this, any signed-in user could read another person's bell, change their switches, or register their own phone's push token on someone else's account (and so receive that person's pushes). Now the `{userId}` in the path must be the user in the token:
 
-  Both are `403`, deliberately not `401`, so the apps don't treat them as sign-outs.
+    | Endpoint | Someone else's id |
+    |---|---|
+    | `GET /notification/notifications/{userId}` | `403 You can only manage your own notifications` |
+    | `GET /notification/notifications/{userId}/unread-count` | `403` (same message) |
+    | `POST /notification/notifications/users/{userId}/read-all` | `403` (same message) |
+    | `POST /notification/notifications/{notificationId}/read` | `404 Notification not found` when the notification is someone else's, exactly as for an id that doesn't exist |
+    | `GET` (new) and `PUT /notification/preferences/users/{userId}` | `403` (same message) |
+    | `POST /notification/device-tokens/users/{userId}` | `403` (same message); the token is not registered |
+    | `DELETE /notification/device-tokens/users/{userId}?fcmToken=…` | `403` (same message); nothing is removed |
+
+    - **What the apps must do:** always use the id of the user whose access token you're sending. A rider who also drives has one token per app, but the user id is the same, so nothing changes there. If the app caches a user id across sign-ins, refresh it when someone else signs in on the phone.
+    - **Same phone, new account still works.** When B signs in on a phone where A was signed in, registering the phone's FCM token for B (with B's token and B's id) moves the token from A to B, as before. Removing the token on sign-out is still recommended.
+    - **The delete must run before the session is cleared.** It needs the user's own token, so call it while still signed in (a call after sign-out gets `401`).
+    - Ops admins can't use these endpoints for other people either; the console never needed them.
+
+  All of these are `403` (or `404`), deliberately not `401`, so the apps don't treat them as sign-outs.
 - **Ops-only security changes don't touch rider or driver tokens:**
   - two-factor sign-in;
   - 15-minute access tokens and 12-hour sessions;
@@ -674,7 +694,7 @@ Platform Settings in the console change these values at runtime, and every servi
 | `resubmissionRequests[]` | `GET /profile/drivers/{id}/verification-status` | **Must** | Request resubmission, then re-upload: entry appears then clears |
 | `blockedReason` after a resubmission or vehicle edit | `GET /trip/routes/drivers/me/posting-eligibility` | **Must** | Posting blocked with the right screen |
 | `OPS_ADJUSTMENT` (signed `amount`, `note`) | `…/owed/history`, `…/statement` | Should | Credit and debit both render |
-| `promotionalOptIn`, `whatsappOptIn` | `PUT /notification/preferences/users/{userId}` | Should / Nice | Switch off announcements: a non-urgent broadcast is skipped, an urgent one arrives |
+| `promotionalOptIn`, `whatsappOptIn` | `GET` (read) / `PUT` (change) `/notification/preferences/users/{userId}` | Should / Nice | Switch off announcements: a non-urgent broadcast is skipped, an urgent one arrives |
 | `bookableUntil`, `holdExpiresAt` | search, ride screen, booking | Should | Ops changes `booking.grace-minutes`; the app follows without a release |
 
 ### Error messages to handle
@@ -688,13 +708,16 @@ Platform Settings in the console change these values at runtime, and every servi
 | `Too many attempts - contact CoRyd support to verify your identity` / `You've used all your NIN tries - contact CoRyd support to finish checking your NIN` | 400 | start the NIN check | show + support | Should |
 | `Your vehicle is still being reviewed - you can post routes once it is approved` / `Your government ID is still being reviewed…` / `Your document upload window has closed…` | 400 | post route | show as-is (eligibility should have caught it) | Should |
 | `You can only view your own documents` / `You can only view payments for your own bookings` | 403 | other people's data | generic error; **not** a sign-out | Nice |
+| `You can only manage your own notifications` | 403 | bell, preferences, device-token calls with another user's id | **not** a sign-out; it means the app sent a stale or wrong user id - fix the id | Should |
+| `Notification not found` | 404 | mark read on an id that isn't the user's | drop the entry and refetch the bell | Nice |
 
 ### Behaviour
 
 - [ ] **Must:** a 401 with one of the two session messages clears the session (including the biometric token) and doesn't refresh.
 - [ ] **Must:** the live-trip and booking screens cope with `BOOKING_CANCELLED` at any stage, including a rider already aboard.
 - [ ] **Must:** profile, verification and identity screens refetch on resume and on the pushes above.
-- [ ] **Should:** the announcements switch writes `promotionalOptIn`; its state is read via the parameterless PUT.
+- [ ] **Should:** the announcements switch writes `promotionalOptIn`; its state is read with `GET /notification/preferences/users/{userId}`.
+- [ ] **Should:** bell, preferences and device-token calls use the signed-in user's own id; the token is registered after sign-in and removed before the session is cleared.
 - [ ] **Should:** no hard-coded booking window, fee percent, free window or commission.
 - [ ] **Should:** expiry date required when uploading insurance or roadworthiness.
 - [ ] **Nice:** WhatsApp OTP copy doesn't promise WhatsApp; optional WhatsApp switch.
@@ -713,6 +736,6 @@ The code is right in every case below; this guide follows it.
 4. **Posting while an insurance or roadworthiness resubmission is open.** [verification-queue.md](../ops-console/verification-queue.md) §13 says "an approved driver can't post until the new upload is approved". In code that holds for the licence and vehicle. For insurance and roadworthiness, trip-service applies the document-grace rule: a driver still inside the 30-day window (or who has never posted) can keep posting.
 5. **Copy not listed in onboarding-reminders.md.** The `VEHICLE` bodies ("CoRyd asked you to update your vehicle registration. Do it now…", "Your vehicle registration wasn't accepted. Update your vehicle details…") and the licence `RETRY` body ("…Retake it…") aren't in the doc. This guide quotes `OnboardingReminderCopy`.
 6. **Manual refund push wording.** [money.md](../ops-console/money.md) §11 is accurate that the existing "…for a cancelled booking." copy is reused. Note that it is sent even when ops refunds part of a booking that stays active.
-7. **Preferences can't be read with a GET.** [whatsapp-notifications.md](../whatsapp-notifications.md) and [broadcasts.md](../ops-console/broadcasts.md) describe the switches, but `NotificationPreferencesController` has only `PUT /preferences/users/{userId}`. Calling it with no parameters is the only way to read the current values.
+7. **Preferences can now be read with a GET.** `NotificationPreferencesController` used to have only `PUT /preferences/users/{userId}`; it now also has `GET /preferences/users/{userId}`, which reads the switches without changing them.
 8. **Deleted account.** [accounts.md](../ops-console/accounts.md) §9 says sign-in "fails, since the account is gone". The exact responses are refresh `400 Invalid or expired refresh token` and login `400 Incorrect phone number or password`.
 9. **Older "only your own" checks still answer `401`, not `403`.** [security.md](../ops-console/security.md) §7 notes that `You can only view your own payments` and `You can only view your own earnings` remain `401` (`PaymentHistoryService`, `EarningsService`). Apps that sign out on every 401 could sign someone out on a bad id. Match on the two session messages instead.

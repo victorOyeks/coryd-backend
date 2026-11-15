@@ -147,7 +147,8 @@ PUT /notification/preferences/users/{userId}?whatsappOptIn=false
 ```
 
 `promotionalOptIn` and `whatsappOptIn` are both optional on this endpoint. A flag you don't send keeps its
-value. Turning WhatsApp off only changes the channel: the same message still goes by SMS. Trip-critical
+value. `GET /notification/preferences/users/{userId}` reads both switches without changing them. Both calls
+act only for the signed-in user (another id gets `403 You can only manage your own notifications`). Turning WhatsApp off only changes the channel: the same message still goes by SMS. Trip-critical
 messages can't be switched off (R-603/D-603).
 
 ## Swapping provider
