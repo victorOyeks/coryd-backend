@@ -1,11 +1,17 @@
 package org.coryd.common.instrumentation;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 
+import java.io.IOException;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
@@ -65,6 +71,75 @@ public final class SensitiveDataMasker {
         } catch (Exception e) {
             return maskPlainText(json);
         }
+    }
+
+    /**
+     * maskJsonBody for a body that may be large: at most maxChars of the masked result, followed by a note of how much was
+     * left out. The same fields are masked the same way - a JSON body is streamed token by token through the same field
+     * rules (only a string value directly under a sensitive field name is masked, as in maskJsonBody), and the read stops
+     * once the output is full, so a large body costs no more than its first maxChars. A body that isn't JSON is masked as
+     * plain text, then cut. A JSON body cut short (a request held only in part) keeps what was masked before the cut.
+     * maxChars of zero or less means no limit - maskJsonBody over the whole body.
+     */
+    public static String maskBody(byte[] body, int maxChars) {
+        if (body == null || body.length == 0) {
+            return "";
+        }
+        if (maxChars <= 0) {
+            return maskJsonBody(new String(body, StandardCharsets.UTF_8));
+        }
+        StringWriter out = new StringWriter();
+        boolean wroteAny = false;
+        boolean full = false;
+        try (JsonParser parser = MAPPER.getFactory().createParser(body)) {
+            JsonGenerator generator = MAPPER.getFactory().createGenerator(out).useDefaultPrettyPrinter();
+            try {
+                JsonToken token;
+                while ((token = parser.nextToken()) != null) {
+                    if (token == JsonToken.VALUE_STRING) {
+                        String name = parser.currentName();
+                        String value = parser.getText();
+                        generator.writeString(name != null && parser.getParsingContext().inObject() && isSensitiveField(name)
+                                ? maskByFieldType(name, value) : value);
+                    } else {
+                        generator.copyCurrentEvent(parser);
+                    }
+                    wroteAny = true;
+                    generator.flush();
+                    if (out.getBuffer().length() >= maxChars) {
+                        full = true;
+                        break;
+                    }
+                }
+            } finally {
+                generator.close();
+            }
+        } catch (IOException | RuntimeException e) {
+            if (!wroteAny) {
+                return plainText(body, maxChars);
+            }
+            // Not well-formed past this point (or held only in part): keep what was masked before it, nothing after.
+            full = true;
+        }
+        String masked = out.toString();
+        if (!full && masked.length() <= maxChars) {
+            return masked;
+        }
+        return cut(masked, maxChars) + "\n... [truncated: " + body.length + " bytes in all]";
+    }
+
+    /** A body that isn't JSON: masked as plain text over twice what's shown (so a value straddling the cut is masked whole), then cut. */
+    private static String plainText(byte[] body, int maxChars) {
+        int take = (int) Math.min(body.length, 2L * maxChars);
+        String masked = maskPlainText(new String(body, 0, take, StandardCharsets.UTF_8));
+        if (take == body.length && masked.length() <= maxChars) {
+            return masked;
+        }
+        return cut(masked, maxChars) + "\n... [truncated: " + body.length + " bytes in all]";
+    }
+
+    private static String cut(String text, int maxChars) {
+        return text.length() <= maxChars ? text : text.substring(0, maxChars);
     }
 
     public static String maskHeaderValue(String headerName, String value) {
