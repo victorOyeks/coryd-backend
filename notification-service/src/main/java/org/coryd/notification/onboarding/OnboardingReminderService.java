@@ -25,7 +25,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -34,7 +33,8 @@ import java.util.stream.Collectors;
  * ReminderCadence, until they finish. Each person is claimed for the Lagos day in one statement before anything is sent
  * (notification.onboarding_reminders), so a restart, a second run or a second instance never reminds anyone twice a day.
  *
- * <p>A dry run works out the same list and sends nothing, records nothing.
+ * <p>Reminders are service messages about the person's own account: the push goes whatever their announcements
+ * (promotional) preference; quiet hours are kept by the scheduler. A dry run works out the same list and sends nothing, records nothing.
  */
 @Slf4j
 @Service
@@ -47,7 +47,7 @@ public class OnboardingReminderService {
 
     /** Someone reminded (or who would be, on a dry run). pushed: devices the push reached; devices: devices on file. */
     public record Reminded(String userId, String role, OnboardingStep step, OnboardingStep.Reason reason, String title, String body,
-                           int reminderNumber, int devices, int pushed, boolean pushSkippedByPreference) {
+                           int reminderNumber, int devices, int pushed) {
     }
 
     /**
@@ -55,7 +55,7 @@ public class OnboardingReminderService {
      * weren't. people: the first 200 reminded.
      */
     public record Run(boolean dryRun, LocalDate day, Instant at, int considered, int reminded, Map<OnboardingReminderPlanner.Outcome, Integer> skipped,
-                      int pushesDelivered, int pushesFailed, int withoutDevice, int pushOptedOut, List<Reminded> people, boolean truncated) {
+                      int pushesDelivered, int pushesFailed, int withoutDevice, List<Reminded> people, boolean truncated) {
     }
 
     private final OnboardingDataClient client;
@@ -98,7 +98,6 @@ public class OnboardingReminderService {
         int delivered = 0;
         int failed = 0;
         int noDevice = 0;
-        int optedOut = 0;
 
         String after = null;
         do {
@@ -114,7 +113,6 @@ public class OnboardingReminderService {
                     .collect(Collectors.toMap(OnboardingDataClient.Status::userId, s -> s, (a, b) -> a));
             List<String> ids = people.stream().map(OnboardingDataClient.Candidate::userId).toList();
             Map<String, LocalDate> lastReminded = lastReminded(ids);
-            Set<String> pushOptOuts = dryRun ? Set.of() : pushOptOuts(ids);
             Map<String, List<DeviceToken>> tokens = devices(ids);
 
             for (OnboardingDataClient.Candidate person : people) {
@@ -133,7 +131,7 @@ public class OnboardingReminderService {
                     }
                     if (reminded.size() < LISTED) {
                         reminded.add(new Reminded(person.userId(), plan.role(), plan.step(), plan.reason(), message.title(), message.body(),
-                                0, theirDevices.size(), 0, false));
+                                0, theirDevices.size(), 0));
                     }
                     continue;
                 }
@@ -144,24 +142,21 @@ public class OnboardingReminderService {
                     continue;
                 }
                 count++;
-                boolean optOut = pushOptOuts.contains(person.userId());
-                int pushed = send(person.userId(), plan, message, optOut ? List.of() : theirDevices);
+                // a service message about their own account - sent whatever their announcements (promotional) preference
+                int pushed = send(person.userId(), plan, message, theirDevices);
                 delivered += pushed;
-                failed += optOut ? 0 : theirDevices.size() - pushed;
+                failed += theirDevices.size() - pushed;
                 if (theirDevices.isEmpty()) {
                     noDevice++;
                 }
-                if (optOut) {
-                    optedOut++;
-                }
                 if (reminded.size() < LISTED) {
                     reminded.add(new Reminded(person.userId(), plan.role(), plan.step(), plan.reason(), message.title(), message.body(),
-                            number, theirDevices.size(), pushed, optOut && !theirDevices.isEmpty()));
+                            number, theirDevices.size(), pushed));
                 }
             }
         } while (after != null);
 
-        Run run = new Run(dryRun, today, now, considered, count, skipped, delivered, failed, noDevice, optedOut, reminded, count > reminded.size());
+        Run run = new Run(dryRun, today, now, considered, count, skipped, delivered, failed, noDevice, reminded, count > reminded.size());
         if (!dryRun && (count > 0 || !actor.system())) {
             Map<String, Object> after2 = new LinkedHashMap<>();
             after2.put("day", today.toString());
@@ -234,12 +229,6 @@ public class OnboardingReminderService {
                     out.put(rs.getString(1), rs.getDate(2).toLocalDate());
                 });
         return out;
-    }
-
-    /** Those who turned announcements (promotional) off - the one opt-out there is. Their reminder still goes in the feed. */
-    private Set<String> pushOptOuts(List<String> ids) {
-        return Set.copyOf(jdbc.queryForList("SELECT user_id FROM notification.notification_preferences WHERE user_id IN (:ids)"
-                + " AND promotional_opt_in = false", new MapSqlParameterSource("ids", ids), String.class));
     }
 
     private Map<String, List<DeviceToken>> devices(List<String> ids) {

@@ -181,11 +181,13 @@ class NotificationDailyJobsIntegrationTest {
         verify(fcm, times(2)).sendPush(eq("rider-nin"), anyString(), eq("You're almost there, Ada"), eq("Verify your NIN to start booking rides."),
                 eq("ONBOARDING_REMINDER"), data.capture());
         assertThat(data.getValue()).containsEntry("step", "NIN").containsEntry("role", "RIDER").containsEntry("reason", "NOT_DONE");
-        verify(fcm, never()).sendPush(eq("rider-optout"), anyString(), anyString(), anyString(), anyString(), anyMap());
-        assertThat(logs.findAll()).filteredOn(l -> l.getChannel() == NotificationChannel.PUSH).hasSize(2)
+        verify(fcm).sendPush(eq("rider-optout"), eq("tok-optout"), anyString(), eq("Verify your NIN to start booking rides."),
+                eq("ONBOARDING_REMINDER"), anyMap());
+        assertThat(logs.findAll()).as("a service message - sent even to someone who turned announcements off")
+                .filteredOn(l -> l.getChannel() == NotificationChannel.PUSH).hasSize(3)
                 .allSatisfy(l -> assertThat(l.getEventType()).isEqualTo("ONBOARDING_REMINDER"));
         assertThat(run.withoutDevice()).as("driver-ins and rider-locked have no phone - feed entry only").isEqualTo(2);
-        assertThat(run.pushOptedOut()).isEqualTo(1);
+        assertThat(run.pushesDelivered()).isEqualTo(3);
 
         assertThat(audit.findAll()).extracting(NotificationOpsAudit::getAction).containsExactly("ONBOARDING_REMINDERS_SENT");
         assertThat(audit.findAll().get(0).getAfterState()).contains("\"reminded\":4");
