@@ -30,6 +30,19 @@ public class FcmService {
 
     public PushResult sendPush(String userId, String fcmToken, String title, String body, String eventType, String referenceId,
                             String routePostId) {
+        java.util.Map<String, String> data = new java.util.LinkedHashMap<>();
+        if (referenceId != null) {
+            data.put("referenceId", referenceId);
+        }
+        if (routePostId != null) {
+            data.put("routePostId", routePostId);
+        }
+        return sendPush(userId, fcmToken, title, body, eventType, data);
+    }
+
+    /** A push whose data carries these fields next to "type" (eventType) - e.g. an onboarding reminder's step and role. */
+    public PushResult sendPush(String userId, String fcmToken, String title, String body, String eventType,
+                               java.util.Map<String, String> data) {
         if (FirebaseApp.getApps().isEmpty()) {
             log.warn("Firebase not initialized - skipping push for userId={}", userId);
             return PushResult.failed("FIREBASE_NOT_INITIALIZED");
@@ -59,11 +72,12 @@ public class FcmService {
                             .build())
                     .putData("type", eventType);
 
-            if (referenceId != null) {
-                builder.putData("referenceId", referenceId);
-            }
-            if (routePostId != null) {
-                builder.putData("routePostId", routePostId);
+            if (data != null) {
+                data.forEach((key, value) -> {
+                    if (key != null && value != null && !"type".equals(key)) {
+                        builder.putData(key, value);
+                    }
+                });
             }
 
             String response = FirebaseMessaging.getInstance().send(builder.build());

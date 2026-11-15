@@ -9,6 +9,8 @@ import java.util.Optional;
 public interface DeviceTokenRepository extends JpaRepository<DeviceToken, String> {
     List<DeviceToken> findByUserId(String userId);
 
+    List<DeviceToken> findByUserIdIn(java.util.Collection<String> userIds);
+
     Optional<DeviceToken> findByFcmToken(String fcmToken);
 
     void deleteByUserIdAndFcmToken(String userId, String fcmToken);

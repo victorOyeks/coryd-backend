@@ -46,6 +46,23 @@ public class EmailService {
         }
     }
 
+    /** One recipient, an HTML body and its plain-text alternative (multipart/alternative) - the verification digest. */
+    public boolean sendHtmlWithText(String to, String subject, String html, String text) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
+            helper.setFrom(fromAddress, fromName);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(text, html);
+            mailSender.send(message);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to send email \"{}\" to {}: {}", subject, to, e.getMessage());
+            return false;
+        }
+    }
+
     /** Same contract as send(), but the body is HTML - used by the ops reports. */
     public boolean sendHtml(List<String> recipients, String subject, String html) {
         if (recipients == null || recipients.isEmpty()) {

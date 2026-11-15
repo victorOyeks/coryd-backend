@@ -46,6 +46,13 @@ public class UserNotification extends BaseEntity {
     /** Set instead of bookingId for notifications about a route rather than one booking. */
     private String routePostId;
 
+    /** Onboarding reminders only: the step the app opens (OnboardingStep - LICENCE, NIN...) and the role it's for. */
+    @Column(length = 30)
+    private String step;
+
+    @Column(length = 10)
+    private String role;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean read = false;

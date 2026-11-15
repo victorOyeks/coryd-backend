@@ -86,6 +86,9 @@ broadcast:
 coryd:
   job-runs:
     schema: notification
+  ops:
+    # The console the verification digest links to.
+    console-url: ${OPS_CONSOLE_URL:https://admin.coryd.ng}
 
 spring.mail:
   host: ${SMTP_HOST:localhost}
@@ -134,6 +137,23 @@ report:
   timezone: ${REPORT_TIMEZONE:Africa/Lagos}
   recipients: ${REPORT_RECIPIENTS:hello@coryd.ng}
   logo-url: ${REPORT_LOGO_URL:}
+
+# The daily jobs (docs/ops-console/onboarding-reminders.md). Ops changes these in Platform Settings; these are the
+# defaults until they do (trip-service shows the same env vars as the defaults).
+onboarding:
+  reminders:
+    enabled: ${ONBOARDING_REMINDERS_ENABLED:true}
+    time: ${ONBOARDING_REMINDER_TIME:08:00}
+    daily-days: ${ONBOARDING_REMINDER_DAILY_DAYS:14}
+    every-days: ${ONBOARDING_REMINDER_EVERY_DAYS:3}
+verification:
+  digest:
+    enabled: ${VERIFICATION_DIGEST_ENABLED:true}
+    time: ${VERIFICATION_DIGEST_TIME:08:00}
+    highlight-days: ${VERIFICATION_DIGEST_HIGHLIGHT_DAYS:3}
+    extra-recipients: ${VERIFICATION_DIGEST_EXTRA_RECIPIENTS:}
+notification-jobs:
+  check-ms: ${NOTIFICATION_JOBS_CHECK_MS:60000}
 
 # NDPC registration tiers: ops (REPORT_RECIPIENTS) is emailed once when the number of people we hold data
 # about nears a tier (warn-percent of it) and once when it reaches it. Tiers/fees are in NdpcThresholdProperties.
