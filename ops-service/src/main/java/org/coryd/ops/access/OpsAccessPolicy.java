@@ -81,6 +81,8 @@ public final class OpsAccessPolicy {
             new Rule(ANY, "/settings/**", OpsPermission.PLATFORM_MANAGE),
             new Rule(ANY, "/broadcasts/**", OpsPermission.PLATFORM_MANAGE),
             new Rule(ANY, "/system/**", OpsPermission.PLATFORM_MANAGE),
+            // running the daily onboarding reminders / verification digest by hand (onboarding-reminders.md)
+            new Rule(ANY, "/notifications/**", OpsPermission.PLATFORM_MANAGE),
 
             new Rule(GET, "/sos/**", OpsPermission.SAFETY_VIEW),
             new Rule(GET, "/reports/**", OpsPermission.SAFETY_VIEW),

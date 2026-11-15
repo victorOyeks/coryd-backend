@@ -58,6 +58,8 @@ class OpsAccessPolicyTest {
         assertThat(OpsAccessPolicy.required("GET", "/reports/analytics/revenue")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
         assertThat(OpsAccessPolicy.required("GET", "/reports/analytics/revenue.csv")).isEqualTo(OpsPermission.INSIGHTS_VIEW);
         assertThat(OpsAccessPolicy.required("POST", "/reports/emailed/daily/send")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        assertThat(OpsAccessPolicy.required("POST", "/notifications/onboarding-reminders/run")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
+        assertThat(OpsAccessPolicy.required("POST", "/notifications/verification-digest/run")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
         assertThat(OpsAccessPolicy.required("GET", "/settings")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
         assertThat(OpsAccessPolicy.required("PUT", "/settings/commission.percent")).isEqualTo(OpsPermission.PLATFORM_MANAGE);
         assertThat(OpsAccessPolicy.required("POST", "/broadcasts")).isEqualTo(OpsPermission.PLATFORM_MANAGE);

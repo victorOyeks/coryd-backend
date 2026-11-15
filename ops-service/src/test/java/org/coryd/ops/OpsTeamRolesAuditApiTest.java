@@ -146,7 +146,9 @@ class OpsTeamRolesAuditApiTest {
                 new Call(() -> postJson("/ratings/r-1/hide", "{\"reason\":\"x\"}"), List.of(S, P)),
                 new Call(() -> get("/team"), List.of(S)),
                 new Call(() -> get("/audit"), List.of(S)),
-                new Call(() -> get("/team/roles"), List.of(S, V, F, P)));
+                new Call(() -> get("/team/roles"), List.of(S, V, F, P)),
+                new Call(() -> post("/notifications/onboarding-reminders/run").param("dryRun", "true"), List.of(S)),
+                new Call(() -> post("/notifications/verification-digest/run").param("dryRun", "false"), List.of(S)));
         for (Call call : calls) {
             for (OpsRole role : OpsRole.values()) {
                 requests.clear();

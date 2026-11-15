@@ -330,6 +330,39 @@ class OpsPlatformApiTest {
                 .andExpect(jsonPath("$.data.kafka.reachable").value(false));
     }
 
+    @Test
+    void theDailyJobsRunByHandGoToNotificationServiceWithTheAdminsTokenAndADryRunByDefault() throws Exception {
+        String admin = bearer(UserRole.OPS_ADMIN, "ops-ada");
+        replies.put("/notification/internal/ops/notifications/onboarding-reminders/run",
+                new Reply(200, "{\"success\":true,\"message\":\"Dry run - nothing sent\",\"data\":{\"dryRun\":true,\"reminded\":3}}"));
+        mockMvc.perform(post("/notifications/onboarding-reminders/run").header("Authorization", admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Dry run - nothing sent"))
+                .andExpect(jsonPath("$.data.reminded").value(3));
+        assertThat(requests).hasSize(1);
+        assertThat(requests.get(0).uri()).isEqualTo("/notification/internal/ops/notifications/onboarding-reminders/run?dryRun=true");
+        assertThat(requests.get(0).auth()).isEqualTo(admin);
+
+        requests.clear();
+        replies.put("/notification/internal/ops/notifications/onboarding-reminders/run",
+                new Reply(400, "{\"success\":false,\"message\":\"It's quiet hours - reminders are pushes and wait until they end.\"}"));
+        mockMvc.perform(post("/notifications/onboarding-reminders/run").param("dryRun", "false").header("Authorization", admin))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("It's quiet hours - reminders are pushes and wait until they end."));
+        assertThat(requests.get(0).uri()).endsWith("?dryRun=false");
+
+        requests.clear();
+        mockMvc.perform(post("/notifications/verification-digest/run").param("dryRun", "false").header("Authorization", admin))
+                .andExpect(status().isOk());
+        assertThat(requests.get(0).path()).isEqualTo("/notification/internal/ops/notifications/verification-digest/run");
+
+        requests.clear();
+        mockMvc.perform(post("/notifications/verification-digest/run")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/notifications/verification-digest/run").header("Authorization", bearer(UserRole.DRIVER, "d-1")))
+                .andExpect(status().isForbidden());
+        assertThat(requests).isEmpty();
+    }
+
     private String bearer(UserRole role, String userId) {
         return "Bearer " + jwtUtil.generateToken(userId, "08000000000", "Ada", "Ops", role);
     }
