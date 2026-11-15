@@ -402,6 +402,33 @@ public class VerificationAggregationService {
                              List<VerificationQueueItem.Entry> entries, VerificationQueueTab queueTab, Instant waitingSince) {
     }
 
+    /**
+     * The four items of each of these drivers as they stand, in a handful of queries however many drivers - the onboarding
+     * reminders' batch view of what currentItems(driverId) gives for one. A driver with no records gets four PENDING items.
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public Map<String, List<VerificationQueueItem.Entry>> currentItems(java.util.Collection<String> driverIds) {
+        List<String> ids = driverIds.stream().distinct().toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, DriverProfile> profiles = driverProfileRepository.findByUserIdIn(ids).stream()
+                .collect(Collectors.toMap(DriverProfile::getUserId, p -> p, (a, b) -> a));
+        Map<String, List<Vehicle>> vehicles = vehicleRepository.findByDriverIdIn(ids).stream()
+                .collect(Collectors.groupingBy(Vehicle::getDriverId));
+        Map<String, List<DriverDocument>> documents = driverDocumentRepository.findByDriverIdIn(ids).stream()
+                .collect(Collectors.groupingBy(DriverDocument::getDriverId));
+        Map<String, org.coryd.profile.entity.SmileIdCheck> licenceChecks = smileIdCheckRepository
+                .findByCheckTypeAndUserIdIn(org.coryd.profile.entity.SmileIdCheckType.DRIVERS_LICENCE, ids).stream()
+                .collect(Collectors.toMap(org.coryd.profile.entity.SmileIdCheck::getUserId, c -> c, (a, b) -> a));
+        Map<String, List<VerificationQueueItem.Entry>> out = new LinkedHashMap<>();
+        for (String id : ids) {
+            out.put(id, entries(profiles.get(id), primary(vehicles.getOrDefault(id, List.of())), documents.getOrDefault(id, List.of()),
+                    licenceChecks.get(id)));
+        }
+        return out;
+    }
+
     /** Queue rows for these drivers only - the page being shown. */
     private List<VerificationQueueItem> queueRows(List<String> ids) {
         if (ids.isEmpty()) {
