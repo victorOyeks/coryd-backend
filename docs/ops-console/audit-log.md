@@ -23,11 +23,12 @@ changed an admin's role — merged from the audit tables each service already ke
 | `SAFETY` | trip (`ops_audit_log`) | `SOS_ACKNOWLEDGED`, `SOS_NOTE`, `SOS_ESCALATED`, `SOS_RESOLVED`, `REPORT_ASSIGNED`, `REPORT_NOTE`, `REPORT_RESOLVED`, `REPORT_DISMISSED`, `RATING_HIDDEN`, `RATING_RESTORED` | `SOS`, `ISSUE`, `RATING` |
 | `MONEY` | payment (`ops_money_audit`) | `REFUND_*`, `PAYOUT_RETRY*`, `PAYOUT_RETRIED`, `DEBT_*`, `REQUEST_APPROVED/REJECTED/CANCELLED/RESUBMITTED`, `PAYOUT_ACCOUNT_REVEALED` | `BOOKING`, `FARE_HOLD`, `SETTLEMENT`, `DRIVER`, `MONEY_REQUEST`, `PAYOUT_ACCOUNT` |
 | `PRIVACY` | profile (`pii_reveal_log`) | `PII_REVEALED` - an admin revealed a full NIN, licence number or date of birth ([privacy.md](privacy.md)) | `ACCOUNT` (the person's user id; `subject` names the field) |
+| `NOTIFICATIONS` | notification (`ops_audit_log`) | `BROADCAST_CREATED`, `BROADCAST_SCHEDULED`, `BROADCAST_CANCELLED` ([broadcasts.md](broadcasts.md)), `REPORT_SENT` (an emailed report sent by hand), `ONBOARDING_REMINDERS_SENT`, `VERIFICATION_DIGEST_SENT` ([onboarding-reminders.md](onboarding-reminders.md); scheduled runs read actor "System") | `BROADCAST` (broadcast id), `REPORT` (`DAILY`/`WEEKLY`/`MONTHLY`), `NOTIFICATION_JOB` (`onboarding-reminders` / `verification-digest`) |
 
 Left out on purpose: Smile ID's own late results (`PROVIDER_RESULT` — not an ops action) and the verification log's
 `ATTEMPTS_RESET` (the same reset is already in the account history as `LICENCE_/IDENTITY_ATTEMPTS_RESET`).
 Not audited anywhere yet (so not here): beta-signup "invited" marks, document-expiry reminders. Views of masked data aren't
-audited - only reveals of the full value are. Phase 6 part B (settings, broadcasts) adds its own source when it lands.
+audited - only reveals of the full value are. Since 2026-11-15 notification-service is the fifth source (`NOTIFICATIONS`).
 
 ---
 
@@ -37,7 +38,7 @@ audited - only reveals of the full value are. Phase 6 part B (settings, broadcas
 |---|---|
 | `actorId` | The admin who did it (user id — use `/team` for the picker). |
 | `action` | One or more action names (`action=SUSPENDED&action=REINSTATED` or comma-separated). |
-| `category` | One or more of `ACCOUNT`, `TEAM`, `VERIFICATION`, `TRIPS`, `SAFETY`, `MONEY`, `PRIVACY`. Unknown → `400`. |
+| `category` | One or more of `ACCOUNT`, `TEAM`, `VERIFICATION`, `TRIPS`, `SAFETY`, `MONEY`, `PRIVACY`, `NOTIFICATIONS`. Unknown → `400`. |
 | `targetType` | One or more target types from the table above. Unknown → `400` listing the allowed ones. |
 | `targetId` | Exact target id. For money, an approval request id also matches every action on that request. |
 | `from`, `to` | `YYYY-MM-DD`, **Lagos** days, both inclusive (`to=2026-11-12` runs to 2026-11-13 00:00 Lagos). `from` after `to` → `400`. |
@@ -124,9 +125,9 @@ This is exact for any page size: an entry in the true top `size` is always in it
 takes from each source is a prefix of that source's answer — no gaps, no repeats.
 
 Limits:
-- **Cost:** up to (sources × size) rows read per page (4 × 50 by default); each source query is indexed on
-  `(created_at desc, id desc)` (coryd:123–126). The export reads 500 per source per round, up to 10,000 rows.
-- **No total count** — counting four tables on every filter change isn't worth it; the console shows "Load more" while `hasMore`.
+- **Cost:** up to (sources × size) rows read per page (5 × 50 by default); each source query is indexed on
+  `(created_at desc, id desc)` (coryd:123–126; notification-service coryd:174). The export reads 500 per source per round, up to 10,000 rows.
+- **No total count** — counting five tables on every filter change isn't worth it; the console shows "Load more" while `hasMore`.
 - **No jump to page N** — only forward from a cursor. A cursor stays valid indefinitely (it's positions, not offsets).
 - **Search** is a substring scan on the matched rows (no full-text index); fine at today's volumes.
 - A cursor made under one filter must be used with the same filter.

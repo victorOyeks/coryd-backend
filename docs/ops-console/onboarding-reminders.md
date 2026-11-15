@@ -76,12 +76,12 @@ One feed entry and one push to each of their devices, per run - never several.
 **Feed** (`GET /notification/notifications/{userId}`): the entry has `eventType: "ONBOARDING_REMINDER"` and two new fields,
 `step` and `role` (null on every other notification).
 
-### Notification preferences used
-There is no onboarding-specific opt-out and no general push opt-out; the only user-controlled flag is `promotionalOptIn`
-(announcements / broadcasts). A person who turned announcements **off** gets **no push** for onboarding reminders but still
-gets the **feed entry** (the reminder is about their own account, so it stays visible in-app). `whatsappOptIn` doesn't apply
-(no WhatsApp/SMS is sent). Quiet hours: the scheduled run never pushes inside the broadcast quiet hours (default 21:00-07:00
-Lagos, `broadcast.quiet-hours-*`) - a reminder time inside them waits until they end; a real run by hand inside them is refused.
+### Notification preferences and quiet hours
+Onboarding reminders are **service messages** about the person's own account, not announcements: the push goes whatever
+their `promotionalOptIn` (which governs broadcasts only). `whatsappOptIn` doesn't apply (no WhatsApp/SMS is sent). There is no
+onboarding-specific opt-out. **Quiet hours** are kept: the scheduled run never pushes inside the broadcast quiet hours
+(default 21:00-07:00 Lagos, `broadcast.quiet-hours-*`) - a reminder time inside them waits until they end; a real run by
+hand inside them is refused. Someone with **no device token** still gets the feed entry.
 
 ## 2. Cadence
 
@@ -159,10 +159,10 @@ no token → `401`. notification-service checks the role again.
 ```json
 { "dryRun": true, "day": "2026-11-16", "at": "…", "considered": 120, "reminded": 34,
   "skipped": { "COMPLETE": 70, "WAITING_ON_OPS": 9, "NOT_DUE": 5, "ALREADY_TODAY": 2 },
-  "pushesDelivered": 0, "pushesFailed": 0, "withoutDevice": 6, "pushOptedOut": 0,
+  "pushesDelivered": 0, "pushesFailed": 0, "withoutDevice": 6,
   "people": [ { "userId": "…", "role": "DRIVER", "step": "INSURANCE", "reason": "RESUBMIT",
                 "title": "You're almost there, Ada", "body": "CoRyd asked you to upload …", "reminderNumber": 0,
-                "devices": 1, "pushed": 0, "pushSkippedByPreference": false } ],
+                "devices": 1, "pushed": 0 } ],
   "truncated": false }
 ```
 `skipped` keys: `COMPLETE`, `WAITING_ON_OPS`, `NOTHING_TO_DO`, `TOO_SOON_AFTER_SIGN_UP`, `ALREADY_TODAY`, `NOT_DUE`. `people`:
@@ -187,7 +187,8 @@ Every real run that sent something, and every real run by hand, is a row in `not
 `action ONBOARDING_REMINDERS_SENT` / `VERIFICATION_DIGEST_SENT`, `target_type NOTIFICATION_JOB`, `target_id
 onboarding-reminders` / `verification-digest`, actor the admin (or `system` / "Scheduled job"), `after_state` the counts
 (`considered`, `reminded`, `pushesDelivered`, `withoutDevice`, `skipped` / `waiting`, `listed`, `highlighted`, `recipients`,
-`delivered`). Like broadcasts, this table is not yet in the unified audit feed.
+`delivered`). They appear in the unified audit feed (`GET /ops/audit`, category `NOTIFICATIONS`, target type
+`NOTIFICATION_JOB`; scheduled runs show actor "System") - see [audit-log.md](audit-log.md).
 
 ## 6. Internal endpoints (service-to-service, internal key)
 
