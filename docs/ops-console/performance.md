@@ -87,13 +87,13 @@ built through profile-service's own backfill (which calls trip, payment and iden
 | trips | `/trips?…` | 139 / 282 | 82 / 179 |
 | trips ACTIVE | `/trips?…` | 52 / 82 | 47 / 85 |
 | trips CANCELLED | `/trips?…` | 44 / 70 | 56 / 119 |
-| trips search | `/trips?…` | 143 / 267 | 121 / 206 |
+| **trips search** | `/trips?…` | 143 / 267 | 121 / 206 → 20 / 22 (§4.8) |
 | trips by rider | `/trips?…` | 38 / 94 | 32 / 63 |
 | trips by driver | `/trips?…` | 40 / 55 | 34 / 141 |
 | trips sort fare | `/trips?…` | 152 / 254 | 125 / 170 |
 | trips page 2000 | `/trips?…` | 136 / 256 | 152 / 264 |
 | trips/counts | `/trips/counts` | 73 / 91 | 66 / 139 |
-| trips/counts search | `/trips/counts?…` | 225 / 322 | 201 / 320 |
+| **trips/counts search** | `/trips/counts?…` | 225 / 322 | 201 / 320 → 21 / 23 (§4.8) |
 | trips/live | `/trips/live` | 134 / 321 | 134 / 470 |
 | trips/stuck | `/trips/stuck?…` | 71 / 161 | 41 / 115 |
 | trips last-minute changes | `/trips/time-changes/last-minute` | 7 / 10 | 17 / 35 |
@@ -107,7 +107,7 @@ built through profile-service's own backfill (which calls trip, payment and iden
 | **money tx REFUND** | `/money/transactions?…` | 350 / 375 | 32 / 54 |
 | **money tx by rider** | `/money/transactions?…` | 115 / 244 | 24 / 59 |
 | **money tx amount sort** | `/money/transactions?…` | 539 / 798 | 169 / 358 |
-| money tx reference | `/money/transactions?…` | 190 / 272 | 257 / 318 |
+| **money tx reference** | `/money/transactions?…` | 190 / 272 | 257 / 318 → 10 / 11 (§4.8) |
 | **money tx page 500** | `/money/transactions?…` | 679 / 782 | 312 / 382 |
 | **money transactions/counts** | `/money/transactions/counts` | 188 / 275 | 50 / 104 |
 | money payouts | `/money/payouts?…` | 50 / 75 | 43 / 68 |
@@ -152,9 +152,11 @@ built through profile-service's own backfill (which calls trip, payment and iden
 | **csv trips 6mo** | `/reports/analytics/trips.csv?…` | 5260 / 5577 | 408 / 493 |
 | **csv driver-performance 6mo** | `/reports/analytics/driver-performance.csv?…` | 1971 / 2298 | 232 / 279 |
 | **csv riders 6mo** | `/reports/analytics/riders.csv?…` | 1225 / 1906 | 195 / 303 |
-| **audit export csv** | `/audit/export` | 3336 / 3474 | 1502 / 1889 |
+| **audit export csv** | `/audit/export` | 3336 / 3474 | 1502 / 1889 → see §4.7 |
 | audit feed deep paging (40 cursors) | `/audit?…` | 43 / 75 | 34 / 51 |
 
+Rows marked "→ (§4.x)" were fixed in the follow-up (2026-11-15, §4.7–4.9); their new figures come from a smaller,
+quieter local run, so compare them with the before/after pairs in those sections rather than with this column.
 Rows over 300 ms p95 after the fixes are covered in section 6. Endpoints this phase didn't touch move up and down between
 runs with the machine's load (e.g. `metrics pilot`, `sos detail`). That's noise, not a change.
 
@@ -240,6 +242,100 @@ Each page asked identity, payment, profile and trip one after another. They're n
 fan-out, which keeps the admin's request for the forwarded token). Feed page p95: 80 ms → 22 ms. A source that refuses
 still fails the page with its own status.
 
+### 4.7 Body logging: capped, and skipped for service-to-service calls (common) — follow-up
+
+`RequestResponseLoggingFilter` held, masked and logged every response whole. The audit export makes 80 internal calls of
+500 rows each (~230 KB of JSON apiece), and every one was parsed into a tree, pretty-printed and written to the log -
+~45 MB of log per service per benchmark run. Now:
+- **Internal calls are not body-logged.** A request carrying this service's *valid* internal API key
+  (`InternalApiKeyFilter.hasValidKey`) skips the filter; the calling service logs its own request, and `LoggingInterceptor`
+  still logs line, status and time here. A made-up key doesn't switch it off.
+- **Logged bodies are capped** at `coryd.logging.max-body-chars` (default 2048; `0` = no limit). `SensitiveDataMasker.maskBody`
+  streams the JSON through the same field rules as `maskJsonBody` (same fields, same masks, verified equal under the cap)
+  and stops once the output is full, so a large body costs no more than its first 2 KB. Masking happens before the cut,
+  never after; plain text is masked over twice the shown length, then cut; a request held only in part (the 4 KB request
+  cache) keeps what was masked before the cut, nothing after.
+
+Measured A/B (base jars vs new jars, same data, alternated, machine load 9–29):
+
+| | Before p50 / p95 (ms) | After p50 / p95 (ms) |
+|---|---|---|
+| trip `/internal/ops/audit?size=500` (one export call) | 10 / 17, 8 / 15 | 8 / 18, 4 / 8, 5 / 14 |
+| audit export CSV, 10,000 rows (80 internal calls) | 512 / 667, 614 / 694 | 467 / 615, 325 / 399, 407 / 642 |
+| trip-service log written over one A/B round | 164 MB | 0.35 MB |
+
+On this run the export was ~0.4–0.6 s even before (the 1.9 s in §3 was under load 15–40 with full logging contending for
+disk); the change takes ~30% off it here and removes nearly all of the log volume. What's left is the 20 rounds of four
+parallel calls plus the merge.
+
+### 4.8 Trips search and Money reference search: trigram indexes (trip, payment) — follow-up
+
+Both searches are unchanged (same `lower(x) LIKE '%term%'` / prefix arms, so prefix and contains behaviour is identical);
+they now have indexes:
+- trip `coryd:180`: `gin (lower(origin_label) gin_trgm_ops)`, `gin (lower(destination_label) gin_trgm_ops)` and
+  `btree (lower(id) text_pattern_ops)` on `route_posts`, so all three OR arms are indexable and become one `BitmapOr`;
+- payment `coryd:181`: `gin (lower(gateway_reference) gin_trgm_ops)` on payments (payments and refunds search the payment's
+  reference), `gin (lower(gateway_settlement_id) gin_trgm_ops)` on payouts, and `refunds (payment_transaction_id)` so a
+  refund is reached from its matched payment.
+
+**pg_trgm across schemas.** The extension exists once per database, in `profile` on every CoRyd database. The changesets
+use the operator class from whichever schema holds it (`profile.gin_trgm_ops`) and install the extension only when it's
+missing - into `profile` when that schema exists, so profile-service's own unqualified indexes still find it. Every step is
+in its own exception block: a failure is a `WARNING` and the search stays a scan, never a failed deploy. The changesets
+are `runAlways` (a catalog check once the indexes exist), so a skipped index is built on a later start. Verified locally:
+existing DB with pg_trgm in `profile` → indexes on `profile.gin_trgm_ops`; fresh DB with trip migrating first → extension
+installed into `profile`, then profile-service starts cleanly on it; DB with pg_trgm in `public` → used from `public`; a
+user without USAGE on `profile` → `WARNING ... permission denied for schema profile`, trip-service still started; indexes
+dropped by hand → rebuilt on the next start.
+
+```
+trips/counts search=lekki    before: Seq Scan route_posts (60,000 rows, 57,000 removed)            57-64 ms
+                             after:  BitmapOr (origin_trgm 1,500 + destination_trgm 1,500 + id_pattern 0)
+                                     -> Bitmap Heap Scan (2,334 blocks)                              7 ms
+trips search no match        before: Index Scan Backward departure_time, 60,000 rows removed by filter   59 ms
+                             after:  BitmapOr on the three indexes, 0 rows                                1.6 ms
+money reference (payments)   before: Parallel Seq Scan payment_transactions (156,000)                    37 ms
+                             after:  Bitmap Index Scan idx_payment_transactions_reference_trgm            0.2 ms
+money reference (refunds)    before: Hash Join, Seq Scan refunds + Parallel Seq Scan payments             33 ms
+                             after:  reference_trgm -> Index Scan idx_refunds_payment_transaction         0.6 ms
+money reference (payouts)    before: Seq Scan driver_settlements (41,600)                                 13 ms
+                             after:  Bitmap Index Scan idx_driver_settlements_reference_trgm              0.08 ms
+```
+
+A search for a common place whose matches fill the first page straight away (e.g. `lekki` on the list) still walks
+`idx_route_posts_departure_time` and stops after ~400 rows (3 ms); the planner picks that over the bitmap, which is right.
+Hibernate's `LIKE ? ESCAPE '\'` gets custom plans (the generic plan would be a seq scan), as the endpoint timings show.
+
+Through ops-service (same new jars, indexes dropped vs present; 60,000 trips, 156,000 payments):
+
+| Endpoint | No index p50 / p95 (ms) | Indexed p50 / p95 (ms) |
+|---|---|---|
+| trips search `lekki` (common) | 79 / 89 | 20 / 22 |
+| trips search, selective term | 78 / 83 | 19 / 36 |
+| trips search, no match | 70 / 74 | 6 / 7 |
+| trips/counts search `lekki` | 132 / 145 | 21 / 23 |
+| trips/counts, selective / no match | 130 / 134, 130 / 136 | 18 / 19, 8 / 9 |
+| money tx `reference=af129a77` | 165 / 420 | 10 / 11 |
+| money tx `reference=f40a` | 254 / 348 | 10 / 12 |
+| money transactions/counts `reference` | 113 / 183 | 6 / 31 |
+
+### 4.9 Directory index refresh race (profile-service) — follow-up
+
+Two refreshes of one rider or driver at once (the backfill and a profile-save or Kafka event) both found no row and both
+inserted: `duplicate key ... rider_index_pkey`. And the backfill/nightly rebuild ran 200 rows in one transaction, so that
+one error lost the batch and stopped the job. Now:
+- the row is read `FOR UPDATE`; a missing one is inserted bare with `INSERT ... ON CONFLICT DO NOTHING` (the second writer
+  waits for the first to commit) and then locked and filled in - a race is an update, never a duplicate key; event updates
+  (stats, earnings, suspensions) take the same lock, so they no longer overwrite a concurrent rebuild either;
+- `refreshAll` writes each row in its own transaction; a failing row is logged, counted (`IndexRefresh(indexed, failed)`)
+  and skipped, and a batch whose lookups fail is counted and the job moves on to the next batch;
+- the driver backfill walks ids in order (as the rider one already did), so a driver whose row keeps failing is passed over
+  instead of being re-read forever. The nightly rebuild logs `rebuilt N, M failed`.
+
+Tests (`RiderIndexIntegrationTest`, `DriverIndexIntegrationTest`): two concurrent `refresh` calls of one id, lined up so
+both look the person up before either writes (fails on the old code with the primary-key error; passes now with one row);
+a row refused by a trigger doesn't stop the backfill or the rebuild, and is picked up once it can be written.
+
 ## 5. Indexes added (payment-service, `017-ops-performance.sql`)
 
 | Changeset | Index | For |
@@ -251,7 +347,8 @@ still fails the page with its own status.
 
 Payments already had `created_at`, `rider_id` and `booking_id` indexes, and `ops_money_requests.refund_id` was already
 indexed. No other service needed a new index: directories, queues, document expiry and audit already use theirs.
-`coryd:163`–`169` are unused.
+`coryd:163`–`169` are unused. The follow-up added `coryd:180` (trip, `037-ops-trip-search-trigram.sql`) and `coryd:181`
+(payment, `018-ops-reference-search-trigram.sql`), §4.8; `coryd:182`–`189` are unused.
 
 ## 6. Checked and fine as they are
 
@@ -265,16 +362,19 @@ indexed. No other service needed a new index: directories, queues, document expi
 
 ## 7. Known limits
 
+Updated 2026-11-15 after the follow-up (§4.7–4.9). Fixed and removed from this list: the directory index refresh race,
+the audit export's body-logging overhead, Trips search and Money reference search.
+
 | Where | Now (p95, busy machine) | Why | What would fix it |
 |---|---|---|---|
-| Money → Transactions, `reference` contains-search | ~320 ms | `lower(reference) like '%x%'` reads every payment's reference (no trigram index in the `payment` schema; `pg_trgm` lives in `profile`) | `pg_trgm` in `payment` + a GIN index, or prefix-only search |
-| Money → Transactions, deep pages (page 500) | ~380 ms | Offset paging reads `offset + size` rows per type | Keyset cursor (API change) |
+| Money → Transactions, deep pages (page 500) | ~150–380 ms | Offset paging reads `offset + size` rows per type (10,020 each at page 500) | Keyset cursor - an API change for the console, so left. Nothing non-breaking found: the per-type top-N is already index-ordered |
 | Money → Transactions, amount sort | ~360 ms | Fares are round numbers, so ties are large and incremental sort works through big groups | Acceptable; a `(amount, created_at, id)` index per direction if it matters |
 | Reports → revenue (6 months) | ~470 ms | Five daily series over ~150,000 payments, run one after another | Grows with the range picked, not with history; the default 30-day summary is ~100 ms |
 | Reports → corridors (6 months) | ~470 ms | Normalises every trip's labels (`regexp_replace`) and takes a median per corridor | A stored corridor key on `route_posts` |
-| Audit export CSV (10,000 rows) | ~1.9 s | 80 internal calls of 500 rows; every internal response is cached, masked and logged whole by `RequestResponseLoggingFilter` | Cap the size of logged bodies (touches the masking path, so left for the data-masking work) |
-| Trips search / counts with `search` | ~200–320 ms | `ILIKE '%x%'` on labels across 60,000 trips; grows with history | A trigram index in `trip` |
-| Index backfill | — | Two refreshes of the same rider at once (backfill + an event) hit `rider_index_pkey`, and the backfill **stops** at the first error; the next start resumes | Upsert in `RiderIndexService` / `DriverIndexService`, or carry on past a failed batch |
+| Audit export CSV (10,000 rows) | ~0.4–0.6 s | 80 internal calls in 20 rounds of four, then a merge; no longer body-logged (§4.7) | A larger internal page, or pushing the merge's filter into each source |
+| Trips search, very common term | ~20 ms list / count | A term in ~5% of trips reads ~2,300 heap blocks via the bitmap | Fine at this size; grows with history |
+| Cancellations search | ~150 ms | Same `LIKE '%x%'` shape over `cancellation_log` labels and reason, not indexed | The §4.8 approach on `cancellation_log` if it grows |
+| Trigram indexes under a restricted DB user | — | If the services' user can't use the schema holding `pg_trgm`, the indexes are skipped with a WARNING and the searches stay scans | Grant USAGE on that schema; the next start builds them (`runAlways`) |
 
 ## 8. Re-running it
 
@@ -282,3 +382,8 @@ The seed SQL, token minter and benchmark script are not in the repo (local-only 
 `docker-compose.yml` plus a PostGIS Postgres, pre-create the five schemas, start the services so Liquibase builds them,
 seed, restart profile-service (its startup backfill builds the directory index), then time each endpoint above with an
 `OPS_ADMIN` token.
+
+The follow-up (§4.7–4.9) used a smaller seed straight in SQL: 60,000 trips, 156,000 payments (150,000 with fare holds),
+18,000 refunds, 41,600 payouts and 5,000 audit rows in each of the four audit sources. Before/after for the logging
+change is base jars vs new jars, alternated; for the indexes it's the new jars with the six indexes dropped, then
+rebuilt by restarting trip- and payment-service. 15 timed calls per endpoint (20 for the export), p50 / p95.
