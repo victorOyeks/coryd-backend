@@ -114,6 +114,48 @@ public class PlatformSettings {
         }
     }
 
+    /** A BOOLEAN setting: "true" / "false" as ops set it, else the fallback. */
+    public boolean bool(PlatformSetting setting, boolean fallback) {
+        String raw = raw(setting);
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            return Boolean.parseBoolean(setting.normalize(raw));
+        } catch (Exception e) {
+            log.warn("Platform setting {}='{}' unreadable - using {}", setting.key(), raw, fallback);
+            return fallback;
+        }
+    }
+
+    /** A TIME_OF_DAY setting ("08:00"), else the fallback. */
+    public java.time.LocalTime timeOfDay(PlatformSetting setting, java.time.LocalTime fallback) {
+        String raw = raw(setting);
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            return PlatformSetting.parseTime(raw);
+        } catch (Exception e) {
+            log.warn("Platform setting {}='{}' unreadable - using {}", setting.key(), raw, fallback);
+            return fallback;
+        }
+    }
+
+    /** An EMAIL_LIST setting's addresses ("none" is an empty list), else the fallback. */
+    public List<String> emails(PlatformSetting setting, List<String> fallback) {
+        String raw = raw(setting);
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            return PlatformSetting.parseEmails(setting.normalize(raw));
+        } catch (Exception e) {
+            log.warn("Platform setting {}='{}' unreadable - using {}", setting.key(), raw, fallback);
+            return fallback;
+        }
+    }
+
     public Map<String, PlatformSettingChangedEvent> snapshot() {
         return Map.copyOf(states);
     }
@@ -139,6 +181,18 @@ public class PlatformSettings {
 
     public static List<Integer> integers(PlatformSettings settings, PlatformSetting setting, List<Integer> fallback) {
         return settings == null ? fallback : settings.integers(setting, fallback);
+    }
+
+    public static boolean bool(PlatformSettings settings, PlatformSetting setting, boolean fallback) {
+        return settings == null ? fallback : settings.bool(setting, fallback);
+    }
+
+    public static java.time.LocalTime timeOfDay(PlatformSettings settings, PlatformSetting setting, java.time.LocalTime fallback) {
+        return settings == null ? fallback : settings.timeOfDay(setting, fallback);
+    }
+
+    public static List<String> emails(PlatformSettings settings, PlatformSetting setting, List<String> fallback) {
+        return settings == null ? fallback : settings.emails(setting, fallback);
     }
 
     public Instant now() {

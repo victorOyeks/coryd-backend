@@ -27,10 +27,10 @@ public class PlatformSettingValue {
     private String key;
 
     /** Null: the services' own defaults apply. */
-    @Column(length = 200)
+    @Column(length = 1000)
     private String value;
 
-    @Column(length = 200)
+    @Column(length = 1000)
     private String scheduledValue;
 
     private Instant scheduledFrom;

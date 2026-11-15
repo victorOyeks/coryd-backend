@@ -33,6 +33,54 @@ class PlatformSettingsTest {
     }
 
     @Test
+    void booleanTimeAndEmailListSettingsAreCheckedAndStoredInOneSpelling() {
+        assertThat(PlatformSetting.ONBOARDING_REMINDERS_ENABLED.normalize(" Yes ")).isEqualTo("true");
+        assertThat(PlatformSetting.ONBOARDING_REMINDERS_ENABLED.normalize("off")).isEqualTo("false");
+        assertThatThrownBy(() -> PlatformSetting.VERIFICATION_DIGEST_ENABLED.normalize("maybe")).hasMessageContaining("true or false");
+
+        assertThat(PlatformSetting.ONBOARDING_REMINDER_TIME.normalize("8:00")).isEqualTo("08:00");
+        assertThat(PlatformSetting.VERIFICATION_DIGEST_TIME.normalize("23:59")).isEqualTo("23:59");
+        for (String bad : List.of("24:00", "8", "08:60", "8am", "08:00:00")) {
+            assertThatThrownBy(() -> PlatformSetting.ONBOARDING_REMINDER_TIME.normalize(bad)).as(bad).hasMessageContaining("24-hour time");
+        }
+
+        PlatformSetting extra = PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS;
+        assertThat(extra.normalize("Ops@CoRyd.ng; ada@coryd.ng, ops@coryd.ng")).isEqualTo("ada@coryd.ng,ops@coryd.ng");
+        assertThat(extra.normalize("NONE")).isEqualTo(PlatformSetting.NONE);
+        assertThatThrownBy(() -> extra.normalize("ada@coryd.ng, not-an-email")).hasMessageContaining("'not-an-email' isn't an email address");
+        assertThatThrownBy(() -> extra.normalize(" , ")).hasMessageContaining("at least one address");
+        String eleven = String.join(",", java.util.stream.IntStream.range(0, 11).mapToObj(i -> "a" + i + "@coryd.ng").toList());
+        assertThatThrownBy(() -> extra.normalize(eleven)).hasMessageContaining("at most 10");
+
+        assertThat(PlatformSetting.ONBOARDING_REMINDER_DAILY_DAYS.normalize("14")).isEqualTo("14");
+        assertThatThrownBy(() -> PlatformSetting.ONBOARDING_REMINDER_DAILY_DAYS.normalize("0")).hasMessageContaining("between 1 and 60");
+        assertThatThrownBy(() -> PlatformSetting.ONBOARDING_REMINDER_EVERY_DAYS.normalize("31")).hasMessageContaining("between 1 and 30");
+        assertThatThrownBy(() -> PlatformSetting.VERIFICATION_DIGEST_HIGHLIGHT_DAYS.normalize("0")).hasMessageContaining("between 1 and 30");
+        assertThat(PlatformSetting.ONBOARDING_REMINDER_TIME.min()).as("no numeric range for a time").isNull();
+    }
+
+    @Test
+    void typedReadersFallBackUntilOpsSetsAValue() {
+        PlatformSettings settings = new PlatformSettings();
+        assertThat(settings.bool(PlatformSetting.ONBOARDING_REMINDERS_ENABLED, true)).isTrue();
+        assertThat(settings.timeOfDay(PlatformSetting.ONBOARDING_REMINDER_TIME, java.time.LocalTime.of(8, 0))).hasToString("08:00");
+        assertThat(settings.emails(PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS, List.of("x@coryd.ng"))).containsExactly("x@coryd.ng");
+
+        settings.apply(event("onboarding.reminders-enabled", "false", null, null, 1));
+        settings.apply(event("onboarding.reminder-time", "09:30", null, null, 1));
+        settings.apply(event("verification.digest-extra-recipients", "a@coryd.ng,b@coryd.ng", null, null, 1));
+        assertThat(settings.bool(PlatformSetting.ONBOARDING_REMINDERS_ENABLED, true)).isFalse();
+        assertThat(settings.timeOfDay(PlatformSetting.ONBOARDING_REMINDER_TIME, java.time.LocalTime.of(8, 0))).hasToString("09:30");
+        assertThat(settings.emails(PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS, List.of())).containsExactly("a@coryd.ng", "b@coryd.ng");
+
+        settings.apply(event("verification.digest-extra-recipients", "none", null, null, 2));
+        assertThat(settings.emails(PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS, List.of("x@coryd.ng"))).isEmpty();
+        settings.apply(event("onboarding.reminder-time", "garbage", null, null, 2));
+        assertThat(settings.timeOfDay(PlatformSetting.ONBOARDING_REMINDER_TIME, java.time.LocalTime.of(8, 0))).as("unreadable").hasToString("08:00");
+        assertThat(PlatformSettings.bool(null, PlatformSetting.VERIFICATION_DIGEST_ENABLED, true)).isTrue();
+    }
+
+    @Test
     void everyKeyFitsTheAuditLogsTargetIdAndIsUnique() {
         assertThat(PlatformSetting.values()).allSatisfy(s -> assertThat(s.key().length()).isLessThanOrEqualTo(36));
         assertThat(java.util.Arrays.stream(PlatformSetting.values()).map(PlatformSetting::key).distinct().count())

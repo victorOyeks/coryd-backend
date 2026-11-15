@@ -29,6 +29,7 @@ public class PlatformSettingDefaults {
     private final BigDecimal approvalThreshold;
     private final int documentReminderDays;
     private final int documentFinalReminderDays;
+    private final NotificationJobDefaults notificationJobs;
 
     public PlatformSettingDefaults(CancellationPolicy cancellationPolicy, MatchingProperties matchingProperties,
                                    StuckTripProperties stuckTripProperties, SosOpsProperties sosOpsProperties,
@@ -36,7 +37,8 @@ public class PlatformSettingDefaults {
                                    @Value("${coryd.platform-settings.defaults.commission-fraction:0.05}") BigDecimal commissionFraction,
                                    @Value("${coryd.platform-settings.defaults.money-approval-threshold:50000}") BigDecimal approvalThreshold,
                                    @Value("${coryd.platform-settings.defaults.document-reminder-days:14}") int documentReminderDays,
-                                   @Value("${coryd.platform-settings.defaults.document-final-reminder-days:3}") int documentFinalReminderDays) {
+                                   @Value("${coryd.platform-settings.defaults.document-final-reminder-days:3}") int documentFinalReminderDays,
+                                   NotificationJobDefaults notificationJobs) {
         this.cancellationPolicy = cancellationPolicy;
         this.matchingProperties = matchingProperties;
         this.stuckTripProperties = stuckTripProperties;
@@ -46,6 +48,7 @@ public class PlatformSettingDefaults {
         this.approvalThreshold = approvalThreshold;
         this.documentReminderDays = documentReminderDays;
         this.documentFinalReminderDays = documentFinalReminderDays;
+        this.notificationJobs = notificationJobs;
     }
 
     /** In the setting's own unit and spelling ("5" for 5%, "5,15,30"). */
@@ -63,6 +66,9 @@ public class PlatformSettingDefaults {
                     ? BigDecimal.ZERO : fareProperties.getOutlierTolerancePercent());
             case DOCUMENT_REMINDER_DAYS -> String.valueOf(documentReminderDays);
             case DOCUMENT_FINAL_REMINDER_DAYS -> String.valueOf(documentFinalReminderDays);
+            case ONBOARDING_REMINDERS_ENABLED, ONBOARDING_REMINDER_TIME, ONBOARDING_REMINDER_DAILY_DAYS, ONBOARDING_REMINDER_EVERY_DAYS,
+                 VERIFICATION_DIGEST_ENABLED, VERIFICATION_DIGEST_TIME, VERIFICATION_DIGEST_HIGHLIGHT_DAYS,
+                 VERIFICATION_DIGEST_EXTRA_RECIPIENTS -> notificationJobs.of(setting);
         };
     }
 

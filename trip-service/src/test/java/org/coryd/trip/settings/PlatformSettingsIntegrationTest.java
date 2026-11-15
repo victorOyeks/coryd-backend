@@ -58,7 +58,7 @@ import static org.mockito.Mockito.verify;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({PlatformSettingsService.class, PlatformSettingDefaults.class, OpsAuditWriter.class, PlatformSettings.class,
+@Import({PlatformSettingsService.class, PlatformSettingDefaults.class, NotificationJobDefaults.class, OpsAuditWriter.class, PlatformSettings.class,
         CancellationPolicy.class, MatchingProperties.class, StuckTripProperties.class, SosOpsProperties.class, FareProperties.class})
 class PlatformSettingsIntegrationTest {
 
@@ -246,6 +246,51 @@ class PlatformSettingsIntegrationTest {
             assertThat(e.getVersion()).isEqualTo(4);
         });
         verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaTopics.PLATFORM_SETTINGS), eq("money.approval-threshold"), any());
+    }
+
+    @Test
+    void theNotificationJobSettingsHaveTheirDefaultsAndTakeBooleansTimesAndAddressLists() {
+        List<SettingsDtos.Group> groups = service.list().groups();
+        assertThat(groups).extracting(SettingsDtos.Group::group).contains("ONBOARDING", "NOTIFICATIONS");
+        assertThat(service.get("onboarding.reminders-enabled").defaultValue()).isEqualTo("true");
+        assertThat(service.get("onboarding.reminders-enabled").type()).isEqualTo("BOOLEAN");
+        assertThat(service.get("onboarding.reminder-time").defaultValue()).isEqualTo("08:00");
+        assertThat(service.get("onboarding.reminder-time").min()).isNull();
+        assertThat(service.get("onboarding.reminder-daily-days").defaultValue()).isEqualTo("14");
+        assertThat(service.get("onboarding.reminder-then-every-days").defaultValue()).isEqualTo("3");
+        assertThat(service.get("verification.digest-enabled").defaultValue()).isEqualTo("true");
+        assertThat(service.get("verification.digest-time").defaultValue()).isEqualTo("08:00");
+        assertThat(service.get("verification.digest-highlight-days").defaultValue()).isEqualTo("3");
+        assertThat(service.get("verification.digest-extra-recipients").defaultValue()).isEqualTo("none");
+        assertThat(service.get("verification.digest-extra-recipients").type()).isEqualTo("EMAIL_LIST");
+
+        assertThatThrownBy(() -> service.update("onboarding.reminders-enabled", new SettingsDtos.UpdateRequest("yes", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("already true");
+        assertThatThrownBy(() -> service.update("onboarding.reminder-time", new SettingsDtos.UpdateRequest("25:00", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("24-hour time");
+        assertThatThrownBy(() -> service.update("verification.digest-extra-recipients", new SettingsDtos.UpdateRequest("ops@", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("isn't an email address");
+        assertThatThrownBy(() -> service.update("onboarding.reminder-then-every-days", new SettingsDtos.UpdateRequest("0", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("between 1 and 30");
+
+        service.update("onboarding.reminders-enabled", new SettingsDtos.UpdateRequest("off", "Pause while the app copy is reworded", null), ADA);
+        service.update("onboarding.reminder-time", new SettingsDtos.UpdateRequest("9:15", "Later", null), ADA);
+        String ten = String.join(", ", java.util.stream.IntStream.range(0, 10)
+                .mapToObj(i -> "verification.officer.number" + i + "@operations.coryd.ng").toList());
+        service.update("verification.digest-extra-recipients", new SettingsDtos.UpdateRequest(ten, "Whole team", null), ADA);
+
+        assertThat(service.get("onboarding.reminders-enabled").effectiveValue()).isEqualTo("false");
+        assertThat(service.get("onboarding.reminder-time").effectiveValue()).isEqualTo("09:15");
+        assertThat(service.get("verification.digest-extra-recipients").effectiveValue()).as("longer than the old 200 characters")
+                .hasSizeGreaterThan(200).startsWith("verification.officer.number0@operations.coryd.ng,");
+        assertThat(settings.bool(PlatformSetting.ONBOARDING_REMINDERS_ENABLED, true)).isFalse();
+        assertThat(settings.timeOfDay(PlatformSetting.ONBOARDING_REMINDER_TIME, java.time.LocalTime.NOON)).hasToString("09:15");
+        assertThat(settings.emails(PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS, List.of())).hasSize(10);
+        assertThat(audit.findAll()).extracting(OpsAuditLog::getTargetId).contains("onboarding.reminders-enabled",
+                "verification.digest-extra-recipients");
+
+        service.update("verification.digest-extra-recipients", new SettingsDtos.UpdateRequest("none", "Officers only", null), ADA);
+        assertThat(settings.emails(PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS, List.of("x@coryd.ng"))).isEmpty();
     }
 
     @Test

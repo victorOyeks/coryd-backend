@@ -44,10 +44,10 @@ public class PlatformSettingChange extends BaseEntity {
     @Column(nullable = false, length = 20)
     private Action action;
 
-    @Column(length = 200)
+    @Column(length = 1000)
     private String oldValue;
 
-    @Column(length = 200)
+    @Column(length = 1000)
     private String newValue;
 
     private Instant effectiveFrom;

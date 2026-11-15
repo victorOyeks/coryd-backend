@@ -81,6 +81,15 @@ coryd:
       money-approval-threshold: ${OPS_MONEY_APPROVAL_THRESHOLD:50000}
       document-reminder-days: ${DOCUMENT_EXPIRY_REMINDER_DAYS:14}
       document-final-reminder-days: ${DOCUMENT_EXPIRY_FINAL_REMINDER_DAYS:3}
+      # notification-service's daily jobs (docs/ops-console/onboarding-reminders.md)
+      onboarding-reminders-enabled: ${ONBOARDING_REMINDERS_ENABLED:true}
+      onboarding-reminder-time: ${ONBOARDING_REMINDER_TIME:08:00}
+      onboarding-reminder-daily-days: ${ONBOARDING_REMINDER_DAILY_DAYS:14}
+      onboarding-reminder-every-days: ${ONBOARDING_REMINDER_EVERY_DAYS:3}
+      verification-digest-enabled: ${VERIFICATION_DIGEST_ENABLED:true}
+      verification-digest-time: ${VERIFICATION_DIGEST_TIME:08:00}
+      verification-digest-highlight-days: ${VERIFICATION_DIGEST_HIGHLIGHT_DAYS:3}
+      verification-digest-extra-recipients: ${VERIFICATION_DIGEST_EXTRA_RECIPIENTS:}
   job-runs:
     schema: trip
 
