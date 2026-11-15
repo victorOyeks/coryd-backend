@@ -28,5 +28,6 @@
     <include file="db/changelog/016-ops-audit-feed.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/017-phase7-audit-targets.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/017-ops-performance.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/018-ops-reference-search-trigram.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

@@ -22,7 +22,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Collection;
@@ -46,16 +49,21 @@ public class DriverIndexService {
     private final DriverIndexRepository driverIndexRepository;
     private final VerificationAggregationService verificationAggregationService;
     private final IdentityServiceClient identityServiceClient;
+    private final PlatformTransactionManager transactionManager;
 
-    /** Rebuilds the row from the driver records; removes it when the driver profile is gone. */
+    /**
+     * Rebuilds the row from the driver records; removes it when the driver profile is gone. Safe to run for the same driver
+     * from two places at once: the row is read locked, and a missing one is inserted with ON CONFLICT DO NOTHING before it's
+     * filled in, so the second writer waits and then updates instead of hitting the primary key.
+     */
     @Transactional
     public void refresh(String driverId) {
         VerificationAggregationService.IndexFacts facts = verificationAggregationService.indexFacts(driverId);
         if (facts == null) {
-            driverIndexRepository.findById(driverId).ifPresent(driverIndexRepository::delete);
+            driverIndexRepository.findForUpdate(driverId).ifPresent(driverIndexRepository::delete);
             return;
         }
-        DriverIndex row = driverIndexRepository.findById(driverId).orElseGet(() -> DriverIndex.builder().driverId(driverId).build());
+        DriverIndex row = lockedRow(driverId);
         apply(row, facts);
         if (row.getPhone() == null || row.getJoinedAt() == null) {
             identityServiceClient.contacts(List.of(driverId)).stream().findFirst().ifPresent(c -> applyContact(row, c));
@@ -63,28 +71,52 @@ public class DriverIndexService {
         save(row);
     }
 
-    /** refresh() for many drivers, with one identity call for all of them - the backfill and nightly rebuild. */
-    @Transactional
-    public int refreshAll(Collection<String> driverIds) {
+    /**
+     * refresh() for many drivers, with one identity call for all of them - the backfill and nightly rebuild. Each driver is
+     * written in its own transaction: one that fails is logged and counted, and the rest are still written.
+     */
+    public IndexRefresh refreshAll(Collection<String> driverIds) {
         Map<String, IdentityServiceClient.Contact> contacts = identityServiceClient.contacts(driverIds).stream()
                 .collect(Collectors.toMap(IdentityServiceClient.Contact::userId, Function.identity(), (a, b) -> a));
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         int done = 0;
+        int failed = 0;
         for (String driverId : driverIds) {
-            VerificationAggregationService.IndexFacts facts = verificationAggregationService.indexFacts(driverId);
-            if (facts == null) {
-                driverIndexRepository.findById(driverId).ifPresent(driverIndexRepository::delete);
-                continue;
+            try {
+                Boolean indexed = tx.execute(status -> {
+                    VerificationAggregationService.IndexFacts facts = verificationAggregationService.indexFacts(driverId);
+                    if (facts == null) {
+                        driverIndexRepository.findForUpdate(driverId).ifPresent(driverIndexRepository::delete);
+                        return false;
+                    }
+                    DriverIndex row = lockedRow(driverId);
+                    apply(row, facts);
+                    IdentityServiceClient.Contact contact = contacts.get(driverId);
+                    if (contact != null) {
+                        applyContact(row, contact);
+                    }
+                    save(row);
+                    return true;
+                });
+                if (Boolean.TRUE.equals(indexed)) {
+                    done++;
+                }
+            } catch (RuntimeException e) {
+                failed++;
+                log.warn("Driver index: could not rebuild the row for {} - carrying on with the rest: {}", driverId, e.toString());
             }
-            DriverIndex row = driverIndexRepository.findById(driverId).orElseGet(() -> DriverIndex.builder().driverId(driverId).build());
-            apply(row, facts);
-            IdentityServiceClient.Contact contact = contacts.get(driverId);
-            if (contact != null) {
-                applyContact(row, contact);
-            }
-            save(row);
-            done++;
         }
-        return done;
+        return new IndexRefresh(done, failed);
+    }
+
+    /** The driver's row, locked - inserted bare first when there's none (or found, if another writer just inserted it). */
+    private DriverIndex lockedRow(String driverId) {
+        return driverIndexRepository.findForUpdate(driverId).orElseGet(() -> {
+            driverIndexRepository.insertIfAbsent(driverId, driverId.replace("-", "").toLowerCase(Locale.ROOT));
+            return driverIndexRepository.findForUpdate(driverId)
+                    .orElseThrow(() -> new IllegalStateException("driver_index row for " + driverId + " vanished after insert"));
+        });
     }
 
     /** trip-service's numbers - ignored when older than what the row already has, or for someone who isn't a driver. */
@@ -122,7 +154,7 @@ public class DriverIndexService {
     /** suspendedAt null means reinstated. Riders have no row - nothing to do. */
     @Transactional
     public void applySuspension(String userId, Instant suspendedAt, String reason) {
-        driverIndexRepository.findById(userId).ifPresent(row -> {
+        driverIndexRepository.findForUpdate(userId).ifPresent(row -> {
             row.setSuspendedAt(suspendedAt);
             row.setSuspensionReason(suspendedAt == null ? null : reason);
             save(row);
@@ -225,10 +257,10 @@ public class DriverIndexService {
         if (driverId == null) {
             return null;
         }
-        DriverIndex row = driverIndexRepository.findById(driverId).orElse(null);
+        DriverIndex row = driverIndexRepository.findForUpdate(driverId).orElse(null);
         if (row == null && verificationAggregationService.indexFacts(driverId) != null) {
             refresh(driverId);
-            row = driverIndexRepository.findById(driverId).orElse(null);
+            row = driverIndexRepository.findForUpdate(driverId).orElse(null);
         }
         return row;
     }

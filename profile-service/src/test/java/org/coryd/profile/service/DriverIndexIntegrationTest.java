@@ -297,6 +297,54 @@ class DriverIndexIntegrationTest {
         assertThat(index.driver("aaaa-1").firstName()).isEqualTo("Chukwuemeka");
     }
 
+    @Test
+    void twoRefreshesOfTheSameDriverAtOnceBothSucceedAndLeaveOneRow() throws Exception {
+        submitAll("aaaa-1", "Emeka", "Okafor", "LND-441-AA");
+        driverIndexRepository.deleteAll();
+        java.util.concurrent.CyclicBarrier bothLooked = new java.util.concurrent.CyclicBarrier(2);
+        org.mockito.Mockito.doAnswer(inv -> {
+            try {
+                bothLooked.await(3, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                // The first writer holds the row; the second waits on it rather than lining up here.
+            }
+            return List.of(new IdentityServiceClient.Contact("aaaa-1", "08053636321", null, null, Instant.now()));
+        }).when(identityServiceClient).contacts(any());
+
+        CompletableFuture<Void> a = CompletableFuture.runAsync(() -> index.refresh("aaaa-1"));
+        CompletableFuture<Void> b = CompletableFuture.runAsync(() -> index.refresh("aaaa-1"));
+        CompletableFuture.allOf(a, b).get(30, java.util.concurrent.TimeUnit.SECONDS);
+
+        assertThat(driverIndexRepository.count()).isEqualTo(1);
+        assertThat(index.driver("aaaa-1").phone()).isEqualTo("08053636321");
+        assertThat(index.driver("aaaa-1").plateNumber()).isEqualTo("LND-441-AA");
+    }
+
+    @Test
+    void aDriverWhoseRowFailsDoesNotStopTheBackfillOrTheRebuild() {
+        submitAll("aaaa-1", "Emeka", "Okafor", "LND-441-AA");
+        submitAll("bbbb-2", "Fatima", "Bello", "KJA-100-BC");
+        submitAll("cccc-3", "Kingsley", "Nwosu", "EKY-9-ZZ");
+        driverIndexRepository.deleteAll();
+        jdbcTemplate.execute("""
+                create or replace function profile.test_refuse_driver_b() returns trigger language plpgsql as $$
+                begin
+                    if new.driver_id = 'bbbb-2' then raise exception 'refused for the test'; end if;
+                    return new;
+                end $$""");
+        jdbcTemplate.execute("create trigger test_refuse_driver_b before insert or update on profile.driver_index"
+                + " for each row execute function profile.test_refuse_driver_b()");
+        try {
+            assertThat(jobs.backfill()).isEqualTo(2);
+            assertThat(driverIndexRepository.findAll()).extracting(r -> r.getDriverId()).containsExactlyInAnyOrder("aaaa-1", "cccc-3");
+            assertThat(jobs.rebuildAll()).as("the driver after the failing one is still rebuilt").isEqualTo(2);
+        } finally {
+            jdbcTemplate.execute("drop trigger if exists test_refuse_driver_b on profile.driver_index");
+            jdbcTemplate.execute("drop function if exists profile.test_refuse_driver_b()");
+        }
+        assertThat(jobs.backfill()).as("picked up once it can be written").isEqualTo(1);
+    }
+
     // ---- helpers ------------------------------------------------------------------------------------
 
     /** Emeka verified (oldest), Aisha verified then suspended, Fatima resubmitted, Kingsley pending (newest, no numbers). */
