@@ -78,6 +78,7 @@ class AccountProfileParts {
         ObjectNode summary = objectMapper.createObjectNode();
         summary.set("status", driver == null ? null : driver.get("verificationStatus"));
         summary.set("verifiedSince", driver == null ? null : driver.get("verifiedSince"));
+        summary.put("ninPending", driver != null && driver.path("ninPending").asBoolean(false));
         summary.set("items", driver == null ? null : driver.get("items"));
         summary.set("licenceAttempts", driver == null ? null : driver.get("licenceAttempts"));
         summary.set("identity", parts.profileField("identity"));

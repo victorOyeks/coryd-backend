@@ -203,6 +203,7 @@ public class DriverIndexService {
             row.setJoinedAt(p.getCreatedAt());
         }
         row.setOverallStatus(facts.overallStatus());
+        row.setNinPending(facts.ninPending());
         List<VerificationQueueItem.Entry> entries = facts.entries();
         row.setResubmitted(entries.stream().anyMatch(e -> e.awaitingOps() && e.resubmitted()));
         Vehicle v = facts.vehicle();
@@ -274,6 +275,6 @@ public class DriverIndexService {
                 r.getDirectoryStatus(), r.getOverallStatus(), r.getSuspendedAt(), r.getSuspensionReason(),
                 r.getVehicleMake(), r.getVehicleModel(), r.getVehicleYear(), r.getVehicleColor(), r.getPlateNumber(),
                 r.getTrips(), r.getRatingAvg(), r.getRatingCount(), r.getReliabilityPercent(), r.getReportsFiled(),
-                r.getEarningsNet(), r.getEarningsGross(), r.getLastTripAt());
+                r.getEarningsNet(), r.getEarningsGross(), r.getLastTripAt(), Boolean.TRUE.equals(r.getNinPending()));
     }
 }

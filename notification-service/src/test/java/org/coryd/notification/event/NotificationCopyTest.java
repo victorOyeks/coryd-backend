@@ -135,6 +135,22 @@ class NotificationCopyTest {
     }
 
     @Test
+    void itemsApprovedWithTheNinCheckOutstandingAreNotCalledVerified() {
+        listener.onDriverApproved(org.coryd.common.kafka.events.DriverApprovedEvent.builder()
+                .driverId("driver-1").email("d1@x.ng").firstApproval(false).identityPending(true).build());
+
+        verify(dispatch).sendPush("driver-1", "Your documents are approved", "Finish your NIN check to start posting routes.",
+                "DRIVER_DOCUMENTS_APPROVED", null);
+        verify(dispatch).sendEmail(eq("d1@x.ng"), eq("Your documents are approved - CoRyd"), any(), eq("DRIVER_DOCUMENTS_APPROVED"));
+        verify(dispatch, org.mockito.Mockito.never()).sendPush(any(), eq("You're verified!"), any(), any(), any());
+
+        // the NIN check landing last: profile-service marks that one first
+        listener.onDriverApproved(org.coryd.common.kafka.events.DriverApprovedEvent.builder()
+                .driverId("driver-1").firstApproval(true).identityPending(false).build());
+        verify(dispatch).sendPush(eq("driver-1"), eq("You're verified!"), any(), eq("DRIVER_APPROVED"), eq(null));
+    }
+
+    @Test
     void aTimeChangeWithNoRidersSendsNothing() {
         listener.onRouteTimeChanged(org.coryd.common.kafka.events.RouteTimeChangedEvent.builder().routePostId("route-9").build());
         org.mockito.Mockito.verifyNoInteractions(dispatch);

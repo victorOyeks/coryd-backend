@@ -64,6 +64,10 @@ public class DriverIndex {
     @Column(length = 20)
     private VerificationStatus overallStatus;
 
+    /** Every item approved, the identity (NIN) check not - "NIN pending". Null on a row built before this was kept: the
+     * startup backfill rebuilds those. */
+    private Boolean ninPending;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean resubmitted = false;

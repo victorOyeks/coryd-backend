@@ -10,7 +10,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
-/** Aggregates every independently-reviewable driver item into one response - the single call the driver app's pending/approved/changes-needed and verification-status screens all bind to. verifiedSince is the first time this driver ever reached overallStatus APPROVED - it doesn't move if they're later rejected on one item and re-approved, same idea as a "member since" date. Null until the driver has been approved at least once. */
+/** Aggregates every independently-reviewable driver item into one response - the single call the driver app's pending/approved/changes-needed and verification-status screens all bind to. overallStatus is APPROVED only when the driver is fully verified: every item approved and, unless IDENTITY_VERIFICATION_ENFORCEMENT is OFF, their identity (NIN) check too - ninPending marks every item approved with the NIN check outstanding (overallStatus PENDING, or IN_REVIEW while ops has the check). verifiedSince is the first time this driver was fully verified - it doesn't move if they're later rejected on one item and re-approved, same idea as a "member since" date. Null until the driver has been approved at least once. */
 public record VerificationStatusResponse(
         DriverDetails driver,
         Instant waitingSince,
@@ -21,7 +21,9 @@ public record VerificationStatusResponse(
         Instant verifiedSince,
         List<ProviderCheck> providerChecks,
         /** Documents ops asked the driver to upload again and that are still waiting for it - empty when there are none. */
-        List<ResubmissionRequest> resubmissionRequests
+        List<ResubmissionRequest> resubmissionRequests,
+        /** Every item approved, but the identity (NIN) check isn't - the driver can't post until it is. */
+        boolean ninPending
 ) {
     /**
      * Ops asked the driver to upload this document again: reason is what they're told (also the item's rejectionReason);
@@ -58,7 +60,7 @@ public record VerificationStatusResponse(
     /** The same response with the driver's licence number and date of birth masked - what everyone but the driver sees. */
     public VerificationStatusResponse masked() {
         return new VerificationStatusResponse(driver == null ? null : driver.masked(), waitingSince, governmentId, vehicleRegistration,
-                documents, overallStatus, verifiedSince, providerChecks, resubmissionRequests);
+                documents, overallStatus, verifiedSince, providerChecks, resubmissionRequests, ninPending);
     }
 
     /** awaitingProvider: the licence is with Smile ID and its result hasn't come - ops may still decide it; ops' decision then stands and the result is only recorded. */

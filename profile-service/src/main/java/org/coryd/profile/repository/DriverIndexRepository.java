@@ -15,11 +15,12 @@ import java.util.Optional;
 
 public interface DriverIndexRepository extends JpaRepository<DriverIndex, String>, JpaSpecificationExecutor<DriverIndex> {
 
-    /** Drivers with a profile but no index row yet, after a given id - what the startup backfill fills, walked in id order so
-     * a driver whose row fails to build is passed over rather than read again and again. */
+    /** Drivers with a profile but no index row yet (or a row from before ninPending was kept), after a given id - what the
+     * startup backfill fills, walked in id order so a driver whose row fails to build is passed over rather than read again
+     * and again. */
     @Query("""
             select p.userId from DriverProfile p
-            where p.userId > :after and not exists (select 1 from DriverIndex i where i.driverId = p.userId)
+            where p.userId > :after and not exists (select 1 from DriverIndex i where i.driverId = p.userId and i.ninPending is not null)
             order by p.userId
             """)
     Slice<String> findDriversMissingFromIndex(@Param("after") String after, Pageable pageable);

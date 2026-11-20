@@ -8,7 +8,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * On every driver profile, vehicle, document or licence check save, the driver's driver_index row is rebuilt after
+ * On every driver profile, vehicle, document, licence check or identity check save, the driver's driver_index row is rebuilt after
  * commit - so no code path that changes a driver can forget to. Hibernate creates this through Spring, which injects
  * the indexer; it's looked up only when needed, as the indexer itself depends on the repositories being built.
  */
@@ -26,6 +26,8 @@ public class DriverIndexListener {
             case Vehicle v -> v.getDriverId();
             case DriverDocument d -> d.getDriverId();
             case SmileIdCheck c -> c.getCheckType() == SmileIdCheckType.DRIVERS_LICENCE ? c.getUserId() : null;
+            // a driver isn't verified until their identity (NIN) check is - and a rider's id simply finds no driver row
+            case IdentityVerification v -> v.getUserId();
             default -> null;
         };
         DriverIndexer target = indexer == null ? null : indexer.getIfAvailable();

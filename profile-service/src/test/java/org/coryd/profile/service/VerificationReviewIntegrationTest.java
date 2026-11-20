@@ -106,6 +106,8 @@ class VerificationReviewIntegrationTest {
     @BeforeEach
     void cleanSlate() throws Exception {
         when(ninLookupService.view(any())).thenReturn(new org.coryd.profile.dto.DriverNinView(true, "MATCH", null, null, 3));
+        // identity (NIN) verified unless a test says otherwise - a driver is verified only once it is (B31)
+        when(driverIdentity.verified(any())).thenReturn(true);
         try (Connection c = dataSource.getConnection()) {
             assertThat(c.getMetaData().getURL()).isEqualTo(postgres.getJdbcUrl());
         }

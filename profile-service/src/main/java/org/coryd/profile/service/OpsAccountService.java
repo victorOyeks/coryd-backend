@@ -86,10 +86,12 @@ public class OpsAccountService {
         List<OpsAccountProfile.Item> items = verificationAggregationService.currentItems(id).stream()
                 .map(e -> new OpsAccountProfile.Item(e.item(), e.item().label(), e.status(), e.awaitingProvider(), e.submittedAt(), e.resubmitted()))
                 .toList();
+        VerificationStatus documents = verificationAggregationService.documentsStatus(id);
+        VerificationStatus overall = verificationAggregationService.withIdentity(id, documents);
         return new OpsAccountProfile.Driver(driver.getFirstName(), driver.getLastName(), driver.getEmail(), driver.getPhotoUrl(),
                 org.coryd.common.util.PiiMask.birthYear(driver.getDateOfBirth()), org.coryd.common.util.PiiMask.trailing(driver.getIdNumber()),
-                verificationAggregationService.overallStatus(id), driver.getVerifiedSince(),
-                items, licenceAttemptsService.attempts(id));
+                overall, driver.getVerifiedSince(),
+                items, licenceAttemptsService.attempts(id), VerificationAggregationService.ninPending(documents, overall));
     }
 
     /**
@@ -176,7 +178,7 @@ public class OpsAccountService {
         }
         boolean identityChanged = changes.stream().anyMatch(c -> List.of("make", "model", "year", "plateNumber").contains(c.field()));
         boolean sendBack = identityChanged && vehicle.getVerificationStatus() == VerificationStatus.APPROVED;
-        VerificationStatus overallBefore = verificationAggregationService.overallStatus(driverId);
+        VerificationStatus overallBefore = verificationAggregationService.documentsStatus(driverId);
 
         if (make != null) vehicle.setMake(make);
         if (model != null) vehicle.setModel(model);
@@ -206,7 +208,7 @@ public class OpsAccountService {
                     .decidedBy(by)
                     .decidedById(opsId)
                     .build());
-            if (overallBefore == VerificationStatus.APPROVED && verificationAggregationService.overallStatus(driverId) != VerificationStatus.APPROVED) {
+            if (overallBefore == VerificationStatus.APPROVED && verificationAggregationService.documentsStatus(driverId) != VerificationStatus.APPROVED) {
                 verificationAggregationService.publishPostingBlocked(driverId, "Vehicle details changed - back under review", by);
             }
             kafkaTemplate.send(KafkaTopics.VERIFICATION_ITEM_DECIDED, VerificationItemDecidedEvent.builder()

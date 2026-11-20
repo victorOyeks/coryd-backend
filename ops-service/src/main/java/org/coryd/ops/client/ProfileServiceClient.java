@@ -561,7 +561,7 @@ public class ProfileServiceClient {
                                 Instant suspendedAt, String suspensionReason,
                                 String vehicleMake, String vehicleModel, Integer vehicleYear, String vehicleColor, String plateNumber,
                                 Long trips, Double ratingAvg, Long ratingCount, Integer reliabilityPercent, Long reportsFiled,
-                                BigDecimal earningsNet, BigDecimal earningsGross, Instant lastTripAt) {
+                                BigDecimal earningsNet, BigDecimal earningsGross, Instant lastTripAt, boolean ninPending) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

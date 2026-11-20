@@ -453,8 +453,23 @@ public class NotificationEventListener {
         return documentType == null ? "Document" : documentType;
     }
 
+    /**
+     * "You're verified!" once, when the driver is first fully verified - every item approved and their identity (NIN)
+     * check too, whichever came last (profile-service decides and marks it firstApproval). Every item approved while the
+     * NIN check isn't (identityPending): their documents are approved, but posting needs the NIN check first.
+     */
     @KafkaListener(topics = KafkaTopics.DRIVER_APPROVED, groupId = KafkaConfig.GROUP_ID_ADMIN)
     public void onDriverApproved(DriverApprovedEvent event) {
+        if (Boolean.TRUE.equals(event.getIdentityPending())) {
+            dispatchService.sendPush(event.getDriverId(), "Your documents are approved",
+                    "Finish your NIN check to start posting routes.", "DRIVER_DOCUMENTS_APPROVED", null);
+            if (event.getEmail() != null) {
+                dispatchService.sendEmail(event.getEmail(), "Your documents are approved - CoRyd",
+                        "Good news - your CoRyd driver documents are approved. Finish your NIN check in the app to start posting routes.",
+                        "DRIVER_DOCUMENTS_APPROVED");
+            }
+            return;
+        }
         // Approved again after a renewal or a rejection - the per-document push already told them.
         if (Boolean.FALSE.equals(event.getFirstApproval())) {
             return;

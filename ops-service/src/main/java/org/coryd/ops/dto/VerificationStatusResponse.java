@@ -23,7 +23,10 @@ public record VerificationStatusResponse(
         /** Documents ops asked the driver to upload again, still waiting for the new upload. */
         List<ResubmissionRequest> resubmissionRequests,
         /** The reviewer's marks and whether Approve Driver / Reject can be pressed - null if it couldn't be loaded. */
-        VerificationReview review
+        VerificationReview review,
+        /** Every item approved, but the identity (NIN) check isn't - overallStatus is then PENDING or IN_REVIEW, never APPROVED.
+         * False from a profile-service that doesn't send it yet. */
+        boolean ninPending
 ) {
     /** One document ops asked for again: reason is what the driver was told; requestedAt when. */
     public record ResubmissionRequest(org.coryd.common.enums.ReviewableItem item, String label, String reason, Instant requestedAt) {
@@ -117,11 +120,11 @@ public record VerificationStatusResponse(
 
     public VerificationStatusResponse withDriver(DriverDetails details) {
         return new VerificationStatusResponse(details, waitingSince, governmentId, vehicleRegistration, documents,
-                overallStatus, verifiedSince, providerChecks, resubmissionRequests, review);
+                overallStatus, verifiedSince, providerChecks, resubmissionRequests, review, ninPending);
     }
 
     public VerificationStatusResponse withReview(VerificationReview review) {
         return new VerificationStatusResponse(driver, waitingSince, governmentId, vehicleRegistration, documents,
-                overallStatus, verifiedSince, providerChecks, resubmissionRequests, review);
+                overallStatus, verifiedSince, providerChecks, resubmissionRequests, review, ninPending);
     }
 }

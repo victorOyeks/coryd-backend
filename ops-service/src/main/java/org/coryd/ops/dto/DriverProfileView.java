@@ -16,6 +16,8 @@ public record DriverProfileView(
         DriverSummary driver,
         DriverDirectoryStatus status,
         VerificationStatus verificationStatus,
+        /** Every item approved but the identity (NIN) check not - see DriverDirectoryItem. */
+        boolean ninPending,
         Suspension suspension,
         DriverDirectoryItem.Vehicle vehicle,
         Performance performance,

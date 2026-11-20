@@ -8,6 +8,7 @@ import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.IdentityVerificationChangedEvent;
 import org.coryd.profile.entity.IdentityVerification;
 import org.coryd.profile.repository.IdentityVerificationRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +29,12 @@ public class IdentityVerificationDecider {
     private final IdentityVerificationRepository identityVerificationRepository;
     private final CloudinaryService cloudinaryService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ApplicationEventPublisher events;
+
+    /** Published in-process after every decision, for what follows from it here - a driver whose items were already all
+     * approved becomes fully verified (VerificationAggregationService.onIdentityDecided). */
+    public record Decided(String userId, boolean approved, String decidedBy) {
+    }
 
     public void approve(IdentityVerification verification, String decidedBy) {
         decide(verification, VerificationStatus.APPROVED, null, decidedBy, null);
@@ -81,6 +88,7 @@ public class IdentityVerificationDecider {
                 .action(action == null ? null : action.name())
                 .reason(reason)
                 .build());
+        events.publishEvent(new Decided(verification.getUserId(), status == VerificationStatus.APPROVED, decidedBy));
     }
 
     /** Best effort - a Cloudinary hiccup must never undo a decision. */

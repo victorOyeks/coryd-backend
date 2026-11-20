@@ -4,6 +4,7 @@ import org.coryd.common.enums.DocumentExpirySort;
 import org.coryd.common.enums.DocumentExpiryStatus;
 import org.coryd.common.enums.DocumentExpiryTab;
 import org.coryd.common.enums.DocumentType;
+import org.coryd.common.enums.DriverDirectoryStatus;
 import org.coryd.common.enums.ReviewableItem;
 import org.coryd.common.enums.UserRole;
 import org.coryd.common.enums.VerificationStatus;
@@ -23,6 +24,8 @@ import org.coryd.profile.dto.UpdateDriverProfileRequest;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
 import org.coryd.profile.dto.VerificationDecisionBatchRequest;
 import org.coryd.profile.entity.DriverDocument;
+import org.coryd.profile.entity.DriverIndex;
+import org.coryd.profile.entity.IdentityVerification;
 import org.coryd.profile.repository.DriverDocumentRepository;
 import org.coryd.profile.repository.DriverIndexRepository;
 import org.coryd.profile.repository.DriverProfileRepository;
@@ -74,7 +77,7 @@ import static org.mockito.Mockito.when;
 @Testcontainers
 @Import({VerificationAggregationService.class, DriverProfileService.class, VehicleService.class, DriverDocumentService.class,
         EmergencyContactService.class, RiderProfileService.class, ReplacedFiles.class, DriverIndexService.class, DriverIndexer.class,
-        DocumentExpiryService.class, DocumentExpiryJob.class})
+        DocumentExpiryService.class, DocumentExpiryJob.class, IdentityVerificationDecider.class})
 class DocumentExpiryIntegrationTest {
 
     @Container
@@ -94,6 +97,8 @@ class DocumentExpiryIntegrationTest {
     @Autowired EmergencyContactRepository emergencyContactRepository;
     @Autowired SmileIdCheckRepository smileIdCheckRepository;
     @Autowired JdbcTemplate jdbcTemplate;
+    @Autowired IdentityVerificationDecider identityDecider;
+    @Autowired org.coryd.profile.repository.IdentityVerificationRepository identityVerificationRepository;
 
     @MockBean VerifiedIdentityService verifiedIdentityService;
     @MockBean NinLookupService ninLookupService;
@@ -107,12 +112,15 @@ class DocumentExpiryIntegrationTest {
     @BeforeEach
     void cleanSlate() {
         when(ninLookupService.view(any())).thenReturn(new org.coryd.profile.dto.DriverNinView(true, "MATCH", null, null, 3));
+        // identity (NIN) verified unless a test says otherwise - a driver is verified only once it is (B31)
+        when(driverIdentity.verified(any())).thenReturn(true);
         when(kafkaTemplate.send(anyString(), any())).thenReturn(new CompletableFuture<>());
         when(identityServiceClient.contacts(any())).thenAnswer(inv -> {
             java.util.Collection<String> ids = inv.getArgument(0);
             return ids.stream().map(id -> new IdentityServiceClient.Contact(id, phoneOf(id), null, null, null)).toList();
         });
         smileIdCheckRepository.deleteAll();
+        identityVerificationRepository.deleteAll();
         driverDocumentRepository.deleteAll();
         vehicleRepository.deleteAll();
         emergencyContactRepository.deleteAll();
@@ -330,6 +338,80 @@ class DocumentExpiryIntegrationTest {
         ArgumentCaptor<Object> approved = ArgumentCaptor.forClass(Object.class);
         verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_APPROVED), approved.capture());
         assertThat(((DriverApprovedEvent) approved.getValue()).getFirstApproval()).isTrue();
+        assertThat(((DriverApprovedEvent) approved.getValue()).getIdentityPending()).isFalse();
+
+        // their NIN check decided again later (ops re-approving it) - no second welcome
+        clearInvocations(kafkaTemplate);
+        identityDecider.approve(identityVerificationRepository.save(IdentityVerification.builder().userId("aaaa1111-1")
+                .status(VerificationStatus.IN_REVIEW).build()), "ops");
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.DRIVER_APPROVED), any());
+    }
+
+    @Test
+    void itemsApprovedBeforeTheNinCheckAreDocumentsApprovedAndTheWelcomeWaitsForIt() {
+        when(driverIdentity.verified("aaaa1111-1")).thenReturn(false);
+        submitAll("aaaa1111-1", "Emeka", "Okafor", "08053636321");
+        clearInvocations(kafkaTemplate);
+
+        approveAll("aaaa1111-1");
+
+        ArgumentCaptor<Object> approved = ArgumentCaptor.forClass(Object.class);
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_APPROVED), approved.capture());
+        DriverApprovedEvent documents = (DriverApprovedEvent) approved.getValue();
+        assertThat(documents.getFirstApproval()).as("not 'You're verified!'").isFalse();
+        assertThat(documents.getIdentityPending()).isTrue();
+        assertThat(verification.overallStatus("aaaa1111-1")).isEqualTo(VerificationStatus.PENDING);
+        assertThat(verification.documentsStatus("aaaa1111-1")).isEqualTo(VerificationStatus.APPROVED);
+        assertThat(verification.getStatus("aaaa1111-1").ninPending()).isTrue();
+        assertThat(driverProfileRepository.findByUserId("aaaa1111-1").orElseThrow().getVerifiedSince()).isNull();
+        DriverIndex row = driverIndexRepository.findById("aaaa1111-1").orElseThrow();
+        assertThat(row.getNinPending()).isTrue();
+        assertThat(row.getDirectoryStatus()).isEqualTo(DriverDirectoryStatus.PENDING);
+
+        // the NIN check lands last: "You're verified!" now, once
+        clearInvocations(kafkaTemplate);
+        when(driverIdentity.verified("aaaa1111-1")).thenReturn(true);
+        IdentityVerification check = identityVerificationRepository.save(IdentityVerification.builder().userId("aaaa1111-1")
+                .status(VerificationStatus.IN_REVIEW).build());
+        identityDecider.approveByOps(check, "ops", org.coryd.common.enums.VerificationDecisionAction.APPROVED);
+
+        verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_APPROVED), approved.capture());
+        DriverApprovedEvent welcome = (DriverApprovedEvent) approved.getValue();
+        assertThat(welcome.getFirstApproval()).isTrue();
+        assertThat(welcome.getIdentityPending()).isFalse();
+        assertThat(verification.overallStatus("aaaa1111-1")).isEqualTo(VerificationStatus.APPROVED);
+        assertThat(driverProfileRepository.findByUserId("aaaa1111-1").orElseThrow().getVerifiedSince()).isNotNull();
+        DriverIndex verified = driverIndexRepository.findById("aaaa1111-1").orElseThrow();
+        assertThat(verified.getNinPending()).isFalse();
+        assertThat(verified.getDirectoryStatus()).isEqualTo(DriverDirectoryStatus.VERIFIED);
+
+        // an item approved again afterwards - no second welcome
+        clearInvocations(kafkaTemplate);
+        decide("aaaa1111-1", new ItemDecision(ReviewableItem.INSURANCE, VerificationStatus.APPROVED, null));
+        identityDecider.approve(check, "ops");
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.DRIVER_APPROVED), any());
+    }
+
+    @Test
+    void withIdentityNotEnforcedTheItemsAloneAreAWelcome() {
+        VerificationAggregationService target = org.springframework.test.util.AopTestUtils.getTargetObject(verification);
+        org.springframework.test.util.ReflectionTestUtils.setField(target, "identityEnforcement", "OFF");
+        try {
+            when(driverIdentity.verified("aaaa1111-1")).thenReturn(false);
+            submitAll("aaaa1111-1", "Emeka", "Okafor", "08053636321");
+            clearInvocations(kafkaTemplate);
+
+            approveAll("aaaa1111-1");
+
+            ArgumentCaptor<Object> approved = ArgumentCaptor.forClass(Object.class);
+            verify(kafkaTemplate).send(eq(KafkaTopics.DRIVER_APPROVED), approved.capture());
+            assertThat(((DriverApprovedEvent) approved.getValue()).getFirstApproval()).isTrue();
+            assertThat(((DriverApprovedEvent) approved.getValue()).getIdentityPending()).isFalse();
+            assertThat(verification.overallStatus("aaaa1111-1")).isEqualTo(VerificationStatus.APPROVED);
+            assertThat(verification.getStatus("aaaa1111-1").ninPending()).isFalse();
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(target, "identityEnforcement", "STRICT");
+        }
     }
 
     @Test

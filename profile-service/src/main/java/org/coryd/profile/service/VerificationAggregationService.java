@@ -61,10 +61,17 @@ public class VerificationAggregationService {
     private final org.coryd.profile.repository.VerificationDecisionLogRepository decisionLogRepository;
     private final org.coryd.profile.repository.SmileIdCheckRepository smileIdCheckRepository;
     private final org.coryd.profile.repository.DriverIndexRepository driverIndexRepository;
+    private final org.coryd.profile.repository.IdentityVerificationRepository identityVerificationRepository;
 
     /** A licence still out with Smile ID joins the ops queue once it has waited this long - most results land within minutes. */
     @org.springframework.beans.factory.annotation.Value("${verification.provider-pending-queue-after-minutes:10}")
     private long providerPendingQueueAfterMinutes = 10;
+
+    /** trip-service's IDENTITY_VERIFICATION_ENFORCEMENT, read here too: STRICT (the default) means nobody posts a route until
+     * their identity (NIN) check is approved, so a driver isn't verified - or told so - until it is. OFF: identity plays no
+     * part, and a driver is verified once their four items are approved. */
+    @org.springframework.beans.factory.annotation.Value("${identity.verification.enforcement:STRICT}")
+    private String identityEnforcement = "STRICT";
 
     public VerificationStatusResponse getStatus(String driverId) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
@@ -73,6 +80,8 @@ public class VerificationAggregationService {
 
         List<VerificationQueueItem.Entry> entries = entries(profile, vehicle, documents, licenceCheck(driverId));
         boolean licenceAwaitingProvider = entries.get(0).awaitingProvider();
+        VerificationStatus documentsStatus = computeDocumentsStatus(profile, vehicle, documents);
+        VerificationStatus overall = withIdentity(driverId, documentsStatus);
         return new VerificationStatusResponse(
                 profile == null ? null : VerificationStatusResponse.DriverDetails.of(profile.getFirstName(), profile.getLastName(),
                         profile.getPhotoUrl(), profile.getIdNumber(), profile.getDateOfBirth()),
@@ -93,10 +102,11 @@ public class VerificationAggregationService {
                         vehicle == null ? null : vehicle.getSubmittedAt(),
                         vehicle != null && vehicle.isResubmitted()),
                 documentStatuses(documents),
-                computeOverallStatus(profile, vehicle, documents),
+                overall,
                 profile == null ? null : profile.getVerifiedSince(),
                 providerChecks(driverId),
-                resubmissionRequests(driverId, profile, vehicle, documents)
+                resubmissionRequests(driverId, profile, vehicle, documents),
+                ninPending(documentsStatus, overall)
         );
     }
 
@@ -124,7 +134,7 @@ public class VerificationAggregationService {
                 requireLicenceCanBeTakenBack(driverId);
             }
         }
-        VerificationStatus before = overallStatus(driverId);
+        VerificationStatus before = documentsStatus(driverId);
         Map<ReviewableItem, VerificationStatus> previous = currentItems(driverId).stream()
                 .collect(Collectors.toMap(VerificationQueueItem.Entry::item, VerificationQueueItem.Entry::status));
         String licenceOutcome = licenceProviderOutcome(driverId);
@@ -247,7 +257,7 @@ public class VerificationAggregationService {
     @Transactional
     public void autoApproveGovernmentId(String driverId, String decidedBy) {
         ItemDecision decision = new ItemDecision(ReviewableItem.GOVERNMENT_ID, VerificationStatus.APPROVED, null);
-        VerificationStatus before = overallStatus(driverId);
+        VerificationStatus before = documentsStatus(driverId);
         String email = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getEmail).orElse(null);
         VerificationStatus previous = driverProfileRepository.findByUserId(driverId).map(DriverProfile::getGovernmentIdStatus).orElse(null);
         applyDecision(driverId, decision);
@@ -286,10 +296,75 @@ public class VerificationAggregationService {
                 driverDocumentRepository.findByDriverId(driverId), licenceCheck(driverId));
     }
 
-    /** The driver's overall status right now. */
+    /** The driver's overall status right now - APPROVED only once they're fully verified (see withIdentity). */
     public VerificationStatus overallStatus(String driverId) {
-        return computeOverallStatus(driverProfileRepository.findByUserId(driverId).orElse(null), primaryVehicle(driverId),
+        return withIdentity(driverId, documentsStatus(driverId));
+    }
+
+    /** The four items alone, identity aside - what trip-service's document gate follows (DRIVER_APPROVED / DRIVER_REJECTED). */
+    public VerificationStatus documentsStatus(String driverId) {
+        return computeDocumentsStatus(driverProfileRepository.findByUserId(driverId).orElse(null), primaryVehicle(driverId),
                 driverDocumentRepository.findByDriverId(driverId));
+    }
+
+    /** Whether a driver must have their identity (NIN) check approved to post - false only with IDENTITY_VERIFICATION_ENFORCEMENT=OFF. */
+    public boolean identityRequired() {
+        return !"OFF".equalsIgnoreCase(identityEnforcement == null ? "" : identityEnforcement.trim());
+    }
+
+    /**
+     * The overall status from the four items' - APPROVED only when the driver is fully verified, so every screen agrees with
+     * trip-service's posting gate: with every item approved but the identity (NIN) check not (and identity enforced), it's
+     * IN_REVIEW while ops has the identity check, PENDING otherwise (the driver's turn). ninPending says which case it is.
+     */
+    VerificationStatus withIdentity(String driverId, VerificationStatus documentsStatus) {
+        if (documentsStatus != VerificationStatus.APPROVED || !identityRequired() || driverIdentity.verified(driverId)) {
+            return documentsStatus;
+        }
+        return identityWithOps(driverId) ? VerificationStatus.IN_REVIEW : VerificationStatus.PENDING;
+    }
+
+    /** Every item approved, but not verified because the identity (NIN) check isn't - "NIN pending" in the console. */
+    static boolean ninPending(VerificationStatus documentsStatus, VerificationStatus overall) {
+        return documentsStatus == VerificationStatus.APPROVED && overall != VerificationStatus.APPROVED;
+    }
+
+    private boolean identityWithOps(String driverId) {
+        boolean checkInReview = identityVerificationRepository.findByUserId(driverId)
+                .map(v -> v.getStatus() == VerificationStatus.IN_REVIEW).orElse(false);
+        return checkInReview || driverProfileRepository.findByUserId(driverId)
+                .map(p -> p.getNinStatus() == VerificationStatus.IN_REVIEW).orElse(false);
+    }
+
+    /**
+     * An identity (NIN) check was just decided - by Smile ID, the NIN lookup and licence together, or ops; every path goes
+     * through IdentityVerificationDecider. A driver whose four items were already approved is fully verified now: told
+     * "You're verified!" - once, like an approval of their last item (verifiedSince is the guard).
+     */
+    @org.springframework.context.event.EventListener
+    public void onIdentityDecided(IdentityVerificationDecider.Decided event) {
+        if (!event.approved() || !identityRequired()) {
+            return;
+        }
+        DriverProfile profile = driverProfileRepository.findByUserId(event.userId()).orElse(null);
+        if (profile == null || profile.getVerifiedSince() != null || documentsStatus(event.userId()) != VerificationStatus.APPROVED
+                || !driverIdentity.verified(event.userId())) {
+            return;
+        }
+        profile.setVerifiedSince(Instant.now());
+        driverProfileRepository.save(profile);
+        Vehicle vehicle = primaryVehicle(event.userId());
+        logKafkaResult(event.userId(), KafkaTopics.DRIVER_APPROVED,
+                kafkaTemplate.send(KafkaTopics.DRIVER_APPROVED, DriverApprovedEvent.builder()
+                        .driverId(event.userId())
+                        .vehicleId(vehicle == null ? null : vehicle.getId())
+                        .email(profile.getEmail())
+                        .reviewedBy(event.decidedBy())
+                        .approvedAt(LocalDateTime.now())
+                        .firstApproval(true)
+                        .identityPending(false)
+                        .build()));
+        log.info("Driver {} fully verified - identity check approved after their items", event.userId());
     }
 
     /** A driver who mustn't post - an expired document. trip-service's gate is told; the driver hears nothing from this. */
@@ -394,12 +469,16 @@ public class VerificationAggregationService {
         Vehicle vehicle = primaryVehicle(driverId);
         List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
         List<VerificationQueueItem.Entry> entries = entries(profile, vehicle, documents, licenceCheck(driverId));
-        return new IndexFacts(profile, vehicle, computeOverallStatus(profile, vehicle, documents), entries,
-                tabOf(entries), waitingSince(entries));
+        VerificationStatus documentsStatus = computeDocumentsStatus(profile, vehicle, documents);
+        VerificationStatus overall = withIdentity(driverId, documentsStatus);
+        return new IndexFacts(profile, vehicle, overall, entries, tabOf(entries), waitingSince(entries),
+                ninPending(documentsStatus, overall));
     }
 
+    /** ninPending: every item approved, the identity (NIN) check not - overallStatus is then PENDING or IN_REVIEW. */
     public record IndexFacts(DriverProfile profile, Vehicle vehicle, VerificationStatus overallStatus,
-                             List<VerificationQueueItem.Entry> entries, VerificationQueueTab queueTab, Instant waitingSince) {
+                             List<VerificationQueueItem.Entry> entries, VerificationQueueTab queueTab, Instant waitingSince,
+                             boolean ninPending) {
     }
 
     /**
@@ -613,29 +692,34 @@ public class VerificationAggregationService {
 
         return new DriverOnboardingStatusResponse(
                 profileSubmitted, governmentIdSubmitted, vehicleSubmitted, documentsSubmitted,
-                computeOverallStatus(profile, vehicle, documents)
+                withIdentity(driverId, computeDocumentsStatus(profile, vehicle, documents))
         );
     }
 
     /**
-     * Recomputes the driver's overall status and publishes DriverApprovedEvent/DriverRejectedEvent if it's now fully
-     * approved or has a rejection - called after every item-level decide() so trip-service's route-posting gate stays in
-     * sync. before is the overall status ahead of the decisions: a driver approved again (after a rejection or an expired
-     * document was replaced) is announced too, marked not first, or trip-service would keep them blocked.
+     * Recomputes the driver's four items and publishes DriverApprovedEvent/DriverRejectedEvent if they're now all approved
+     * or one is rejected - called after every item-level decide() so trip-service's route-posting gate stays in sync.
+     * before is the items' status ahead of the decisions (documentsStatus): a driver approved again (after a rejection or
+     * an expired document was replaced) is announced too, marked not first, or trip-service would keep them blocked.
+     * With every item approved but the identity (NIN) check still outstanding, the event says identityPending - the driver
+     * is told their documents are approved, not that they're verified; onIdentityDecided welcomes them when it lands.
      */
     public void reevaluateAndPublish(String driverId, String reviewedBy, VerificationStatus before) {
         DriverProfile profile = driverProfileRepository.findByUserId(driverId).orElse(null);
         Vehicle vehicle = primaryVehicle(driverId);
         List<DriverDocument> documents = driverDocumentRepository.findByDriverId(driverId);
 
-        VerificationStatus overall = computeOverallStatus(profile, vehicle, documents);
+        VerificationStatus overall = computeDocumentsStatus(profile, vehicle, documents);
         String vehicleId = vehicle == null ? null : vehicle.getId();
         String email = profile == null ? null : profile.getEmail();
+        boolean identityPending = overall == VerificationStatus.APPROVED && identityRequired() && !driverIdentity.verified(driverId);
 
         // verifiedSince is a one-way flag (never reset once set), so "still null" is exactly
         // "this is the first time ever" - a document-expiry-driven re-approval later must not
         // re-fire the "You're verified!" welcome push every time a renewed doc gets re-approved.
-        boolean isFirstApproval = overall == VerificationStatus.APPROVED && profile != null && profile.getVerifiedSince() == null;
+        // It's set only once the driver is fully verified, identity included.
+        boolean isFirstApproval = overall == VerificationStatus.APPROVED && !identityPending
+                && profile != null && profile.getVerifiedSince() == null;
         if (isFirstApproval) {
             profile.setVerifiedSince(Instant.now());
             driverProfileRepository.save(profile);
@@ -650,6 +734,7 @@ public class VerificationAggregationService {
                             .reviewedBy(reviewedBy)
                             .approvedAt(LocalDateTime.now())
                             .firstApproval(isFirstApproval)
+                            .identityPending(identityPending)
                             .build()));
         } else if (overall == VerificationStatus.REJECTED) {
             logKafkaResult(driverId, KafkaTopics.DRIVER_REJECTED,
@@ -710,8 +795,8 @@ public class VerificationAggregationService {
         return result;
     }
 
-    /** A document type that's never been uploaded still gates overall approval - PENDING, not silently satisfied. */
-    private VerificationStatus computeOverallStatus(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents) {
+    /** The four items alone. A document type that's never been uploaded still gates approval - PENDING, not silently satisfied. */
+    private VerificationStatus computeDocumentsStatus(DriverProfile profile, Vehicle vehicle, List<DriverDocument> documents) {
         List<VerificationStatus> statuses = new ArrayList<>();
         statuses.add(profile == null ? VerificationStatus.PENDING : profile.getGovernmentIdStatus());
         statuses.add(vehicle == null ? VerificationStatus.PENDING : vehicle.getVerificationStatus());

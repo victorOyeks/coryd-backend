@@ -47,7 +47,7 @@ public class DriverDirectoryService {
         ProfileServiceClient.IndexedDriver d = profileServiceClient.indexedDriver(driverId);
         DriverDirectoryItem row = row(d);
         AccountProfileParts.Parts parts = accountProfileParts.load(driverId);
-        return new DriverProfileView(row.driver(), row.status(), row.verificationStatus(),
+        return new DriverProfileView(row.driver(), row.status(), row.verificationStatus(), row.ninPending(),
                 d.suspendedAt() == null ? null : new DriverProfileView.Suspension(d.suspendedAt(), d.suspensionReason(),
                         suspendedBy(parts)),
                 row.vehicle(),
@@ -78,6 +78,6 @@ public class DriverDirectoryService {
         return new DriverDirectoryItem(driver,
                 hasVehicle ? new DriverDirectoryItem.Vehicle(d.vehicleMake(), d.vehicleModel(), d.vehicleYear(), d.vehicleColor(), d.plateNumber()) : null,
                 d.trips(), d.ratingAvg(), d.ratingCount(), d.earningsNet(), d.earningsGross(), d.reliabilityPercent(),
-                d.status(), d.verificationStatus(), d.joinedAt(), d.lastTripAt());
+                d.status(), d.verificationStatus(), d.joinedAt(), d.lastTripAt(), d.ninPending());
     }
 }
