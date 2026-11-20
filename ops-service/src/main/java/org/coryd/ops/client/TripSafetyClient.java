@@ -165,6 +165,18 @@ public class TripSafetyClient {
                                      ReportRow report) {
     }
 
+    // ---- first trip stories ------------------------------------------------------------------------------------------
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record FirstTripRow(String id, String userId, String role, String routePostId, String bookingId, String originLabel,
+                               String destinationLabel, String feeling, String story, boolean consentToShare, Instant completedAt,
+                               Instant submittedAt) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record FirstTripPage(List<FirstTripRow> content, int page, int size, long totalElements, int totalPages, boolean last) {
+    }
+
     // ---- ratings -----------------------------------------------------------------------------------------------------
 
     @JsonIgnoreProperties(ignoreUnknown = true)

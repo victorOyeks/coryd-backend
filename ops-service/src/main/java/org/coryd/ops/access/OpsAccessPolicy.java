@@ -89,6 +89,8 @@ public final class OpsAccessPolicy {
             new Rule(GET, "/sos/**", OpsPermission.SAFETY_VIEW),
             new Rule(GET, "/reports/**", OpsPermission.SAFETY_VIEW),
             new Rule(GET, "/ratings/**", OpsPermission.SAFETY_VIEW),
+            // what people said about their first trip - read only, like ratings; growth uses the consented ones
+            new Rule(GET, "/first-trip-stories/**", OpsPermission.SAFETY_VIEW, Set.of(OpsPermission.GROWTH_MANAGE)),
             new Rule(ANY, "/sos/**", OpsPermission.SAFETY_MANAGE),
             new Rule(ANY, "/reports/**", OpsPermission.SAFETY_MANAGE),
             new Rule(ANY, "/ratings/**", OpsPermission.SAFETY_MANAGE),

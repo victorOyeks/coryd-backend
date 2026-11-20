@@ -56,6 +56,7 @@ invite, change a role, deactivate/reactivate), the four ops roles, `GET /me`, an
 | GET | `/trips/**`, `/cancellations/**` | `TRIPS_VIEW` |
 | other | `/trips/**`, `/bookings/**` | `TRIPS_MANAGE` |
 | GET / other | `/sos/**`, `/reports/**`, `/ratings/**` | `SAFETY_VIEW` / `SAFETY_MANAGE` |
+| GET | `/first-trip-stories/**` (read only) | `SAFETY_VIEW` or `GROWTH_MANAGE` |
 | any | `/beta-signups/**` | `GROWTH_MANAGE` |
 | — | **anything else** | **SUPER_ADMIN only** |
 

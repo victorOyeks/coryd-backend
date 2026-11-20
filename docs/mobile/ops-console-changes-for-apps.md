@@ -34,6 +34,7 @@ Everything here was checked against the backend code (notification-service, iden
 16. [Checklist for the apps](#16-checklist-for-the-apps)
 17. [Where the ops-console docs differ from the code](#17-where-the-ops-console-docs-differ-from-the-code)
 18. [Driver trip mode: cancelled riders and next-stop ETA](#18-driver-trip-mode-cancelled-riders-and-next-stop-eta)
+19. [First trip celebration](#19-first-trip-celebration)
 
 ---
 
@@ -807,3 +808,20 @@ Added 2026-11-20 to `GET /trip/bookings/drivers/{driverId}/active` (not an ops-c
 | `nextStop` (`kind`, `bookingId`, `label`, `lat`, `lng`, `etaMinutes`, `distanceMeters`, `estimated`, `computedAt`, or `null`) | Driver Home card: "· 4 min away" on the NEXT PICKUP / NEXT DROP-OFF row, only when `kind` + `bookingId` match the stop the card shows. Hide it while the rider is `AT_PICKUP` | Should |
 
 QA: start a trip with two riders, cancel one before Start, drive towards the other. Home shows "0 of 1 picked up · 1 cancelled" and "· N min away" under NEXT PICKUP within 20 s of the first location fix.
+
+---
+
+## 19. First trip celebration
+
+Added 2026-11-20. Full contract in [first-trip-celebration.md](../first-trip-celebration.md). Ops read what people share in the console's **First trip stories**.
+
+| Endpoint | App action | Priority |
+|---|---|---|
+| `GET /trip/me/first-trip/{DRIVER\|RIDER}` | Before the post-trip rating (Trip Feedback for riders, Rate Passengers for drivers), ask. When it returns this trip, show the celebration first | Should |
+| `POST /trip/me/first-trip/{role}/share` `{feeling, story?, consentToShare?}` | Submit. `feeling`: `LOVED_IT`, `GOOD`, `OKAY`, `NOT_GREAT`, `BAD`; `story` up to 500 characters | Should |
+| `POST /trip/me/first-trip/{role}/skip` | Skip. Either answer ends it for good | Should |
+
+- "First" is the server's call (per user and role, no backfill), never local storage. People who already had trips never see it.
+- Errors: `404 There's no first trip to share yet`, `400 You've already answered this one - thank you!`, `400 Pick how it went`, `400 Keep it under 500 characters`. Treat any error on Submit or Skip as done and carry on to the rating, so nobody gets stuck.
+
+QA: an account with no completed trips completes one, as a rider and as a driver. Each sees the celebration once, before the usual rating. A second trip shows nothing.

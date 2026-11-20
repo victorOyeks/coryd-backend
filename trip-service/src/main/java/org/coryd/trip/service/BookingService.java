@@ -1361,6 +1361,8 @@ public class BookingService {
         route.setStatus(RouteStatus.COMPLETED);
         route.setCompletedAt(Instant.now());
         routePostRepository.save(route);
+        eventPublisher.publishEvent(new org.coryd.trip.event.TripCompletedForUserEvent(
+                org.coryd.trip.entity.FirstTripExperience.Role.DRIVER, route.getDriverId(), route.getId(), null));
         driverStatsPublisher.changed(route.getDriverId());
         chatService.deleteChatForRoute(routePostId);
         return new OpsCompletion(completed, refunded, noShows, released);
@@ -1568,6 +1570,8 @@ public class BookingService {
         route.setStatus(RouteStatus.COMPLETED);
         route.setCompletedAt(Instant.now());
         routePostRepository.save(route);
+        eventPublisher.publishEvent(new org.coryd.trip.event.TripCompletedForUserEvent(
+                org.coryd.trip.entity.FirstTripExperience.Role.DRIVER, route.getDriverId(), route.getId(), null));
 
         // The Trip Group Chat's whole purpose ends with the trip - delete its conversation outright, not just mark it inactive.
         chatService.deleteChatForRoute(routePostId);
@@ -1587,6 +1591,8 @@ public class BookingService {
         }
         recordHistory(booking.getId(), BookingStatus.COMPLETED, "Trip completed");
         driverStatsPublisher.changed(route.getDriverId());
+        eventPublisher.publishEvent(new org.coryd.trip.event.TripCompletedForUserEvent(
+                org.coryd.trip.entity.FirstTripExperience.Role.RIDER, booking.getRiderId(), route.getId(), booking.getId()));
 
         kafkaTemplate.send(KafkaTopics.TRIP_COMPLETED, TripCompletedEvent.builder()
                 .bookingId(booking.getId())

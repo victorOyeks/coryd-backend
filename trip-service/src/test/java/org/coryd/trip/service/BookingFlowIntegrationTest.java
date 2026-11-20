@@ -74,7 +74,7 @@ import static org.mockito.Mockito.verify;
 @org.springframework.test.context.TestPropertySource(properties = "identity.verification.enforcement=OFF")
 @Import({BookingService.class, RouteService.class, UserBlockService.class, RouteMatcher.class, org.coryd.trip.config.GeoCapabilities.class, RouteTemplateService.class, org.coryd.trip.config.policy.IdentityVerificationPolicy.class, TripScheduleService.class, OpsTripQueryService.class, CancellationLogService.class, org.coryd.trip.config.StuckTripProperties.class, CancellationPolicy.class, MatchingProperties.class,
         NotifyMeService.class, DemandService.class, org.coryd.trip.config.DemandProperties.class, org.coryd.trip.config.TimeChangeProperties.class, org.coryd.trip.config.SavingsProperties.class, OpsDriverStatsService.class, DriverStatsPublisher.class,
-        OpsRiderStatsService.class, RiderStatsPublisher.class, OpsRiderTripService.class})
+        OpsRiderStatsService.class, RiderStatsPublisher.class, OpsRiderTripService.class, FirstTripService.class})
 class BookingFlowIntegrationTest {
 
     @Container
@@ -88,6 +88,8 @@ class BookingFlowIntegrationTest {
     private static final BigDecimal FARE = new BigDecimal("1200.00");
 
     @Autowired BookingService bookingService;
+    @Autowired FirstTripService firstTripService;
+    @Autowired org.coryd.trip.repository.FirstTripExperienceRepository firstTripExperienceRepository;
     @Autowired RouteService routeService;
     @Autowired BookingRepository bookingRepository;
     @Autowired RoutePostRepository routePostRepository;
@@ -140,11 +142,121 @@ class BookingFlowIntegrationTest {
         identityVerificationCacheRepository.deleteAll();
         routeTemplateRepository.deleteAll();
         org.mockito.Mockito.when(paymentServiceClient.postingStatus(org.mockito.ArgumentMatchers.anyString())).thenReturn(standing(true, "0", false));
+        firstTripExperienceRepository.deleteAll();
         ratingRepository.deleteAll();
         historyRepository.deleteAll();
         bookingRepository.deleteAll();
         routePostRepository.deleteAll();
         clearInvocations(kafkaTemplate);
+    }
+
+    // ---- first trip celebration ----------------------------------------------------------------
+
+    private static final org.coryd.trip.entity.FirstTripExperience.Role AS_RIDER = org.coryd.trip.entity.FirstTripExperience.Role.RIDER;
+    private static final org.coryd.trip.entity.FirstTripExperience.Role AS_DRIVER = org.coryd.trip.entity.FirstTripExperience.Role.DRIVER;
+
+    /** A route of driverId's, with riderId aboard, driven to the end. */
+    private RoutePost completedTrip(String driverId, String riderId) {
+        RoutePost route = routePostRepository.save(routeBuilder(4).driverId(driverId).departureTime(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
+        Booking booking = book(route, riderId, 1);
+        confirm(booking);
+        routeService.startTrip(route.getId(), driverId);
+        bookingService.markPickedUp(booking.getId(), driverId, reload(booking).getPickupCode());
+        bookingService.completeRoute(route.getId(), driverId);
+        return route;
+    }
+
+    @Test
+    void firstRideAndFirstDriveAreEachCelebratedOnce() {
+        RoutePost first = completedTrip(DRIVER, RIDER);
+
+        var ride = firstTripService.pending(RIDER, AS_RIDER).orElseThrow();
+        assertThat(ride.routePostId()).isEqualTo(first.getId());
+        assertThat(ride.bookingId()).isEqualTo(onlyBooking(first).getId());
+        assertThat(ride.originLabel()).isEqualTo("Campos Memorial Mini Stadium");
+        var drive = firstTripService.pending(DRIVER, AS_DRIVER).orElseThrow();
+        assertThat(drive.routePostId()).isEqualTo(first.getId());
+        assertThat(drive.bookingId()).isNull();
+        // Wrong role: nothing.
+        assertThat(firstTripService.pending(RIDER, AS_DRIVER)).isEmpty();
+
+        // A second trip changes nothing - still the first one waiting.
+        completedTrip(DRIVER, RIDER);
+        assertThat(firstTripExperienceRepository.count()).isEqualTo(2);
+        assertThat(firstTripService.pending(RIDER, AS_RIDER).orElseThrow().routePostId()).isEqualTo(first.getId());
+
+        firstTripService.share(RIDER, AS_RIDER, new org.coryd.trip.dto.FirstTripDtos.ShareRequest(
+                org.coryd.trip.entity.FirstTripExperience.Feeling.LOVED_IT, "  Smooth ride, friendly driver  ", true));
+        firstTripService.skip(DRIVER, AS_DRIVER);
+
+        assertThat(firstTripService.pending(RIDER, AS_RIDER)).isEmpty();
+        assertThat(firstTripService.pending(DRIVER, AS_DRIVER)).isEmpty();
+        assertThatThrownBy(() -> firstTripService.skip(RIDER, AS_RIDER)).isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("already answered");
+        var saved = firstTripExperienceRepository.findByUserIdAndRole(RIDER, AS_RIDER).orElseThrow();
+        assertThat(saved.getStory()).isEqualTo("Smooth ride, friendly driver");
+        assertThat(saved.isConsentToShare()).isTrue();
+        assertThat(saved.getRespondedAt()).isNotNull();
+    }
+
+    @Test
+    void peopleWhoAlreadyHadTripsAreNeverCelebrated() {
+        // As if these trips happened before the feature shipped: completed, no celebration rows.
+        completedTrip(DRIVER, RIDER);
+        firstTripExperienceRepository.deleteAll();
+
+        completedTrip(DRIVER, RIDER);
+
+        assertThat(firstTripExperienceRepository.count()).isZero();
+        assertThat(firstTripService.pending(RIDER, AS_RIDER)).isEmpty();
+        assertThat(firstTripService.pending(DRIVER, AS_DRIVER)).isEmpty();
+    }
+
+    @Test
+    void aRouteThatCarriedNobodyIsNotAFirstDrive() {
+        RoutePost empty = routePostRepository.save(routeBuilder(4).departureTime(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
+        routeService.startTrip(empty.getId(), DRIVER);
+        bookingService.completeRoute(empty.getId(), DRIVER);
+        assertThat(firstTripService.pending(DRIVER, AS_DRIVER)).isEmpty();
+
+        // The first that does carry someone is the first drive.
+        completedTrip(DRIVER, RIDER);
+        assertThat(firstTripService.pending(DRIVER, AS_DRIVER)).isPresent();
+    }
+
+    @Test
+    void someoneWhoRidesAndDrivesIsCelebratedForEach() {
+        completedTrip(DRIVER, RIDER);             // RIDER's first ride
+        completedTrip("driver-2", DRIVER);        // DRIVER's first ride, on someone else's route
+
+        assertThat(firstTripService.pending(DRIVER, AS_DRIVER)).isPresent();
+        assertThat(firstTripService.pending(DRIVER, AS_RIDER)).isPresent();
+        assertThat(firstTripService.pending("driver-2", AS_DRIVER)).isPresent();
+    }
+
+    @Test
+    void opsSeeSharedStoriesOnlyNewestFirstFilteredByRoleAndConsent() throws Exception {
+        completedTrip(DRIVER, RIDER);
+        completedTrip("driver-2", OTHER_RIDER);
+        completedTrip("driver-3", "rider-3");
+        var share = (java.util.function.BiConsumer<String, Boolean>) (rider, consent) -> firstTripService.share(rider, AS_RIDER,
+                new org.coryd.trip.dto.FirstTripDtos.ShareRequest(org.coryd.trip.entity.FirstTripExperience.Feeling.GOOD, "story " + rider, consent));
+        share.accept(RIDER, false);
+        Thread.sleep(5);
+        share.accept(OTHER_RIDER, true);
+        firstTripService.skip("rider-3", AS_RIDER);
+        firstTripService.share(DRIVER, AS_DRIVER, new org.coryd.trip.dto.FirstTripDtos.ShareRequest(
+                org.coryd.trip.entity.FirstTripExperience.Feeling.OKAY, null, true));
+
+        var all = firstTripService.listShared(null, null, 0, 20);
+        assertThat(all.content()).extracting(r -> r.userId()).containsExactly(DRIVER, OTHER_RIDER, RIDER);
+        assertThat(firstTripService.listShared(AS_RIDER, null, 0, 20).content()).extracting(r -> r.userId())
+                .containsExactly(OTHER_RIDER, RIDER);
+        var consented = firstTripService.listShared(AS_RIDER, true, 0, 20).content();
+        assertThat(consented).extracting(r -> r.userId()).containsExactly(OTHER_RIDER);
+        assertThat(consented.get(0).story()).isEqualTo("story " + OTHER_RIDER);
+        assertThat(consented.get(0).destinationLabel()).isEqualTo("Obalende Bridge");
+        assertThat(consented.get(0).feeling()).isEqualTo(org.coryd.trip.entity.FirstTripExperience.Feeling.GOOD);
     }
 
     // ---- payout account before posting ---------------------------------------------------------

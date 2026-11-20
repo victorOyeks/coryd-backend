@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * An account was deleted. Its upcoming routes and seats are cancelled (riders refunded, as for a
  * suspension), then everything personal trip-service keeps about the person is erased: saved places,
- * searches, notify-me requests, regular routes, driving preferences, blocks either way, and caches.
+ * searches, notify-me requests, regular routes, driving preferences, blocks either way, first-trip stories and caches.
  * Past routes, bookings, ratings, SOS and safety records stay - they're other people's trips and the
  * accounting trail - but only under a user ID that no longer leads to anyone.
  */
@@ -46,7 +46,9 @@ public class AccountDeletionEventListener {
             "DELETE FROM trip.user_blocks WHERE blocker_id = :id OR blocked_id = :id",
             "DELETE FROM trip.identity_verification_cache WHERE user_id = :id",
             "DELETE FROM trip.driver_verification_cache WHERE driver_id = :id",
-            "DELETE FROM trip.suspended_users WHERE user_id = :id");
+            "DELETE FROM trip.suspended_users WHERE user_id = :id",
+            // their own words about their first trip
+            "DELETE FROM trip.first_trip_experiences WHERE user_id = :id");
 
     private final RoutePostRepository routePostRepository;
     private final RouteService routeService;
