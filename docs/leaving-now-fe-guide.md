@@ -102,7 +102,7 @@ Send **exactly one** of the two. `minutes` is added to the trip's current depart
 | `timeChangeCount` | How many times it changed with riders booked. You could show "time changed 2×". |
 | `freeCancellation` | `true` means cancelling is free, with a full refund. Show **Keep my seat** / **Cancel – full refund**. |
 
-Cancel with the existing `POST /trip/bookings/{bookingId}/cancel`. When `freeCancellation` is true, the late-cancellation fee is not charged.
+Cancel with the existing `POST /trip/bookings/{bookingId}/cancel`. When `freeCancellation` is true, the late-cancellation fee is not charged. `GET /trip/bookings/{bookingId}/cancellation-quote` says so too (`reason: FREE_TIME_CHANGED`) - see card-payments-fe-guide.md section 3.
 
 Search results and route details also carry `timeChangeCount` (and route details carries `originalDepartureTime`).
 

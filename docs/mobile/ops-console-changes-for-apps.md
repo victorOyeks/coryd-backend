@@ -57,7 +57,7 @@ Priority: **Must** means the app is wrong or confusing without the change. **Sho
 | Broadcasts | New push `BROADCAST`, with `referenceId` set to the broadcast id. The bell entry has `eventType: BROADCAST` | Open the bell. Make sure the announcements switch writes `promotionalOptIn` | **Must** (handle the type) |
 | Privacy | `GET /profile/drivers/{id}/documents` and `GET /payment/payments/bookings/{id}` now return `403` for other people | Nothing if the app only reads its own. Don't treat these 403s as sign-out | Nice |
 | Privacy | The bell, preferences and device-token endpoints (`/notification/notifications/…`, `/notification/preferences/users/{userId}`, `/notification/device-tokens/users/{userId}`) now act only for the signed-in user: another user's id gets `403 You can only manage your own notifications`, another user's notification id gets `404`. New `GET /notification/preferences/users/{userId}` reads the switches | Always send the signed-in user's own id (from the token you're using, not a cached one). Read the switches with the new GET | Should |
-| Settings | Ops can change the booking window, cancellation fee and free-cancellation window, document-reminder days and commission at runtime | Don't hard-code 10 minutes, 25%, 2 hours, 14 days or 5%. Read `bookableUntil`, `holdExpiresAt` and the commission-rate endpoint | Should |
+| Settings | Ops can change the booking window, cancellation fee and free-cancellation window, document-reminder days and commission at runtime | Don't hard-code 10 minutes, 25%, 2 hours, 14 days or 5%. Read `bookableUntil`, `holdExpiresAt`, the commission-rate endpoint and the new cancellation quote (`GET /trip/bookings/{bookingId}/cancellation-quote`) | Should |
 | WhatsApp | A WhatsApp OTP resend falls back to SMS while WhatsApp is off. `whatsappOptIn` exists as a preference | Optional "WhatsApp messages" switch | Nice |
 
 ---
@@ -564,12 +564,12 @@ Either flag can be sent alone; one you don't send keeps its value. Both default 
 
 ## 11. Settings ops can now change without an app release
 
-Platform Settings in the console change these values at runtime, and every service picks the change up within seconds. **No new endpoint** exposes them to the apps. **Don't hard-code them.**
+Platform Settings in the console change these values at runtime, and every service picks the change up within seconds. There is no settings endpoint for the apps; where a value matters on screen, the endpoint in the table carries it. **Don't hard-code them.**
 
 | Setting (default) | Where it shows in the apps | What to do |
 |---|---|---|
 | `booking.grace-minutes` (10) | `bookableUntil`, seat hold length, search | Use `bookableUntil` and `holdExpiresAt` only |
-| `cancellation.late-fee-percent` (25%) and `cancellation.free-window-hours` (2) | The fee charged when a rider cancels | Copy that says "25%" or "within 2 hours" can go stale. Word it generally, or ask the backend for a quote endpoint if the exact figure must be shown before cancelling. |
+| `cancellation.late-fee-percent` (25%) and `cancellation.free-window-hours` (2) | The fee charged when a rider cancels | Read `GET /trip/bookings/{bookingId}/cancellation-quote` when the cancel confirmation opens: it gives the fee, the refund, `freeUntil` and the current `feePercent` / `freeCancellationWindowHours` ([card-payments-fe-guide.md](../card-payments-fe-guide.md) section 3). Anywhere without a booking, word it generally. |
 | `commission.percent` (5%) | The driver's earnings breakdown | Read `GET /payment/earnings/commission-rate` |
 | `documents.expiry-reminder-days` (14) and `documents.final-reminder-days` (3) | When `DOCUMENT_EXPIRING` arrives | Nothing |
 | `onboarding.*` | When and how often `ONBOARDING_REMINDER` arrives (08:00 Lagos, daily for 14 days, then every 3) | Nothing |
@@ -708,6 +708,7 @@ Platform Settings in the console change these values at runtime, and every servi
 |---|---|---|---|
 | `step`, `role` on bell entries | `GET /notification/notifications/{userId}` | **Must** | Tapping an onboarding entry in the bell routes like the push |
 | `cancelledBy` | `GET /trip/bookings/{bookingId}` | **Must** | Ops cancels a seat with the rider at fault: trip details say "Cancelled by CoRyd" |
+| `reason`, `feeAmount`, `refundAmount`, `freeUntil` (new endpoint) | `GET /trip/bookings/{bookingId}/cancellation-quote` | Should | Ops sets the late fee to 30%: the cancel confirmation shows 30% and the matching refund with no app release |
 | `documentType` on `DOCUMENT_EXPIRING` bell entries (and `documentType`, `vehicleId` in the push data) | bell / push | Should | Tapping the expiry entry opens that document |
 | `rejectionReason`, `attemptsLeft` | `GET /profile/identity-verification/me` | **Must** | After ops reject and reset |
 | `ninStatus`, `ninTriesLeft`, `licenceAttemptsLeft`, `nameVerified` | `GET /profile/drivers/me` | **Must** | Driver NIN reject and licence reset |

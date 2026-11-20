@@ -34,6 +34,7 @@ import org.coryd.trip.dto.BookingPaymentView;
 import org.coryd.trip.dto.BookingRouteSummary;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.CancelledBy;
+import org.coryd.trip.dto.CancellationQuoteResponse;
 import org.coryd.trip.event.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.BookingSummary;
@@ -179,6 +180,8 @@ public class BookingService {
             ACTIVE_TRIP_STATUSES.stream(), Stream.of(BookingStatus.COMPLETED)).toList();
     private static final List<BookingStatus> RIDER_CANCELLABLE_STATUSES =
             List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
+    /** Held or reserved but never paid for - cancelling just lets the seat go. */
+    private static final List<BookingStatus> UNPAID_STATUSES = List.of(BookingStatus.HELD, BookingStatus.RESERVED);
     private static final List<BookingStatus> AWAITING_PICKUP_STATUSES =
             List.of(BookingStatus.CONFIRMED, BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP);
     private static final List<RouteStatus> FINISHED_ROUTE_STATUSES = List.of(RouteStatus.CANCELLED, RouteStatus.COMPLETED);
@@ -1009,13 +1012,15 @@ public class BookingService {
         if (!moveStatus(booking, BookingStatus.CANCELLED_RIDER, RIDER_CANCELLABLE_STATUSES)) {
             throw new BadRequestException("This booking can no longer be cancelled - current status is " + booking.getStatus());
         }
-        // A rider whose driver moved the trip well past what they booked never pays to leave it.
-        boolean feeApplies = !freeCancellation(booking) && cancellationPolicy.isFeeApplicable(route.getDepartureTime(), Instant.now());
-        BigDecimal fee = cancellationPolicy.applyFee(booking.getFareTotal(), feeApplies);
+        // Only a paid seat gets this far - the same quote GET .../cancellation-quote gave.
+        CancellationQuoteResponse quote = quoteRiderCancellation(booking, true, route, Instant.now());
+        boolean feeApplies = quote.feeApplies();
+        BigDecimal fee = quote.feeAmount();
         routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
         routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
         recordHistory(bookingId, BookingStatus.CANCELLED_RIDER, feeApplies ? "Cancelled inside free window"
-                : freeCancellation(booking) ? "Cancelled free of charge - the driver changed the trip's time" : "Cancelled free of charge");
+                : quote.reason() == CancellationQuoteResponse.Reason.FREE_TIME_CHANGED
+                ? "Cancelled free of charge - the driver changed the trip's time" : "Cancelled free of charge");
         cancellationLogService.recordBooking(booking, route, route.getStatus(), statusBefore,
                 CancellationLogService.Context.of("RIDER", callerId), fee, null);
 
@@ -1030,6 +1035,50 @@ public class BookingService {
                 .feeAmount(fee)
                 .cancelledAt(LocalDateTime.now())
                 .build());
+    }
+
+    /**
+     * GET /bookings/{id}/cancellation-quote - what cancelling now would cost the booking's rider. Only they may ask, and
+     * only while POST /bookings/{id}/cancel would still take it (an unpaid hold, or a paid seat not yet aboard).
+     */
+    public CancellationQuoteResponse getCancellationQuote(String bookingId, String callerId) {
+        Booking booking = getOrThrow(bookingId);
+        if (!callerId.equals(booking.getRiderId())) {
+            throw new UnauthorizedException("Only this booking's rider can see what cancelling it costs");
+        }
+        BookingStatus status = booking.getStatus();
+        if (!UNPAID_STATUSES.contains(status) && !RIDER_CANCELLABLE_STATUSES.contains(status)) {
+            throw new BadRequestException("This booking can no longer be cancelled - current status is " + status);
+        }
+        return quoteRiderCancellation(booking, !UNPAID_STATUSES.contains(status), routeOf(booking), Instant.now());
+    }
+
+    /**
+     * The one rider-cancellation rule - cancelByRider, the ops "rider's fault" fee and the app's quote all read it.
+     * An unpaid hold has nothing to refund; a rider whose driver moved the trip far enough never pays to leave it;
+     * otherwise CancellationPolicy's window and percentage decide.
+     */
+    CancellationQuoteResponse quoteRiderCancellation(Booking booking, boolean paid, RoutePost route, Instant now) {
+        BigDecimal fare = booking.getFareTotal() == null ? BigDecimal.ZERO : booking.getFareTotal();
+        BigDecimal percent = cancellationPolicy.getLateFeePercentage().movePointRight(2).stripTrailingZeros();
+        if (percent.scale() < 0) {
+            percent = percent.setScale(0);
+        }
+        int windowHours = cancellationPolicy.getFreeCancellationWindowHours();
+        if (!paid) {
+            return new CancellationQuoteResponse(booking.getId(), CancellationQuoteResponse.Reason.NOT_PAID, false, percent,
+                    windowHours, fare, BigDecimal.ZERO, BigDecimal.ZERO, null, CancellationQuoteResponse.CURRENCY);
+        }
+        if (freeCancellation(booking)) {
+            return new CancellationQuoteResponse(booking.getId(), CancellationQuoteResponse.Reason.FREE_TIME_CHANGED, false, percent,
+                    windowHours, fare, BigDecimal.ZERO, fare, null, CancellationQuoteResponse.CURRENCY);
+        }
+        boolean feeApplies = cancellationPolicy.isFeeApplicable(route.getDepartureTime(), now);
+        BigDecimal fee = cancellationPolicy.applyFee(fare, feeApplies);
+        return new CancellationQuoteResponse(booking.getId(),
+                feeApplies ? CancellationQuoteResponse.Reason.LATE_CANCELLATION : CancellationQuoteResponse.Reason.FREE_BEFORE_WINDOW,
+                feeApplies, percent, windowHours, fare, fee, fare.subtract(fee),
+                cancellationPolicy.feeStartsAt(route.getDepartureTime()), CancellationQuoteResponse.CURRENCY);
     }
 
     /** cancelledBy on a single seat ops cancelled - the rider gets support's copy, the driver is told the seat is free. */
@@ -1050,10 +1099,7 @@ public class BookingService {
      * Zero for a seat that isn't paid.
      */
     public BigDecimal riderFaultFee(Booking booking, RoutePost route, Instant now) {
-        if (booking.getConfirmedAt() == null || freeCancellation(booking)) {
-            return BigDecimal.ZERO;
-        }
-        return cancellationPolicy.applyFee(booking.getFareTotal(), cancellationPolicy.isFeeApplicable(route.getDepartureTime(), now));
+        return quoteRiderCancellation(booking, booking.getConfirmedAt() != null, route, now).feeAmount();
     }
 
     /**

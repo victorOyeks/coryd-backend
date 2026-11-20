@@ -40,6 +40,7 @@ All paths below sit under `https://api-dev.coryd.ng`. They use the normal `Autho
 - [ ] Checkout: send `savedCardId` for a saved card; handle `PAID` (no URL) and `PENDING` (open the URL) (section 1)
 - [ ] Saved cards screen: list and remove (section 2)
 - [ ] Refund copy: "Refunded to your card - allow a few working days" (section 3)
+- [ ] Cancel confirmation: fee and refund from `GET /trip/bookings/{bookingId}/cancellation-quote`, not a hard-coded 25% / 2 hours (section 3)
 - [ ] **New:** Payment history screen (section 5)
 
 **Driver app**
@@ -117,7 +118,39 @@ Removes the card. Using a card id that isn't the rider's own returns `404`.
 
 Every refund goes back to the card the rider paid with. Banks take **a few hours to a few working days** to show it. In the app, say *"Refunded to your card - allow a few working days"*, never "check your wallet".
 
-For a late cancellation (25% fee), the rider gets 75% back to their card. The push on refund (`REFUND_ISSUED`) works as before.
+For a late cancellation the rider gets the fare back less the late-cancellation fee (by default 25% inside 2 hours of departure, so 75% back). Ops can change both the percentage and the window at runtime, so **don't hard-code either**: ask for a quote (below). The push on refund (`REFUND_ISSUED`) works as before.
+
+### Before cancelling: `GET /trip/bookings/{bookingId}/cancellation-quote`
+
+What cancelling **right now** would cost. It is worked out by the same code `POST /trip/bookings/{bookingId}/cancel` runs, so the figures match what the cancel then does. Call it when the "Cancel this ride?" confirmation opens; don't cache it (the answer changes as departure gets closer).
+
+```json
+{
+  "bookingId": "6b0e…",
+  "reason": "LATE_CANCELLATION",
+  "feeApplies": true,
+  "feePercent": 25,
+  "freeCancellationWindowHours": 2,
+  "fareTotal": 3000.00,
+  "feeAmount": 750.00,
+  "refundAmount": 2250.00,
+  "freeUntil": "2026-11-20T17:15:00Z",
+  "currency": "NGN"
+}
+```
+
+| `reason` | When | Suggested copy |
+|---|---|---|
+| `LATE_CANCELLATION` | Paid, less than `freeCancellationWindowHours` before departure | "Cancelling now costs ₦750 (25% late-cancellation fee). ₦2,250 goes back to your card." |
+| `FREE_BEFORE_WINDOW` | Paid, before the window | "You can cancel free until 6:15 pm." (`freeUntil` in Lagos time). Full refund. |
+| `FREE_TIME_CHANGED` | The driver moved the trip far enough from what was booked (same as `freeCancellation` on the booking) | "Free to cancel — your driver changed the time." Full refund. |
+| `NOT_PAID` | A held or reserved seat that was never paid for | "Your seat will be released." Nothing to refund (`refundAmount` 0). |
+
+- `feePercent` is a percentage (25 = 25%) and `freeCancellationWindowHours` is the window, both as ops have them set **now**, whether or not the fee applies to this booking.
+- `freeUntil` is when the fee starts (departure less the window). It is in the past for `LATE_CANCELLATION` and `null` for `FREE_TIME_CHANGED` and `NOT_PAID`.
+- `feeAmount` is 0 unless `feeApplies`; `refundAmount` is `fareTotal - feeAmount` for a paid seat.
+- Only the booking's rider can ask: anyone else gets `401 Only this booking's rider can see what cancelling it costs` (the same refusal as the other booking endpoints). A booking that can no longer be cancelled (aboard, completed, already cancelled) gets `400 This booking can no longer be cancelled - current status is …`.
+- If the call fails, show wording without figures ("A late-cancellation fee may apply"), never numbers worked out in the app.
 
 ---
 

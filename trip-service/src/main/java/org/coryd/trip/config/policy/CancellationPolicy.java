@@ -55,6 +55,11 @@ public class CancellationPolicy {
         return lateFeePercentage;
     }
 
+    /** The moment the late fee starts to apply - cancelling after it (and not before or at it) is "inside the window". */
+    public Instant feeStartsAt(Instant departureTime) {
+        return departureTime.minus(Duration.ofHours(getFreeCancellationWindowHours()));
+    }
+
     public boolean isFeeApplicable(Instant departureTime, Instant now) {
         Duration untilDeparture = Duration.between(now, departureTime);
         return untilDeparture.toHours() < getFreeCancellationWindowHours();

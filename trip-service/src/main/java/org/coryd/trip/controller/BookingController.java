@@ -11,6 +11,7 @@ import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingDetailsResponse;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.BookingSummary;
+import org.coryd.trip.dto.CancellationQuoteResponse;
 import org.coryd.trip.dto.DriverActiveTripResponse;
 import org.coryd.trip.dto.DriverTripHistoryItem;
 import org.coryd.trip.dto.DriverTripStatsResponse;
@@ -150,6 +151,13 @@ public class BookingController {
     public ApiResponse<Booking> reserve(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String routePostId,
                                     @Valid @RequestBody BookSeatsRequest request) {
         return ApiResponse.ok(bookingService.reserveSeats(routePostId, principal.getUserId(), request));
+    }
+
+    /** The cancel confirmation's copy - what cancelling right now costs, from the same rule /cancel applies. Rider only. */
+    @GetMapping("/{bookingId}/cancellation-quote")
+    public ApiResponse<CancellationQuoteResponse> cancellationQuote(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                    @PathVariable String bookingId) {
+        return ApiResponse.ok(bookingService.getCancellationQuote(bookingId, principal.getUserId()));
     }
 
     @PostMapping("/{bookingId}/cancel")

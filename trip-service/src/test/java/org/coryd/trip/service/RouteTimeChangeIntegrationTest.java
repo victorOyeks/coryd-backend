@@ -16,6 +16,7 @@ import org.coryd.trip.config.TimeChangeProperties;
 import org.coryd.trip.config.policy.CancellationPolicy;
 import org.coryd.trip.config.policy.DriverVerificationPolicy;
 import org.coryd.trip.dto.BookSeatsRequest;
+import org.coryd.trip.dto.CancellationQuoteResponse;
 import org.coryd.trip.dto.ChangeTripTimeRequest;
 import org.coryd.trip.dto.RouteTimeChangeResponse;
 import org.coryd.trip.entity.Booking;
@@ -281,6 +282,82 @@ class RouteTimeChangeIntegrationTest {
         routeTimeChangeService.change(route.getId(), DRIVER, plus(10));
 
         assertThat(bookingService.getBookingDetails(booking.getId(), RIDER).freeCancellation()).isTrue();
+    }
+
+    // ---- the cancellation quote the app shows before a rider cancels -----------------------------
+
+    @Test
+    void insideTheWindowTheQuoteIsTheFeeTheCancelThenKeeps() {
+        RoutePost route = routeDepartingIn(30);
+        Booking booking = confirmed(route, RIDER);
+
+        CancellationQuoteResponse quote = bookingService.getCancellationQuote(booking.getId(), RIDER);
+
+        assertThat(quote.reason()).isEqualTo(CancellationQuoteResponse.Reason.LATE_CANCELLATION);
+        assertThat(quote.feeApplies()).isTrue();
+        assertThat(quote.feePercent()).isEqualByComparingTo("25");
+        assertThat(quote.freeCancellationWindowHours()).isEqualTo(2);
+        assertThat(quote.feeAmount()).isEqualByComparingTo("300.00");
+        assertThat(quote.refundAmount()).isEqualByComparingTo("900.00");
+        assertThat(quote.freeUntil()).isEqualTo(route.getDepartureTime().minus(2, ChronoUnit.HOURS));
+        assertThat(quote.currency()).isEqualTo("NGN");
+
+        bookingService.cancelByRider(booking.getId(), RIDER);
+        verify(kafkaTemplate).send(eq(KafkaTopics.BOOKING_CANCELLED), argThat(e -> e instanceof BookingCancelledEvent c
+                && c.isFeeApplied() && c.getFeeAmount().compareTo(quote.feeAmount()) == 0));
+    }
+
+    @Test
+    void beforeTheWindowTheQuoteIsFreeUntilTheWindowOpens() {
+        RoutePost route = routeDepartingIn(180);
+        Booking booking = confirmed(route, RIDER);
+
+        CancellationQuoteResponse quote = bookingService.getCancellationQuote(booking.getId(), RIDER);
+
+        assertThat(quote.reason()).isEqualTo(CancellationQuoteResponse.Reason.FREE_BEFORE_WINDOW);
+        assertThat(quote.feeApplies()).isFalse();
+        assertThat(quote.feeAmount()).isEqualByComparingTo("0");
+        assertThat(quote.refundAmount()).isEqualByComparingTo("1200.00");
+        assertThat(quote.freeUntil()).isEqualTo(route.getDepartureTime().minus(2, ChronoUnit.HOURS));
+    }
+
+    @Test
+    void afterADriverTimeChangeTheQuoteIsFreeWhateverTheTime() {
+        RoutePost route = routeDepartingIn(30);
+        Booking booking = confirmed(route, RIDER);
+        routeTimeChangeService.change(route.getId(), DRIVER, plus(30));
+
+        CancellationQuoteResponse quote = bookingService.getCancellationQuote(booking.getId(), RIDER);
+
+        assertThat(quote.reason()).isEqualTo(CancellationQuoteResponse.Reason.FREE_TIME_CHANGED);
+        assertThat(quote.feeAmount()).isEqualByComparingTo("0");
+        assertThat(quote.refundAmount()).isEqualByComparingTo("1200.00");
+        assertThat(quote.freeUntil()).isNull();
+    }
+
+    @Test
+    void anUnpaidHoldHasNothingToRefund() {
+        RoutePost route = routeDepartingIn(30);
+        Booking booking = book(route, RIDER);
+
+        CancellationQuoteResponse quote = bookingService.getCancellationQuote(booking.getId(), RIDER);
+
+        assertThat(quote.reason()).isEqualTo(CancellationQuoteResponse.Reason.NOT_PAID);
+        assertThat(quote.feeAmount()).isEqualByComparingTo("0");
+        assertThat(quote.refundAmount()).isEqualByComparingTo("0");
+        assertThat(quote.freeUntil()).isNull();
+    }
+
+    @Test
+    void onlyTheBookingsRiderGetsAQuoteAndOnlyWhileItCanBeCancelled() {
+        RoutePost route = routeDepartingIn(30);
+        Booking booking = confirmed(route, RIDER);
+
+        assertThatThrownBy(() -> bookingService.getCancellationQuote(booking.getId(), DRIVER)).isInstanceOf(UnauthorizedException.class);
+        assertThatThrownBy(() -> bookingService.getCancellationQuote(booking.getId(), OTHER_RIDER)).isInstanceOf(UnauthorizedException.class);
+
+        bookingService.cancelByRider(booking.getId(), RIDER);
+        assertThatThrownBy(() -> bookingService.getCancellationQuote(booking.getId(), RIDER)).isInstanceOf(BadRequestException.class);
     }
 
     // ---- what a booking and a search show ------------------------------------------------------
