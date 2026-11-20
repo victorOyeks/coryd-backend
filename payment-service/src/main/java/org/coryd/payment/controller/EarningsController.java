@@ -95,7 +95,7 @@ public class EarningsController {
     @PostMapping("/drivers/{driverId}/repay")
     public ApiResponse<InitiatePaymentResponse> repay(@AuthenticationPrincipal CoRydUserDetails principal,
                                                       @PathVariable String driverId,
-                                                      @RequestBody(required = false) RepayRequest request) {
+                                                      @Valid @RequestBody(required = false) RepayRequest request) {
         return ApiResponse.ok(paymentService.initiateRepayment(driverId, principal.getUserId(),
                 request == null ? null : request.amount(), request == null ? null : request.email(),
                 request == null ? null : request.callbackUrl()));
