@@ -14,6 +14,7 @@ import org.coryd.common.util.Names;
 import org.coryd.common.exception.RoleNotHeldException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.OtpIssuedEvent;
+import org.coryd.common.kafka.events.UserTokensRevokedEvent;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.common.security.JwtUtil;
 import org.coryd.common.util.PhoneNumbers;
@@ -91,6 +92,7 @@ public class AuthService {
     private final ProfileServiceClient profileServiceClient;
     private final OpsSecurityPolicy opsSecurityPolicy;
     private final MfaChallengeService mfaChallengeService;
+    private final SessionRevocationService sessionRevocationService;
 
     @Transactional
     public void signup(SignupRequest request) {
@@ -273,8 +275,9 @@ public class AuthService {
         userRepository.save(user);
 
         // Whoever forgot the password may have done so because the account was
-        // compromised - close every session that predates the reset.
-        refreshTokenRepository.revokeAllForUser(user.getId());
+        // compromised - close every session that predates the reset: refresh tokens and devices, and the
+        // access tokens already handed out (they would otherwise keep working until they expire, up to a day).
+        sessionRevocationService.endAllSessions(user, UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE);
     }
 
     @Transactional
