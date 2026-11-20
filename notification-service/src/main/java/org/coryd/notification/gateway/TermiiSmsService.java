@@ -55,6 +55,10 @@ public class TermiiSmsService {
      * is pending Termii's approval - a code read aloud isn't blocked by the SMS DND registry. */
     public boolean sendVoiceOtp(String toPhone, String code) {
         String normalizedPhone = toInternationalFormat(toPhone);
+        if (!isDialable(normalizedPhone)) {
+            log.warn("Not placing voice OTP call - no usable phone number ({})", toPhone);
+            return false;
+        }
         if (!enabled) {
             log.info("termii.enabled=false - not placing voice OTP call to {}", normalizedPhone);
             return true;
@@ -78,6 +82,12 @@ public class TermiiSmsService {
 
     private boolean dispatch(String toPhone, String message, String channel) {
         String normalizedPhone = toInternationalFormat(toPhone);
+        if (!isDialable(normalizedPhone)) {
+            // A blank or junk number (e.g. an emergency contact saved before phone numbers were checked) - Termii
+            // would refuse it anyway; skip it instead of making the call.
+            log.warn("Not sending {} message - no usable phone number ({})", channel, toPhone);
+            return false;
+        }
         if (!enabled) {
             log.info("termii.enabled=false - not sending {} to {}: {}", channel, normalizedPhone, message);
             return true;
@@ -102,7 +112,12 @@ public class TermiiSmsService {
         }
     }
 
+    /** International digits only, 10-15 long - anything else can't be texted or called. */
+    static boolean isDialable(String internationalPhone) {
+        return internationalPhone != null && internationalPhone.matches("\\d{10,15}");
+    }
+
     private static String toInternationalFormat(String phone) {
-        return PhoneNumbers.toInternationalFormat(phone);
+        return phone == null ? "" : PhoneNumbers.toInternationalFormat(phone);
     }
 }
