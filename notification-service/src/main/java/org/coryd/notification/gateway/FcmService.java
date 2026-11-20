@@ -95,7 +95,10 @@ public class FcmService {
                 // "default" is the channel id the app itself creates - explicit here rather
                 // than left for the client SDK to guess, since an unrecognised channel id
                 // makes Android drop the notification with no error on either side.
+                // HIGH, said outright: a trip push is time-sensitive, and the app's background handler only runs for
+                // high-priority messages ("Background messages only work if the message priority is set to 'high'").
                 .setAndroidConfig(AndroidConfig.builder()
+                        .setPriority(AndroidConfig.Priority.HIGH)
                         .setNotification(AndroidNotification.builder()
                                 .setChannelId("default")
                                 .setTag(groupKey)
