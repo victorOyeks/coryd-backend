@@ -55,6 +55,7 @@ class OpsRoleEnforcementTest {
     @MockBean org.springframework.data.jpa.mapping.JpaMetamodelMappingContext jpaMappingContext;
 
     @MockBean DriverProfileService driverProfileService;
+    @MockBean org.coryd.profile.service.MediaOwnership mediaOwnership;
     @MockBean VerificationAggregationService verificationAggregationService;
     @MockBean VerificationReviewService verificationReviewService;
     @MockBean LicenceReviewService licenceReviewService;

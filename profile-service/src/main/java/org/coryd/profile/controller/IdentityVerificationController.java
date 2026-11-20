@@ -50,6 +50,7 @@ public class IdentityVerificationController {
     private final IdentityVerificationService identityVerificationService;
     private final SmileIdCheckService smileIdCheckService;
     private final IdentityReviewService identityReviewService;
+    private final org.coryd.profile.service.MediaOwnership mediaOwnership;
 
     /** Onboarding's identity step - opens a Smile ID check; the app runs Smile ID's SDK with what comes back, then polls GET /me. */
     @PostMapping("/session")
@@ -63,6 +64,7 @@ public class IdentityVerificationController {
     @PostMapping
     public ApiResponse<IdentityVerificationResponse> submit(@AuthenticationPrincipal CoRydUserDetails principal,
                                                             @Valid @RequestBody SubmitIdentityVerificationRequest request) {
+        mediaOwnership.refuseOthersUpload(request.selfiePublicId(), principal.getUserId());
         return ApiResponse.ok(identityVerificationService.submit(principal.getUserId(), principal.getActiveRole(), request));
     }
 

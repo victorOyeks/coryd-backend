@@ -44,5 +44,6 @@
     <include file="db/changelog/033-job-runs.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/033-ops-audit-feed.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/034-phase7-privacy.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/035-media-uploads.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

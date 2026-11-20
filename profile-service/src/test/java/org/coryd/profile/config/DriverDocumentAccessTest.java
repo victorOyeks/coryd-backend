@@ -42,6 +42,7 @@ class DriverDocumentAccessTest {
     @Autowired JwtUtil jwtUtil;
     @MockBean org.springframework.data.jpa.mapping.JpaMetamodelMappingContext jpaMappingContext;
     @MockBean DriverDocumentService driverDocumentService;
+    @MockBean org.coryd.profile.service.MediaOwnership mediaOwnership;
 
     @BeforeEach
     void documents() {

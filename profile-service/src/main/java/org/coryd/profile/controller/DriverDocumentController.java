@@ -26,10 +26,12 @@ public class DriverDocumentController {
 
     private final DriverDocumentService driverDocumentService;
     private final DriverDocumentAccess driverDocumentAccess;
+    private final org.coryd.profile.service.MediaOwnership mediaOwnership;
 
     @PostMapping("/me/documents")
     public ApiResponse<DriverDocument> create(@AuthenticationPrincipal CoRydUserDetails principal,
                                                @Valid @RequestBody CreateDriverDocumentRequest request) {
+        mediaOwnership.refuseOthersUpload(request.publicId(), principal.getUserId());
         return ApiResponse.ok(driverDocumentService.create(principal.getUserId(), request));
     }
 

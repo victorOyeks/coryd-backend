@@ -43,6 +43,7 @@ public class DriverProfileController {
     private final FavoriteDriverService favoriteDriverService;
     private final SmileIdCheckService smileIdCheckService;
     private final NinLookupService ninLookupService;
+    private final org.coryd.profile.service.MediaOwnership mediaOwnership;
 
     @GetMapping("/me")
     public ApiResponse<DriverProfileResponse> getMine(@AuthenticationPrincipal CoRydUserDetails principal) {
@@ -52,6 +53,7 @@ public class DriverProfileController {
     @PutMapping("/me")
     public ApiResponse<DriverProfileResponse> updateMine(@AuthenticationPrincipal CoRydUserDetails principal,
                                                           @Valid @RequestBody UpdateDriverProfileRequest request) {
+        mediaOwnership.refuseOthersUpload(request.governmentIdPublicId(), principal.getUserId());
         return ApiResponse.ok(driverProfileService.updateMine(principal.getUserId(), request));
     }
 

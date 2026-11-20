@@ -24,11 +24,13 @@ import java.util.List;
 public class VehicleController {
 
     private final VehicleService vehicleService;
+    private final org.coryd.profile.service.MediaOwnership mediaOwnership;
 
     @PostMapping("/drivers/{driverId}")
     public ApiResponse<Vehicle> register(@AuthenticationPrincipal CoRydUserDetails principal,
                                           @PathVariable String driverId,
                                           @Valid @RequestBody VehicleRegistrationRequest request) {
+        refuseOthersPhotos(request, principal.getUserId());
         return ApiResponse.ok(vehicleService.register(driverId, principal.getUserId(), request));
     }
 
@@ -36,7 +38,13 @@ public class VehicleController {
     public ApiResponse<Vehicle> update(@AuthenticationPrincipal CoRydUserDetails principal,
                                         @PathVariable String vehicleId,
                                         @Valid @RequestBody VehicleRegistrationRequest request) {
+        refuseOthersPhotos(request, principal.getUserId());
         return ApiResponse.ok(vehicleService.update(vehicleId, principal.getUserId(), request));
+    }
+
+    private void refuseOthersPhotos(VehicleRegistrationRequest request, String userId) {
+        mediaOwnership.refuseOthersUpload(request.exteriorPhotoPublicId(), userId);
+        mediaOwnership.refuseOthersUpload(request.interiorPhotoPublicId(), userId);
     }
 
     @GetMapping("/drivers/{driverId}")
