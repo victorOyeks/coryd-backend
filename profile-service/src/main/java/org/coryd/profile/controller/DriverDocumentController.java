@@ -32,6 +32,7 @@ public class DriverDocumentController {
     public ApiResponse<DriverDocument> create(@AuthenticationPrincipal CoRydUserDetails principal,
                                                @Valid @RequestBody CreateDriverDocumentRequest request) {
         mediaOwnership.refuseOthersUpload(request.publicId(), principal.getUserId());
+        driverDocumentService.checkSubmission(principal.getUserId(), request);
         return ApiResponse.ok(driverDocumentService.create(principal.getUserId(), request));
     }
 
