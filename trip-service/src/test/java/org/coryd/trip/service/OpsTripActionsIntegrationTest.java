@@ -143,6 +143,9 @@ class OpsTripActionsIntegrationTest {
 
     @BeforeEach
     void cleanSlate() {
+        org.mockito.Mockito.when(profileServiceClient.fetchDriverVehicles(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> java.util.List.of(new ProfileServiceClient.VehicleSummaryItem("vehicle-1", "Toyota", "Corolla",
+                        "ABC123XY", true, 6, org.coryd.common.enums.VerificationStatus.APPROVED, 2015, "Silver", i.getArgument(0))));
         assertThat(jdbcTemplate.queryForObject("select current_database()", String.class))
                 .as("tests must only ever run against the Testcontainers database").isEqualTo(postgres.getDatabaseName());
         cancellationLogRepository.deleteAll();

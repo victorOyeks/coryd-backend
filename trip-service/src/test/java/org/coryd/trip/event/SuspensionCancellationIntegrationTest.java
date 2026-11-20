@@ -115,6 +115,9 @@ class SuspensionCancellationIntegrationTest {
 
     @BeforeEach
     void cleanSlate() {
+        org.mockito.Mockito.when(profileServiceClient.fetchDriverVehicles(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> java.util.List.of(new ProfileServiceClient.VehicleSummaryItem("vehicle-1", "Toyota", "Corolla",
+                        "ABC123XY", true, 6, org.coryd.common.enums.VerificationStatus.APPROVED, 2015, "Silver", i.getArgument(0))));
         suspendedUserRepository.deleteAll();
         ratingRepository.deleteAll();
         historyRepository.deleteAll();

@@ -169,14 +169,7 @@ public class RouteService {
         requirePaymentStanding(driverId);
         bookingRepository.lockUser(driverId);
 
-        if (request.vehicleId() != null) {
-            ProfileServiceClient.VehicleSummaryItem vehicle = profileServiceClient
-                    .fetchVehicleSummaries(List.of(request.vehicleId()))
-                    .get(request.vehicleId());
-            if (vehicle != null && request.seatCapacity() > vehicle.seatCapacity()) {
-                throw new BadRequestException("Seats offered can't exceed this vehicle's registered capacity (" + vehicle.seatCapacity() + ")");
-            }
-        }
+        String vehicleId = vehicleFor(driverId, request.vehicleId(), request.seatCapacity());
 
         List<PostRouteRequest.ReservationRequest> reservations = request.reservations() == null ? List.of() : request.reservations();
         if (!reservations.isEmpty()) {
@@ -208,7 +201,7 @@ public class RouteService {
                 .routePolyline(road != null ? road : preview == null ? null : preview.overviewPolyline())
                 .viaSummary(road == null ? null : request.viaSummary().trim())
                 .driverId(driverId)
-                .vehicleId(request.vehicleId())
+                .vehicleId(vehicleId)
                 .originLabel(request.originLabel())
                 .originLat(request.originLat())
                 .originLng(request.originLng())
@@ -258,6 +251,35 @@ public class RouteService {
         eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(route.getId()));
 
         return route;
+    }
+
+    /**
+     * The vehicle a route is driven in, and the seat limit that comes with it. A vehicleId must be one of the driver's own
+     * cars; with none sent (the app sends vehicle?.id, and older regular routes have none) the driver's registered car is
+     * used - approved first. Either way the seats offered can't exceed that car's capacity, so a 4-seat car can't sell 40
+     * seats. Returns the vehicleId to store on the route.
+     */
+    public String vehicleFor(String driverId, String vehicleId, int seatsOffered) {
+        ProfileServiceClient.VehicleSummaryItem vehicle;
+        List<ProfileServiceClient.VehicleSummaryItem> own;
+        try {
+            own = profileServiceClient.fetchDriverVehicles(driverId);
+        } catch (Exception e) {
+            log.warn("Could not fetch vehicles for driver {}: {}", driverId, e.getMessage());
+            throw new BadRequestException("We couldn't check your vehicle just now - please try again");
+        }
+        if (vehicleId != null && !vehicleId.isBlank()) {
+            vehicle = own.stream().filter(v -> vehicleId.equals(v.id())).findFirst()
+                    .orElseThrow(() -> new BadRequestException("That vehicle isn't registered to you"));
+        } else {
+            vehicle = own.stream().filter(v -> v.verificationStatus() == VerificationStatus.APPROVED).findFirst()
+                    .or(() -> own.stream().findFirst())
+                    .orElseThrow(() -> new BadRequestException("Register your vehicle before posting a route"));
+        }
+        if (vehicle.seatCapacity() != null && seatsOffered > vehicle.seatCapacity()) {
+            throw new BadRequestException("Seats offered can't exceed this vehicle's registered capacity (" + vehicle.seatCapacity() + ")");
+        }
+        return vehicle.id();
     }
 
     /** How far the driver's picked road may start or end from the route's own ends - Google starts a road at the

@@ -27,6 +27,12 @@ public class InternalVehicleController {
         return ApiResponse.ok(vehicleService.findById(vehicleId));
     }
 
+    /** A driver's vehicles - trip-service caps the seats of a route posted without a vehicleId. */
+    @GetMapping("/drivers/{driverId}")
+    public ApiResponse<List<VehicleSummary>> byDriver(@PathVariable String driverId) {
+        return ApiResponse.ok(vehicleService.findByDriver(driverId).stream().map(VehicleSummary::from).toList());
+    }
+
     @GetMapping("/batch")
     public ApiResponse<List<VehicleSummary>> batch(@RequestParam List<String> ids) {
         return ApiResponse.ok(vehicleService.findSummariesByIds(ids));

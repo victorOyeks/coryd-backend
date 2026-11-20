@@ -51,6 +51,7 @@ public class RouteTemplateService {
     @Transactional
     public RouteTemplateResponse create(String driverId, RouteTemplateRequest request) {
         RouteTemplate template = RouteTemplate.builder().driverId(driverId).build();
+        routeService.vehicleFor(driverId, request.vehicleId(), request.seatCapacity());
         routeService.requireRoadBetween(request.routePolyline(), request.viaSummary(), request.originLat(), request.originLng(),
                 request.destinationLat(), request.destinationLng());
         apply(template, request);
@@ -61,6 +62,7 @@ public class RouteTemplateService {
     @Transactional
     public RouteTemplateResponse update(String driverId, String templateId, RouteTemplateRequest request) {
         RouteTemplate template = own(driverId, templateId);
+        routeService.vehicleFor(driverId, request.vehicleId(), request.seatCapacity());
         routeService.requireRoadBetween(request.routePolyline(), request.viaSummary(), request.originLat(), request.originLng(),
                 request.destinationLat(), request.destinationLng());
         apply(template, request);

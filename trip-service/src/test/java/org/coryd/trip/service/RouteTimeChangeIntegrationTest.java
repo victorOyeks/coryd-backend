@@ -108,6 +108,9 @@ class RouteTimeChangeIntegrationTest {
 
     @BeforeEach
     void cleanSlate() throws Exception {
+        org.mockito.Mockito.when(profileServiceClient.fetchDriverVehicles(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> java.util.List.of(new ProfileServiceClient.VehicleSummaryItem("vehicle-1", "Toyota", "Corolla",
+                        "ABC123XY", true, 6, org.coryd.common.enums.VerificationStatus.APPROVED, 2015, "Silver", i.getArgument(0))));
         try (Connection c = dataSource.getConnection()) {
             assertThat(c.getMetaData().getURL()).isEqualTo(postgres.getJdbcUrl());
         }

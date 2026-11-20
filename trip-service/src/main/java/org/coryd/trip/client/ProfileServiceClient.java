@@ -101,6 +101,16 @@ public class ProfileServiceClient {
         }
     }
 
+    /** The driver's registered vehicles. Unlike the lookups above this throws when profile-service can't answer - a route's seat limit
+     * must not be skipped because the call failed. */
+    public List<VehicleSummaryItem> fetchDriverVehicles(String driverId) {
+        VehicleSummaryBatchResponse response = restClient.get()
+                .uri("/internal/vehicles/drivers/{driverId}", driverId)
+                .retrieve()
+                .body(VehicleSummaryBatchResponse.class);
+        return response == null || response.data() == null ? List.of() : response.data();
+    }
+
     /** One call for a whole receipt's passenger list, not one per rider - keyed by userId for easy zipping. */
     public Map<String, RiderSummaryItem> fetchRiderSummaries(List<String> riderIds) {
         if (riderIds == null || riderIds.isEmpty()) {
@@ -229,7 +239,8 @@ public class ProfileServiceClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record VehicleSummaryItem(String id, String make, String model, String plateNumber, boolean hasAC,
-                                      Integer seatCapacity, VerificationStatus verificationStatus, Integer year, String color) {
+                                      Integer seatCapacity, VerificationStatus verificationStatus, Integer year, String color,
+                                      String driverId) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

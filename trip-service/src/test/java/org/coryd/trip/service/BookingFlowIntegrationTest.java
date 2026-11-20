@@ -126,6 +126,9 @@ class BookingFlowIntegrationTest {
 
     @BeforeEach
     void cleanSlate() throws Exception {
+        org.mockito.Mockito.when(profileServiceClient.fetchDriverVehicles(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> java.util.List.of(new ProfileServiceClient.VehicleSummaryItem("vehicle-1", "Toyota", "Corolla",
+                        "ABC123XY", true, 6, org.coryd.common.enums.VerificationStatus.APPROVED, 2015, "Silver", i.getArgument(0))));
         try (Connection c = dataSource.getConnection()) {
             assertThat(c.getMetaData().getURL())
                     .as("tests must only ever run against the Testcontainers database")
@@ -1582,6 +1585,29 @@ class BookingFlowIntegrationTest {
         assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, new org.coryd.trip.dto.PostRouteRequest(null, "Ikorodu", 6.62, 3.51,
                 "Victoria Island", 6.42, 3.41, departure, 4, FARE, null, null, fine, " ")))
                 .isInstanceOf(BadRequestException.class).hasMessageContaining("viaSummary");
+    }
+
+    @Test
+    void aRouteCantOfferMoreSeatsThanTheDriversCarHasEvenWithoutAVehicleId() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, new org.coryd.trip.dto.PostRouteRequest(null, "Campos Memorial Mini Stadium",
+                6.45, 3.39, "Obalende Bridge", 6.44, 3.40, departure, 40, FARE, null, null)))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("registered capacity (6)");
+
+        RoutePost route = routeService.post(DRIVER, DRIVER, postRequest(departure));
+        assertThat(route.getVehicleId()).as("the driver's own car is recorded on the route").isEqualTo("vehicle-1");
+    }
+
+    @Test
+    void aRouteCantBePostedOnSomeoneElsesOrAnUnknownVehicle() {
+        driverVerificationCacheRepository.save(new org.coryd.trip.entity.DriverVerificationCache(DRIVER, true));
+        Instant departure = Instant.now().plus(1, ChronoUnit.DAYS);
+
+        assertThatThrownBy(() -> routeService.post(DRIVER, DRIVER, new org.coryd.trip.dto.PostRouteRequest("someone-elses-car",
+                "Campos Memorial Mini Stadium", 6.45, 3.39, "Obalende Bridge", 6.44, 3.40, departure, 4, FARE, null, null)))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("isn't registered to you");
     }
 
     /** Google's encoded-polyline format, so tests can hand the service a road of their own. */
