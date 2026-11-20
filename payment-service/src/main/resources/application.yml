@@ -45,6 +45,15 @@ jwt:
 # Every fare is split at charge time: the driver's share goes to their Paystack subaccount and
 # settles to their bank on the schedule below. Settlements are mirrored for the earnings screen.
 payment:
+  # M10: the payer covers Paystack's card fee, shown before paying (CardFeeCalculator). added-by PAYSTACK: the dashboard's
+  # "pass charges to customer" is on and Paystack adds the fee to the amount we send; CORYD: it is off and we send the total.
+  # Getting this wrong charges the fee twice (or not at all) - check the dashboard before changing it.
+  card-fee:
+    added-by: ${CARD_FEE_ADDED_BY:PAYSTACK}
+    percent: ${CARD_FEE_PERCENT:0.015}
+    flat: ${CARD_FEE_FLAT:100}
+    flat-waived-under: ${CARD_FEE_FLAT_WAIVED_UNDER:2500}
+    cap: ${CARD_FEE_CAP:2000}
   # A driver owing more than this from refunded trips can't post routes until they pay it back.
   driver-owed-limit: ${DRIVER_OWED_LIMIT:10000}
   # Whether an account that owes CoRyd can be deleted: NEVER, OPS (ops can, the owner can't) or ALWAYS.

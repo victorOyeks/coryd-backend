@@ -21,4 +21,8 @@ public class BookingConfirmedEvent {
     private BigDecimal fareTotal;
     private String pickupCode;
     private LocalDateTime confirmedAt;
+    /** For the driver's "Ada booked 1 seat on Ikeja City Mall → Victoria Island" push (M20) - null on older events. */
+    private String riderFirstName;
+    private String originLabel;
+    private String destinationLabel;
 }

@@ -153,6 +153,7 @@ public class BookingService {
 
     private final ProfileServiceClient profileServiceClient;
     private final IdentityServiceClient identityServiceClient;
+    private final org.coryd.trip.client.PaymentServiceClient paymentServiceClient;
     private final ShareTokenService shareTokenService;
     private final LocationService locationService;
     private final MapsService mapsService;
@@ -862,11 +863,21 @@ public class BookingService {
                 .bookingId(booking.getId())
                 .routePostId(booking.getRoutePostId())
                 .riderId(booking.getRiderId())
+                .driverId(bookedRoute.getDriverId())
+                .riderFirstName(riderFirstName(booking.getRiderId()))
+                .originLabel(bookedRoute.getOriginLabel())
+                .destinationLabel(bookedRoute.getDestinationLabel())
                 .seatCount(booking.getSeatCount())
                 .fareTotal(booking.getFareTotal())
                 .pickupCode(booking.getPickupCode())
                 .confirmedAt(LocalDateTime.now())
                 .build());
+    }
+
+    /** The rider's first name for the driver's pushes - null (the push says "A rider") when profile-service can't say. */
+    private String riderFirstName(String riderId) {
+        ProfileServiceClient.RiderSummaryItem rider = profileServiceClient.fetchRiderSummaries(List.of(riderId)).get(riderId);
+        return rider == null ? null : rider.firstName();
     }
 
     /** A failure webhook can land after the hold already expired, or after a retry on another
@@ -988,6 +999,8 @@ public class BookingService {
                     .feeApplied(false)
                     .paid(true)
                     .riderAccountCancelled(true)
+                    // A rider closing their own account keeps the card fee; a suspension by CoRyd refunds it (M10).
+                    .refundCardFee(!org.coryd.trip.event.AccountDeletionEventListener.CANCELLED_BY.equals(cancelledBy))
                     .cancelledAt(LocalDateTime.now())
                     .build());
         }
@@ -1030,9 +1043,14 @@ public class BookingService {
                 .riderId(booking.getRiderId())
                 .driverId(route.getDriverId())
                 .cancelledBy("RIDER")
+                .riderFirstName(riderFirstName(booking.getRiderId()))
+                .originLabel(route.getOriginLabel())
+                .destinationLabel(route.getDestinationLabel())
                 .feeApplied(feeApplies)
                 .paid(true)
                 .feeAmount(fee)
+                // The driver moved the trip - not the rider's doing, so the card fee goes back too (M10).
+                .refundCardFee(quote.reason() == CancellationQuoteResponse.Reason.FREE_TIME_CHANGED)
                 .cancelledAt(LocalDateTime.now())
                 .build());
     }
@@ -1050,7 +1068,10 @@ public class BookingService {
         if (!UNPAID_STATUSES.contains(status) && !RIDER_CANCELLABLE_STATUSES.contains(status)) {
             throw new BadRequestException("This booking can no longer be cancelled - current status is " + status);
         }
-        return quoteRiderCancellation(booking, !UNPAID_STATUSES.contains(status), routeOf(booking), Instant.now());
+        boolean paid = !UNPAID_STATUSES.contains(status);
+        CancellationQuoteResponse quote = quoteRiderCancellation(booking, paid, routeOf(booking), Instant.now());
+        // M10: what goes back to the card is the fare part, plus the card fee only when the rider isn't the cause.
+        return paid ? quote.withCardFee(paymentServiceClient.cardFee(bookingId)) : quote;
     }
 
     /**
@@ -1067,18 +1088,18 @@ public class BookingService {
         int windowHours = cancellationPolicy.getFreeCancellationWindowHours();
         if (!paid) {
             return new CancellationQuoteResponse(booking.getId(), CancellationQuoteResponse.Reason.NOT_PAID, false, percent,
-                    windowHours, fare, BigDecimal.ZERO, BigDecimal.ZERO, null, CancellationQuoteResponse.CURRENCY);
+                    windowHours, fare, BigDecimal.ZERO, BigDecimal.ZERO, null, CancellationQuoteResponse.CURRENCY, BigDecimal.ZERO, false, fare);
         }
         if (freeCancellation(booking)) {
             return new CancellationQuoteResponse(booking.getId(), CancellationQuoteResponse.Reason.FREE_TIME_CHANGED, false, percent,
-                    windowHours, fare, BigDecimal.ZERO, fare, null, CancellationQuoteResponse.CURRENCY);
+                    windowHours, fare, BigDecimal.ZERO, fare, null, CancellationQuoteResponse.CURRENCY, null, false, fare);
         }
         boolean feeApplies = cancellationPolicy.isFeeApplicable(route.getDepartureTime(), now);
         BigDecimal fee = cancellationPolicy.applyFee(fare, feeApplies);
         return new CancellationQuoteResponse(booking.getId(),
                 feeApplies ? CancellationQuoteResponse.Reason.LATE_CANCELLATION : CancellationQuoteResponse.Reason.FREE_BEFORE_WINDOW,
                 feeApplies, percent, windowHours, fare, fee, fare.subtract(fee),
-                cancellationPolicy.feeStartsAt(route.getDepartureTime()), CancellationQuoteResponse.CURRENCY);
+                cancellationPolicy.feeStartsAt(route.getDepartureTime()), CancellationQuoteResponse.CURRENCY, null, false, fare);
     }
 
     /** cancelledBy on a single seat ops cancelled - the rider gets support's copy, the driver is told the seat is free. */
@@ -1153,6 +1174,8 @@ public class BookingService {
                 .feeApplied(feeApplies)
                 .paid(true)
                 .feeAmount(feeApplies ? fee : null)
+                // The rider's fault keeps the card fee; the driver's or CoRyd's refunds it with the fare (M10).
+                .refundCardFee(fault != org.coryd.trip.entity.CancellationFault.RIDER)
                 .cancelledAt(LocalDateTime.now())
                 .build());
         return new OpsCancellation(bookingId, route.getId(), before, to, true, booking.getFareTotal(), fee,

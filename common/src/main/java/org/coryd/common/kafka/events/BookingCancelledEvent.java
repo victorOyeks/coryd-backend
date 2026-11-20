@@ -28,4 +28,19 @@ public class BookingCancelledEvent {
      * opened up, as when a rider cancels. False on older events.
      */
     private boolean riderAccountCancelled;
+    /**
+     * Whether the card fee the rider paid on top of the fare goes back too. True when the driver or CoRyd caused the
+     * cancellation, false when the rider did (the late fee, if any, is still worked out on the fare alone). Null on older
+     * events and on whole-trip cancellations: refunded unless cancelledBy is RIDER.
+     */
+    private Boolean refundCardFee;
+    /** For the driver's "Ada cancelled their seat on ..." push when the rider cancels (M20) - null otherwise and on older events. */
+    private String riderFirstName;
+    private String originLabel;
+    private String destinationLabel;
+
+    /** The rule payment-service refunds by - refundCardFee when trip-service set it, else everyone but the rider. */
+    public boolean cardFeeRefunded() {
+        return refundCardFee != null ? refundCardFee : !"RIDER".equals(cancelledBy);
+    }
 }

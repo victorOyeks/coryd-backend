@@ -27,14 +27,34 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class PaymentTransaction extends BaseEntity {
 
+    /** The card fee actually charged - 0 for payments made before it was recorded. */
+    public BigDecimal cardFeeOrZero() {
+        return cardFee == null ? BigDecimal.ZERO : cardFee;
+    }
+
+    /** What the card was charged - amount alone for payments made before the fee was recorded. */
+    public BigDecimal chargedTotal() {
+        return amountCharged != null ? amountCharged : amount.add(cardFeeOrZero());
+    }
+
     /** Every payment is for a booking; nullable only because the column predates that. */
     private String bookingId;
 
     @Column(nullable = false)
     private String riderId;
 
+    /** What the payer owed: the fare, or the debt being repaid. The card fee is on top of it, below. */
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
+
+    /** The card fee on top of amount (CardFeeCalculator) - quoted at initiate, replaced by Paystack's real figure on success. */
+    @Builder.Default
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal cardFee = BigDecimal.ZERO;
+
+    /** What the card was charged: amount + cardFee. Null on payments made before the fee was recorded. */
+    @Column(precision = 10, scale = 2)
+    private BigDecimal amountCharged;
 
     @Column(nullable = false, unique = true)
     private String gatewayReference;

@@ -29,7 +29,7 @@ import java.util.List;
 public class PaymentHistoryRepository {
 
     private static final String RIDER_ROWS = """
-            select 'PAYMENT' as type, t.id, t.updated_at as occurred_at, t.amount, t.status as status,
+            select 'PAYMENT' as type, t.id, t.updated_at as occurred_at, coalesce(t.amount_charged, t.amount + t.card_fee) as amount, t.status as status,
                    t.card_type, t.card_last4, null::varchar as refund_kind, t.booking_id
             from payment.payment_transactions t
             where t.rider_id = :userId and t.purpose = 'BOOKING_PAYMENT' and t.status in ('PAID', 'FAILED')

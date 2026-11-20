@@ -82,7 +82,8 @@ public class OpsRefundService implements OpsMoneyExecutor {
     RefundableView refundable(PaymentTransaction payment, String excludeRequestId) {
         String bookingId = payment.getBookingId();
         boolean paid = payment.getStatus() == PayoutStatus.PAID;
-        BigDecimal amountPaid = paid ? payment.getAmount() : BigDecimal.ZERO;
+        // What the card was charged - the fare and the card fee the rider covered on top (M10).
+        BigDecimal amountPaid = paid ? payment.chargedTotal() : BigDecimal.ZERO;
         List<Refund> refunds = refundRepository.findByBookingId(bookingId);
         BigDecimal refunded = sum(refunds, RefundStatus.REFUNDED, true);
         BigDecimal pending = sum(refunds, RefundStatus.PENDING, true);
@@ -221,7 +222,9 @@ public class OpsRefundService implements OpsMoneyExecutor {
         request.setFailureReason(null);
         OpsMoneyRequest saved = requestRepository.saveAndFlush(request);
 
-        settleHold(bookingId, amount);
+        // The card fee is refunded last and is CoRyd's cost - only the fare part of this refund is charged to the driver.
+        BigDecimal fareLeft = payment.getAmount().subtract(before.refunded()).max(BigDecimal.ZERO);
+        settleHold(bookingId, amount.min(fareLeft));
         // Recorded with the same rule as every other refund: the driver was split their share at charge time.
         RefundableView after = refundable(paymentTransactionRepository.findById(paymentId).orElseThrow(), null);
         audit.record(actor, OpsMoneyAudit.Action.REFUND_EXECUTED, OpsMoneyAudit.TargetType.BOOKING, bookingId, saved.getId(),

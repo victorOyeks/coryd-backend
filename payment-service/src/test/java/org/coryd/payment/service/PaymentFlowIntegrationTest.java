@@ -92,7 +92,8 @@ import static org.mockito.Mockito.when;
 @Testcontainers
 @Import({PaymentService.class, EarningsService.class, SavedCardService.class, SettlementSyncService.class,
         CommissionProperties.class, org.coryd.payment.gateway.PaystackProperties.class, DriverSplitResolver.class, SubaccountBackfill.class, RefundRetryJob.class,
-        PaymentHistoryService.class, org.coryd.payment.repository.PaymentHistoryRepository.class, EarningsPublisher.class})
+        PaymentHistoryService.class, org.coryd.payment.repository.PaymentHistoryRepository.class, EarningsPublisher.class,
+        CardFeeCalculator.class})
 class PaymentFlowIntegrationTest {
 
     @Container
@@ -479,8 +480,8 @@ class PaymentFlowIntegrationTest {
         String booking = heldBooking();
         String reference = paidBooking(booking);
 
-        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1");
-        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1");
+        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1", false);
+        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1", false);
 
         verify(gatewayClient, times(1)).refund(eq(reference), eq(new BigDecimal("900.00")), anyString());
         assertThat(earningsTransactionRepository.findAll()).singleElement()
@@ -488,6 +489,73 @@ class PaymentFlowIntegrationTest {
                     assertThat(t.getGrossFare()).isEqualByComparingTo("300.00");
                     assertThat(t.getNetCredit()).isEqualByComparingTo("285.00");
                 });
+    }
+
+    // ---- card fee (M10) --------------------------------------------------------------------------
+
+    /** 1,200 fare: Paystack (pass charges to customer) charges 1,218.28 - the rider's card fee is 18.28. */
+    private static final long CHARGED_KOBO = 121828L;
+
+    @Test
+    void theQuoteIsWhatTheCardIsChargedAndTheReceiptShowsAllThree() {
+        String booking = heldBooking();
+        var quote = paymentService.quoteBooking(booking, RIDER);
+        assertThat(quote.amount()).isEqualByComparingTo("1200.00");
+        assertThat(quote.cardFee()).isEqualByComparingTo("18.28");
+        assertThat(quote.total()).isEqualByComparingTo("1218.28");
+        assertThatThrownBy(() -> paymentService.quoteBooking(booking, "rider-2"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+
+        String reference = paymentService.initiate(checkout(booking), RIDER).gatewayReference();
+        // Paystack adds the fee itself (added-by PAYSTACK) - we ask it for the fare.
+        verify(gatewayClient).initiateSplit(eq(reference), eq(FARE), any(), any(), any(), any(), any());
+        paymentService.handleWebhookSuccess(reference, booking, CHARGED_KOBO, null);
+
+        var summary = paymentService.getByBooking(booking);
+        assertThat(summary.amount()).isEqualByComparingTo("1200.00");
+        assertThat(summary.cardFee()).isEqualByComparingTo("18.28");
+        assertThat(summary.amountCharged()).isEqualByComparingTo("1218.28");
+    }
+
+    @Test
+    void aDriverCausedCancellationRefundsTheCardFeeTooButOnlyTheFareIsChargedToTheDriver() {
+        String booking = heldBooking();
+        String reference = paymentService.initiate(checkout(booking), RIDER).gatewayReference();
+        paymentService.handleWebhookSuccess(reference, booking, CHARGED_KOBO, null);
+
+        earningsService.refund(booking, "Booking cancelled by DRIVER", null, "route-1", true);
+
+        verify(gatewayClient).refund(eq(reference), eq(new BigDecimal("1218.28")), anyString());
+        // The driver owes back their share of the fare (1,200 less 5%), not of the card fee.
+        assertThat(earningsService.amountOwed(DRIVER)).isEqualByComparingTo("1140.00");
+    }
+
+    @Test
+    void aRiderCancellationKeepsTheCardFee() {
+        String booking = heldBooking();
+        String reference = paymentService.initiate(checkout(booking), RIDER).gatewayReference();
+        paymentService.handleWebhookSuccess(reference, booking, CHARGED_KOBO, null);
+
+        earningsService.refund(booking, "Booking cancelled by RIDER", null, "route-1", false);
+
+        verify(gatewayClient).refund(eq(reference), eq(FARE), anyString());
+    }
+
+    @Test
+    void aRepaymentRecordsTheCardFeeAndOnlyTheDebtPaysItDown() {
+        earningsService.chargeRefundToDriver(DRIVER, "b-x", new BigDecimal("2105.26"), BigDecimal.ZERO);
+        BigDecimal owed = earningsService.amountOwed(DRIVER);
+        assertThat(owed).isEqualByComparingTo("2000.00");
+        when(gatewayClient.initiate(anyString(), any(), any(), any(), any()))
+                .thenAnswer(i -> new PaymentGatewayClient.GatewayInitResult("https://checkout", i.getArgument(0)));
+        var checkout = paymentService.initiateRepayment(DRIVER, DRIVER, null, "d@example.com", null);
+        var tx = paymentTransactionRepository.findByGatewayReference(checkout.gatewayReference()).orElseThrow();
+        assertThat(tx.getCardFee()).isEqualByComparingTo("30.46");
+        assertThat(tx.getAmountCharged()).isEqualByComparingTo("2030.46");
+
+        paymentService.handleWebhookSuccess(checkout.gatewayReference(), null, 203046L, null);
+        assertThat(earningsService.amountOwed(DRIVER)).isEqualByComparingTo("0.00");
+        verify(gatewayClient, never()).refund(anyString(), any(), any());
     }
 
     // ---- driver earnings -------------------------------------------------------------------------
@@ -686,7 +754,7 @@ class PaymentFlowIntegrationTest {
         String booking = heldBooking();
         paidBooking(booking);
 
-        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1");
+        earningsService.refund(booking, "Booking cancelled by RIDER", new BigDecimal("300.00"), "route-1", false);
 
         assertThat(owed()).as("95% of the 900 refunded - the driver keeps their share of the 300 fee").isEqualByComparingTo("855.00");
     }

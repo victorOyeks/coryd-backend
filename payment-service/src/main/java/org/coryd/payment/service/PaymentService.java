@@ -14,6 +14,7 @@ import org.coryd.common.kafka.events.PaymentFailedEvent;
 import org.coryd.common.kafka.events.PaymentSucceededEvent;
 import org.coryd.payment.client.TripServiceClient;
 import org.coryd.payment.dto.CardAuthorization;
+import org.coryd.payment.dto.CardFeeQuoteResponse;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
@@ -54,6 +55,7 @@ public class PaymentService {
     private final SavedCardService savedCardService;
     private final EarningsService earningsService;
     private final RefundRepository refundRepository;
+    private final CardFeeCalculator cardFeeCalculator;
 
     private static final BigDecimal MIN_REPAYMENT = new BigDecimal("100.00");
 
@@ -98,12 +100,15 @@ public class PaymentService {
             throw new BadRequestException("The least you can pay is ₦" + MIN_REPAYMENT.toPlainString());
         }
         String reference = UUID.randomUUID().toString();
-        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(reference, owed,
+        CardFeeCalculator.Quote quote = cardFeeCalculator.quote(owed);
+        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiate(reference, cardFeeCalculator.chargeAmount(quote),
                 checkoutEmailResolver.resolve(driverId, email), callbackUrl,
                 Map.of("driverId", driverId, "purpose", PaymentPurpose.DEBT_REPAYMENT.name()));
         paymentTransactionRepository.save(PaymentTransaction.builder()
                 .riderId(driverId)
                 .amount(owed)
+                .cardFee(quote.cardFee())
+                .amountCharged(quote.total())
                 .gatewayReference(result.gatewayReference())
                 .authorizationUrl(result.authorizationUrl())
                 .purpose(PaymentPurpose.DEBT_REPAYMENT)
@@ -111,11 +116,33 @@ public class PaymentService {
         return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
     }
 
-    /** Receipt/Pay Now screen's payment method/status. */
+    /** Receipt/Pay Now screen's payment method/status, and what the card was charged: the fare, the card fee, the total. */
     public PaymentSummaryResponse getByBooking(String bookingId) {
         PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("No payment found for this booking"));
-        return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus());
+        return new PaymentSummaryResponse(transaction.getPaymentMethod(), transaction.getStatus(), transaction.getAmount(),
+                transaction.cardFeeOrZero(), transaction.chargedTotal(), transaction.getCardType(), transaction.getCardLast4());
+    }
+
+    /**
+     * What paying for this booking will cost, before paying: the fare from trip-service's booking, the card fee and the total
+     * - the same CardFeeCalculator.quote initiate charges by. Only the booking's rider may ask.
+     */
+    public CardFeeQuoteResponse quoteBooking(String bookingId, String callerId) {
+        TripServiceClient.BookingPaymentView booking = tripServiceClient.fetchPaymentView(bookingId);
+        if (!callerId.equals(booking.riderId())) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
+                    "Only this booking's rider can see what paying for it costs");
+        }
+        return CardFeeQuoteResponse.of(cardFeeCalculator.quote(booking.fareTotal()));
+    }
+
+    /** The card fee on any amount - the Money owed screen's "pay ₦X" before the driver pays it. */
+    public CardFeeQuoteResponse quoteAmount(BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new BadRequestException("amount must be greater than zero");
+        }
+        return CardFeeQuoteResponse.of(cardFeeCalculator.quote(amount));
     }
 
     /** Upserts on the booking_id unique index instead of a plain insert - the DB, not this method,
@@ -131,12 +158,13 @@ public class PaymentService {
         }
 
         String reference = UUID.randomUUID().toString();
-        DriverSplitResolver.Split split = driverSplitResolver.resolve(booking.driverId(), booking.fareTotal());
-        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiateSplit(reference, booking.fareTotal(),
+        CardFeeCalculator.Quote quote = cardFeeCalculator.quote(booking.fareTotal());
+        DriverSplitResolver.Split split = split(booking, quote);
+        PaymentGatewayClient.GatewayInitResult result = gatewayClient.initiateSplit(reference, cardFeeCalculator.chargeAmount(quote),
                 checkoutEmailResolver.resolve(booking.riderId(), request.riderEmail()), request.callbackUrl(),
                 metadata(booking), split.subaccountCode(), split.flatChargeKobo());
 
-        record(booking, result.gatewayReference(), result.authorizationUrl(), split);
+        record(booking, result.gatewayReference(), result.authorizationUrl(), split, quote);
         return new InitiatePaymentResponse(result.authorizationUrl(), result.gatewayReference(), PayoutStatus.PENDING);
     }
 
@@ -148,12 +176,13 @@ public class PaymentService {
     private InitiatePaymentResponse payWithSavedCard(TripServiceClient.BookingPaymentView booking, InitiatePaymentRequest request) {
         SavedCard card = savedCardService.owned(booking.riderId(), request.savedCardId());
         String reference = UUID.randomUUID().toString();
-        DriverSplitResolver.Split split = driverSplitResolver.resolve(booking.driverId(), booking.fareTotal());
-        record(booking, reference, null, split);
+        CardFeeCalculator.Quote quote = cardFeeCalculator.quote(booking.fareTotal());
+        DriverSplitResolver.Split split = split(booking, quote);
+        record(booking, reference, null, split, quote);
 
         PaymentGatewayClient.ChargeResult result;
         try {
-            result = gatewayClient.chargeAuthorization(reference, booking.fareTotal(), card.getEmail(),
+            result = gatewayClient.chargeAuthorization(reference, cardFeeCalculator.chargeAmount(quote), card.getEmail(),
                     card.getAuthorizationCode(), metadata(booking), split.subaccountCode(), split.flatChargeKobo());
         } catch (Exception e) {
             // If Paystack did charge, its webhook still lands on this reference and is adopted.
@@ -162,7 +191,8 @@ public class PaymentService {
         }
 
         if (result.success()) {
-            handleWebhookSuccess(reference, booking.bookingId(), booking.fareTotal().movePointRight(2).longValueExact(),
+            // null amount: the quote stays on record until Paystack's own charge.success brings the real total.
+            handleWebhookSuccess(reference, booking.bookingId(), null,
                     new CardAuthorization(card.getAuthorizationCode(), card.getFingerprint(), "card", true, card.getCardType(),
                             card.getLast4(), card.getExpMonth(), card.getExpYear(), card.getBank(), card.getEmail()));
             return new InitiatePaymentResponse(null, reference, PayoutStatus.PAID);
@@ -177,8 +207,14 @@ public class PaymentService {
         return payViaCheckout(booking, request);
     }
 
+    /** When we add the card fee ourselves it reaches the driver's subaccount unless the split keeps it with us. */
+    private DriverSplitResolver.Split split(TripServiceClient.BookingPaymentView booking, CardFeeCalculator.Quote quote) {
+        return driverSplitResolver.resolve(booking.driverId(), booking.fareTotal(),
+                cardFeeCalculator.coRydAddsFee() ? quote.cardFee() : BigDecimal.ZERO);
+    }
+
     private void record(TripServiceClient.BookingPaymentView booking, String reference, String authorizationUrl,
-                        DriverSplitResolver.Split split) {
+                        DriverSplitResolver.Split split, CardFeeCalculator.Quote quote) {
         int affected = paymentTransactionRepository.upsertByBookingId(
                 UUID.randomUUID().toString(), booking.bookingId(), booking.riderId(), booking.fareTotal(),
                 reference, authorizationUrl, PayoutStatus.PENDING.name(),
@@ -188,6 +224,7 @@ public class PaymentService {
         }
         PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking.bookingId())
                 .orElseThrow(() -> new IllegalStateException("Upsert succeeded but no transaction found for booking " + booking.bookingId()));
+        paymentTransactionRepository.recordCharge(transaction.getId(), quote.cardFee(), quote.total());
         fareHoldRepository.insertIfAbsent(UUID.randomUUID().toString(), transaction.getId(),
                 booking.bookingId(), booking.driverId(), booking.fareTotal(), split.debtRecovery());
     }
@@ -214,6 +251,7 @@ public class PaymentService {
             return;
         }
         rememberCard(transaction.getRiderId(), card);
+        recordActualCharge(transaction, amountKobo);
         // On the loaded row, not a bulk update - this row is flushed later and would write the old card back.
         if (card != null && card.last4() != null) {
             transaction.setCardType(card.cardType() == null ? null : card.cardType().trim());
@@ -244,6 +282,28 @@ public class PaymentService {
                 .amount(transaction.getAmount())
                 .paidAt(LocalDateTime.now())
                 .build());
+    }
+
+    /**
+     * What the card was really charged, from Paystack - on every delivery, so a saved-card charge (recorded from the quote)
+     * is corrected by its own webhook. The fee is whatever came on top of what was owed.
+     */
+    private void recordActualCharge(PaymentTransaction transaction, Long amountKobo) {
+        if (amountKobo == null) {
+            return;
+        }
+        BigDecimal charged = BigDecimal.valueOf(amountKobo).movePointLeft(2);
+        BigDecimal fee = charged.subtract(transaction.getAmount());
+        if (fee.signum() < 0) {
+            log.error("RECONCILE: {} charged {} for {} owed", transaction.getGatewayReference(), charged, transaction.getAmount());
+            return;
+        }
+        if (fee.compareTo(transaction.cardFeeOrZero()) != 0) {
+            log.warn("Card fee on {} was {}, quoted {}", transaction.getGatewayReference(), fee, transaction.cardFeeOrZero());
+        }
+        paymentTransactionRepository.recordCharge(transaction.getId(), fee, charged);
+        transaction.setCardFee(fee);
+        transaction.setAmountCharged(charged);
     }
 
     private void rememberCard(String riderId, CardAuthorization card) {

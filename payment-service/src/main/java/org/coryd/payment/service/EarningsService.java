@@ -277,7 +277,8 @@ public class EarningsService {
             } else {
                 recordRefund(transaction, hold.getBookingId(), amount, hold.getRefundReason(), RefundStatus.REFUNDED);
             }
-            chargeRefundToDriver(hold.getDriverId(), hold.getBookingId(), amount, hold.getDebtRecovery());
+            // Only the fare part is the driver's - a card fee going back with it is CoRyd's cost.
+            chargeRefundToDriver(hold.getDriverId(), hold.getBookingId(), amount.min(hold.getAmount()), hold.getDebtRecovery());
             refundIssued(hold.getBookingId(), transaction.getRiderId(), amount, hold.getRefundReason());
         }
     }
@@ -431,13 +432,14 @@ public class EarningsService {
 
     @Transactional
     public void refund(String bookingId, String reason) {
-        refund(bookingId, reason, null, null);
+        refund(bookingId, reason, null, null, true);
     }
 
     /** A late rider cancellation keeps fee out of the refund and records it as the driver's earning -
-     * the hold is still settled exactly once, split between the two. */
+     * the hold is still settled exactly once, split between the two. refundCardFee: the card fee the rider paid on top
+     * of the fare goes back too (a driver- or CoRyd-caused cancellation); it is CoRyd's cost, never charged to the driver. */
     @Transactional
-    public void refund(String bookingId, String reason, BigDecimal fee, String routePostId) {
+    public void refund(String bookingId, String reason, BigDecimal fee, String routePostId, boolean refundCardFee) {
         FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId).orElse(null);
         if (hold == null || hold.isReleased() || hold.isRefunded()) {
             return;
@@ -453,7 +455,9 @@ public class EarningsService {
                 return;
             }
             BigDecimal kept = fee == null ? BigDecimal.ZERO : fee.max(BigDecimal.ZERO).min(hold.getAmount());
-            BigDecimal refunded = hold.getAmount().subtract(kept);
+            BigDecimal fareBack = hold.getAmount().subtract(kept);
+            BigDecimal cardFeeBack = refundCardFee ? transaction.cardFeeOrZero() : BigDecimal.ZERO;
+            BigDecimal refunded = fareBack.add(cardFeeBack);
             if (kept.signum() > 0) {
                 creditDriver(hold.getDriverId(), bookingId, routePostId, transaction.getRiderId(), kept, BigDecimal.ZERO);
             }
@@ -462,7 +466,7 @@ public class EarningsService {
             }
             if (refundToCard(transaction, bookingId, refunded, reason)) {
                 recordRefund(transaction, bookingId, refunded, reason, RefundStatus.REFUNDED);
-                chargeRefundToDriver(hold.getDriverId(), bookingId, refunded, hold.getDebtRecovery());
+                chargeRefundToDriver(hold.getDriverId(), bookingId, fareBack, hold.getDebtRecovery());
                 refundIssued(bookingId, transaction.getRiderId(), refunded, reason);
                 return;
             }

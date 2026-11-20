@@ -20,13 +20,36 @@ public record CancellationQuoteResponse(
         BigDecimal fareTotal,
         /** Kept back if they cancel now - 0 unless feeApplies. */
         BigDecimal feeAmount,
-        /** Back to the card if they cancel now - fareTotal less feeAmount; 0 for a hold that was never paid. */
+        /**
+         * Back to the card if they cancel now: fareTotal less feeAmount, plus the card fee when it goes back too
+         * (cardFeeRefunded); 0 for a hold that was never paid.
+         */
         BigDecimal refundAmount,
         /** When the fee starts to apply (departure less the window) - in the past once it applies; null when it never will (NOT_PAID, FREE_TIME_CHANGED). */
         Instant freeUntil,
         /** ISO 4217 - every amount above is in it. */
-        String currency
+        String currency,
+        /**
+         * M10: the card fee the rider paid on top of the fare - 0 for an unpaid hold or a payment from before it was
+         * recorded, null when payment-service couldn't be reached (refundAmount then counts only the fare).
+         */
+        BigDecimal cardFee,
+        /** Whether that card fee comes back if they cancel now - only when the driver moved the trip (FREE_TIME_CHANGED). */
+        boolean cardFeeRefunded,
+        /** What the card was charged: fareTotal + cardFee (fareTotal alone when cardFee is unknown). */
+        BigDecimal amountPaid
 ) {
+
+    /** The same quote with the card fee the rider paid filled in. */
+    public CancellationQuoteResponse withCardFee(BigDecimal fee) {
+        if (fee == null || fee.signum() <= 0) {
+            return new CancellationQuoteResponse(bookingId, reason, feeApplies, feePercent, freeCancellationWindowHours, fareTotal,
+                    feeAmount, refundAmount, freeUntil, currency, fee == null ? null : java.math.BigDecimal.ZERO, false, fareTotal);
+        }
+        boolean back = reason == Reason.FREE_TIME_CHANGED;
+        return new CancellationQuoteResponse(bookingId, reason, feeApplies, feePercent, freeCancellationWindowHours, fareTotal,
+                feeAmount, back ? refundAmount.add(fee) : refundAmount, freeUntil, currency, fee, back, fareTotal.add(fee));
+    }
 
     public static final String CURRENCY = "NGN";
 

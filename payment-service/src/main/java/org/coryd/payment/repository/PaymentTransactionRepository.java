@@ -24,6 +24,11 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
     int adoptReference(@Param("id") String id, @Param("reference") String reference);
     Optional<PaymentTransaction> findByGatewayReference(String gatewayReference);
 
+    /** The card fee and total for this attempt - set at initiate from the quote, and again from Paystack's charge. */
+    @Modifying(flushAutomatically = true)
+    @Query("update PaymentTransaction t set t.cardFee = :cardFee, t.amountCharged = :charged where t.id = :id")
+    int recordCharge(@Param("id") String id, @Param("cardFee") BigDecimal cardFee, @Param("charged") BigDecimal charged);
+
     /** Most-recent row, not a single-result findByBookingId - avoids NonUniqueResultException against any leftover duplicate. */
     Optional<PaymentTransaction> findFirstByBookingIdOrderByCreatedAtDesc(String bookingId);
 

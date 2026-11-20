@@ -42,6 +42,28 @@ public class PaymentServiceClient {
         }
     }
 
+    /** The card fee the rider paid on top of this booking's fare (M10) - null when payment-service can't say. */
+    public BigDecimal cardFee(String bookingId) {
+        try {
+            PaymentView response = restClient.get()
+                    .uri("/payments/bookings/{bookingId}", bookingId)
+                    .retrieve()
+                    .body(PaymentView.class);
+            return response == null || response.data() == null ? null : response.data().cardFee();
+        } catch (Exception e) {
+            log.warn("Could not read the card fee for booking {}: {}", bookingId, e.getMessage());
+            return null;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PaymentSummary(BigDecimal amount, BigDecimal cardFee, BigDecimal amountCharged) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record PaymentView(PaymentSummary data) {
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record PostingStatus(boolean hasPayoutAccount, BigDecimal amountOwed, boolean overOwedLimit) {
     }

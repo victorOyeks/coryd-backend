@@ -30,18 +30,27 @@ public class DriverSplitResolver {
     private final CommissionProperties commissionProperties;
 
     public Split resolve(String driverId, BigDecimal fare) {
+        return resolve(driverId, fare, BigDecimal.ZERO);
+    }
+
+    /** ourExtra: money on the charge that is ours, not the driver's - the card fee, when we add it to the charge ourselves. */
+    public Split resolve(String driverId, BigDecimal fare, BigDecimal ourExtra) {
         PayoutRecipient recipient = payoutRecipientRepository
                 .findFirstByDriverIdAndIsDefaultTrueAndGatewaySubaccountCodeIsNotNull(driverId)
                 .orElseThrow(() -> new BadRequestException(
                         "This driver has not finished setting up payouts, so this trip cannot be booked yet"));
 
         BigDecimal recovery = debtRecovery(driverId, fare);
-        if (recovery.signum() == 0) {
+        boolean extra = ourExtra != null && ourExtra.signum() > 0;
+        if (recovery.signum() == 0 && !extra) {
             return new Split(recipient.getGatewaySubaccountCode(), null, BigDecimal.ZERO);
         }
         BigDecimal commission = fare.multiply(commissionProperties.getPercentage()).setScale(2, RoundingMode.HALF_UP);
         // transaction_charge replaces the subaccount's percentage for this charge, so it carries our commission too.
-        long flatChargeKobo = commission.add(recovery).movePointRight(2).longValueExact();
+        long flatChargeKobo = commission.add(recovery).add(extra ? ourExtra : BigDecimal.ZERO).movePointRight(2).longValueExact();
+        if (recovery.signum() == 0) {
+            return new Split(recipient.getGatewaySubaccountCode(), flatChargeKobo, BigDecimal.ZERO);
+        }
         log.info("Driver {} owes money - taking {} of this {} fare to recover it", driverId, recovery, fare);
         return new Split(recipient.getGatewaySubaccountCode(), flatChargeKobo, recovery);
     }

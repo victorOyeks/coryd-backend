@@ -11,6 +11,7 @@ import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.payment.dto.CardAuthorization;
+import org.coryd.payment.dto.CardFeeQuoteResponse;
 import org.coryd.payment.dto.InitiatePaymentRequest;
 import org.coryd.payment.dto.InitiatePaymentResponse;
 import org.coryd.payment.dto.PaymentSummaryResponse;
@@ -70,6 +71,46 @@ public class PaymentController {
         bookingPaymentAccess.requireCanRead(bookingId, principal, request);
         return ApiResponse.ok(paymentService.getByBooking(bookingId));
     }
+
+    /** M10: what paying for this booking costs, before paying - fare, card fee, total. The booking's rider only. */
+    @GetMapping("/bookings/{bookingId}/quote")
+    public ApiResponse<CardFeeQuoteResponse> quote(@PathVariable String bookingId,
+                                                   @AuthenticationPrincipal CoRydUserDetails principal) {
+        return ApiResponse.ok(paymentService.quoteBooking(bookingId, principal.getUserId()));
+    }
+
+    /** The card fee on an amount - e.g. a driver paying back what they owe. */
+    @GetMapping("/card-fee")
+    public ApiResponse<CardFeeQuoteResponse> cardFee(@RequestParam java.math.BigDecimal amount) {
+        return ApiResponse.ok(paymentService.quoteAmount(amount));
+    }
+
+    /**
+     * M11: Paystack's callback_url after checkout (it adds ?trxref=..&reference=..). Paystack only takes a web address, so
+     * this page hands the browser to the app - coryd://payment-complete - which closes the checkout tab and confirms the
+     * payment straight away. The link is for a browser that won't open an app on its own. Public: it shows nothing but the
+     * reference Paystack put in the address, and only ever points at the app.
+     */
+    @GetMapping(value = "/return", produces = org.springframework.http.MediaType.TEXT_HTML_VALUE)
+    public org.springframework.http.ResponseEntity<String> checkoutReturn(@RequestParam(required = false) String reference,
+                                                                          @RequestParam(required = false) String trxref) {
+        String ref = reference != null ? reference : trxref;
+        String safe = ref == null ? "" : ref.replaceAll("[^A-Za-z0-9_.:-]", "");
+        String appUrl = APP_RETURN_URL + (safe.isEmpty() ? "" : "?reference=" + safe);
+        String html = """
+                <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+                <title>CoRyd</title><meta http-equiv="refresh" content="0;url=%1$s">
+                <style>body{font-family:sans-serif;text-align:center;padding:48px 16px;color:#222}a{display:inline-block;margin-top:16px;padding:14px 24px;background:#FFC727;color:#111;border-radius:10px;text-decoration:none;font-weight:600}</style>
+                </head><body><p>Payment received. Taking you back to CoRyd&hellip;</p><a href="%1$s">Back to CoRyd</a>
+                <script>window.location.replace(%2$s);</script></body></html>
+                """.formatted(appUrl, "'" + appUrl + "'");
+        return org.springframework.http.ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(html);
+    }
+
+    /** Where /return sends the browser - the app's own link, the same in every build. */
+    static final String APP_RETURN_URL = "coryd://payment-complete";
 
     @PostMapping("/webhook")
     public ApiResponse<Void> webhook(@RequestBody String payload,

@@ -65,6 +65,48 @@ All paths below sit under `https://api-dev.coryd.ng`. They use the normal `Autho
 
 ---
 
+## 0. The card fee: the payer covers it, and sees it before paying
+
+The rider pays Paystack's card fee on top of the fare (a driver repaying what they owe pays it on top of that amount). Show it before they pay, never "no charges added":
+
+> Seat ₦3,000 · Card fee ₦147.21 · **Total ₦3,147.21**
+
+Never work the fee out in the app. Ask for it:
+
+### `GET /payment/payments/bookings/{bookingId}/quote` (the booking's rider only)
+
+```json
+{ "amount": 3000.00, "cardFee": 147.21, "total": 3147.21, "currency": "NGN" }
+```
+
+`amount` is the fare, `cardFee` the fee on top, `total` what the card is charged - by checkout and by a saved card alike. Anyone else gets `403`. Show it on Pay now, in the "Pay with" sheet (the button reads "Pay ₦3,147.21"), and before a saved-card one-tap.
+
+### `GET /payment/payments/card-fee?amount=2500`
+
+The same for any amount - the Money owed screen's "Pay ₦2,500" buttons (`amount` = what the driver chose to pay back).
+
+The fee is Paystack's local card pricing passed on: 1.5% plus ₦100 (the ₦100 waived on charges under ₦2,500), capped at ₦2,000 - so ₦3,000 costs ₦3,147.21, ₦2,000 costs ₦2,030.46. Today Paystack's dashboard adds it at checkout ("pass charges to customer"); payment-service works out the same figure for the quote (`payment.card-fee.*`, `added-by: PAYSTACK`) and records what Paystack really charged.
+
+### After paying: `GET /payment/payments/bookings/{bookingId}`
+
+```json
+{ "paymentMethod": "PAYSTACK", "status": "PAID", "amount": 3000.00, "cardFee": 147.21, "amountCharged": 3147.21, "cardType": "visa", "cardLast4": "4081" }
+```
+
+What the card was actually charged, for Booking confirmed and the receipt (and its PDF). `cardFee` is 0 on payments made before the fee was recorded - show the fare alone then. The rider's payment history (section 5) lists payments at `amountCharged`.
+
+### Refunds and the card fee
+
+| Who cancelled | What goes back to the card |
+|---|---|
+| The driver, CoRyd (a trip not started, a whole trip cancelled, ops cancelling for the driver's or CoRyd's fault, a suspended rider's seats) | Everything: fare + card fee |
+| The rider (any time), ops cancelling for the rider's fault, a rider closing their account | The fare less any late fee. The card fee is not refunded |
+| The rider, after the driver moved the trip (`FREE_TIME_CHANGED`) | Everything: fare + card fee |
+
+The late fee is still worked out on the fare alone. The cancellation quote (section 3) says exactly what goes back.
+
+---
+
 ## 1. Paying for a booking: `POST /payment/payments/initiate`
 
 ```json
@@ -72,9 +114,11 @@ All paths below sit under `https://api-dev.coryd.ng`. They use the normal `Autho
   "bookingId": "…",
   "savedCardId": "…",
   "riderEmail": "rider@example.com",
-  "callbackUrl": "coryd://payment-return"
+  "callbackUrl": "https://api-dev.coryd.ng/payment/payments/return"
 }
 ```
+
+`callbackUrl`: where Paystack sends the browser after checkout. Use `{API base}/payment/payments/return` - Paystack only takes a web address, and that page passes the browser on to `coryd://payment-complete?reference=…`. Open checkout with `WebBrowser.openAuthSessionAsync(authorizationUrl, "coryd://payment-complete")`: the tab closes by itself after paying and the app checks the payment straight away. Don't let the router treat `coryd://payment-complete` as a screen (`+native-intent`).
 
 - **New card:** leave out `savedCardId`. The response has a Paystack checkout URL to open.
 - **Saved card:** send `savedCardId` from section 2. We charge the card straight away, with no redirect.
@@ -135,7 +179,10 @@ What cancelling **right now** would cost. It is worked out by the same code `POS
   "feeAmount": 750.00,
   "refundAmount": 2250.00,
   "freeUntil": "2026-11-20T17:15:00Z",
-  "currency": "NGN"
+  "currency": "NGN",
+  "cardFee": 147.21,
+  "cardFeeRefunded": false,
+  "amountPaid": 3147.21
 }
 ```
 
@@ -148,7 +195,8 @@ What cancelling **right now** would cost. It is worked out by the same code `POS
 
 - `feePercent` is a percentage (25 = 25%) and `freeCancellationWindowHours` is the window, both as ops have them set **now**, whether or not the fee applies to this booking.
 - `freeUntil` is when the fee starts (departure less the window). It is in the past for `LATE_CANCELLATION` and `null` for `FREE_TIME_CHANGED` and `NOT_PAID`.
-- `feeAmount` is 0 unless `feeApplies`; `refundAmount` is `fareTotal - feeAmount` for a paid seat.
+- `feeAmount` is 0 unless `feeApplies`; `refundAmount` is what goes back to the card: `fareTotal - feeAmount`, plus `cardFee` when `cardFeeRefunded` (only `FREE_TIME_CHANGED` - the rider cancelling otherwise keeps the card fee unrefunded).
+- `amountPaid` is what the card was charged (`fareTotal + cardFee`); `cardFee` is 0 for payments from before it was recorded and `null` if payment-service couldn't be reached (then `refundAmount` counts the fare only). Copy: "You paid ₦3,147.21 (incl. ₦147.21 card fee). Cancelling now costs ₦750 - ₦2,250 goes back to your card. The card fee isn't refunded."
 - Only the booking's rider can ask: anyone else gets `401 Only this booking's rider can see what cancelling it costs` (the same refusal as the other booking endpoints). A booking that can no longer be cancelled (aboard, completed, already cancelled) gets `400 This booking can no longer be cancelled - current status is …`.
 - If the call fails, show wording without figures ("A late-cancellation fee may apply"), never numbers worked out in the app.
 
@@ -236,9 +284,10 @@ It's paid back automatically from the driver's next fares. The driver gets a pus
 #### Paying it back: `POST /payment/earnings/drivers/{driverId}/repay`
 
 ```json
-{ "amount": 2500, "callbackUrl": "coryd://payment-return" }
+{ "amount": 2500, "callbackUrl": "https://api-dev.coryd.ng/payment/payments/return" }
 ```
 
+- The driver pays the card fee on top: show `GET /payment/payments/card-fee?amount=…` on each button ("Pay ₦2,500 + ₦139.60 card fee"). Only the amount owed pays the debt down.
 - Leave out `amount` to pay everything owed. A part payment must be at least ₦100 and no more than what's owed.
 - When blocked, offer two buttons: **Pay ₦2,500 to post again** (`amount` = `minimumToUnblock`) and **Pay all ₦12,500** (no `amount`).
 - The response works like a booking payment: open `authorizationUrl` in Paystack checkout. Once Paystack confirms, the amount owed drops and, if it's back under the limit, the driver can post straight away. Re-fetch `/owed` and posting eligibility when they return from checkout.
