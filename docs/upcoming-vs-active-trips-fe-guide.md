@@ -113,6 +113,35 @@ GET /trip/bookings/drivers/me/upcoming           ← new
 
 `status` is `PUBLISHED` or `FULL`.
 
+### Trip mode extras on `/active` (2026-11-20)
+
+Two fields added to the driver's `/active` response. Nothing was removed or renamed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `cancelledCount` | int | Paid bookings on this route that the rider or driver later cancelled. They are **counted, not listed**: `bookings` still holds only riders on the trip, so nothing that walks `bookings` can show a cancelled rider as a passenger. An unpaid hold that lapsed doesn't count. |
+| `nextStop` | object or `null` | Where the driver is heading next, with an ETA from their latest live point. `null` before Start, and while the phone hasn't sent a location in the last two minutes. |
+
+`nextStop`:
+
+```json
+{
+  "kind": "PICKUP",
+  "bookingId": "b7c1...",
+  "label": "Ikeja City Mall, Obafemi Awolowo Way",
+  "lat": 6.6132, "lng": 3.3577,
+  "etaMinutes": 4,
+  "distanceMeters": 1850,
+  "estimated": false,
+  "computedAt": "2026-11-20T17:42:10Z"
+}
+```
+
+- **`kind`:** `PICKUP` (first rider still to collect, in stop order), else `DROPOFF` (first rider aboard who gets out more than 200 m before the destination), else `DESTINATION`. The same rules as the app's `tripStops.activeBookingsInStopOrder` + `summariseDriverTrip`. `bookingId` is null for `DESTINATION`.
+- **`etaMinutes`:** at least 1. From Google's Distance Matrix, reused for up to 60 s per route unless the car moves ~400 m or the next stop changes, so a 20 s Home poll doesn't call Google each time.
+- **`estimated: true`:** Google didn't answer; the distance is straight-line × 1.3 and the minutes assume 20 km/h.
+- **App rule:** the app still picks the stop itself and shows `· N min away` only when `nextStop.kind` and `bookingId` match what it shows. If they ever disagree (a poll in flight while a rider boards), it shows no ETA rather than the wrong one.
+
 ### After posting a route (`review-publish.tsx`)
 
 The endpoint is unchanged: `POST /trip/routes/drivers/{driverId}`. After it succeeds:

@@ -33,6 +33,7 @@ Everything here was checked against the backend code (notification-service, iden
 15. [How to test on dev](#15-how-to-test-on-dev)
 16. [Checklist for the apps](#16-checklist-for-the-apps)
 17. [Where the ops-console docs differ from the code](#17-where-the-ops-console-docs-differ-from-the-code)
+18. [Driver trip mode: cancelled riders and next-stop ETA](#18-driver-trip-mode-cancelled-riders-and-next-stop-eta)
 
 ---
 
@@ -793,3 +794,16 @@ The code is right in every case below; this guide follows it.
 7. **Preferences can now be read with a GET.** `NotificationPreferencesController` used to have only `PUT /preferences/users/{userId}`; it now also has `GET /preferences/users/{userId}`, which reads the switches without changing them.
 8. **Deleted account.** [accounts.md](../ops-console/accounts.md) §9 says sign-in "fails, since the account is gone". The exact responses are refresh `400 Invalid or expired refresh token` and login `400 Incorrect phone number or password`.
 9. **Older "only your own" checks still answer `401`, not `403`.** [security.md](../ops-console/security.md) §7 notes that `You can only view your own payments` and `You can only view your own earnings` remain `401` (`PaymentHistoryService`, `EarningsService`). Apps that sign out on every 401 could sign someone out on a bad id. Match on the two session messages instead.
+
+---
+
+## 18. Driver trip mode: cancelled riders and next-stop ETA
+
+Added 2026-11-20 to `GET /trip/bookings/drivers/{driverId}/active` (not an ops-console change, but the same apps read it). Full shape in [upcoming-vs-active-trips-fe-guide.md](../upcoming-vs-active-trips-fe-guide.md#trip-mode-extras-on-active-2026-11-20).
+
+| Field | App action | Priority |
+|---|---|---|
+| `cancelledCount` (int) | Driver Home card: "· N cancelled" on the pickup progress line. Cancelled riders are never in `bookings`, so Ready to Depart and Live Trip are unaffected | Should |
+| `nextStop` (`kind`, `bookingId`, `label`, `lat`, `lng`, `etaMinutes`, `distanceMeters`, `estimated`, `computedAt`, or `null`) | Driver Home card: "· 4 min away" on the NEXT PICKUP / NEXT DROP-OFF row, only when `kind` + `bookingId` match the stop the card shows. Hide it while the rider is `AT_PICKUP` | Should |
+
+QA: start a trip with two riders, cancel one before Start, drive towards the other. Home shows "0 of 1 picked up · 1 cancelled" and "· N min away" under NEXT PICKUP within 20 s of the first location fix.

@@ -1271,6 +1271,25 @@ class BookingFlowIntegrationTest {
     }
 
     @Test
+    void activeTripCountsPaidCancellationsButNeverListsThemAsPassengers() {
+        RoutePost route = routeAt(Instant.now().plus(10, ChronoUnit.MINUTES), null);
+        Booking staying = book(route, RIDER, 1);
+        confirm(staying);
+        Booking leaving = book(route, OTHER_RIDER, 1);
+        confirm(leaving);
+        bookingService.cancelByRider(leaving.getId(), OTHER_RIDER);
+        // An unpaid hold let go is not a cancelled rider.
+        Booking neverPaid = book(route, "rider-3", 1);
+        bookingService.cancelByRider(neverPaid.getId(), "rider-3");
+
+        var trip = bookingService.getActiveTripForDriver(DRIVER, DRIVER).orElseThrow();
+        assertThat(trip.bookings()).extracting(b -> b.bookingId()).containsExactly(staying.getId());
+        assertThat(trip.cancelledCount()).isEqualTo(1);
+        assertThat(trip.seatsBooked()).isEqualTo(1);
+        assertThat(trip.nextStop()).isNull();
+    }
+
+    @Test
     void driverRouteScheduledForLaterIsUpcomingWithItsBookings() {
         RoutePost later = route(4);
         confirm(book(later, RIDER, 2));

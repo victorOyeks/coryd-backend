@@ -28,6 +28,7 @@ import org.coryd.trip.entity.IssueReport;
 import org.coryd.trip.entity.Rating;
 import org.coryd.trip.entity.SosIncident;
 import org.coryd.trip.service.BookingService;
+import org.coryd.trip.service.NextStopEtaService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -49,6 +50,7 @@ import java.util.Optional;
 public class BookingController {
 
     private final BookingService bookingService;
+    private final NextStopEtaService nextStopEtaService;
 
     @GetMapping("/riders/{riderId}/recent-routes")
     public ApiResponse<List<Booking>> recentRoutes(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String riderId) {
@@ -93,10 +95,11 @@ public class BookingController {
         return ApiResponse.ok(bookingService.getHistory(riderId, principal.getUserId(), status, search, pageable));
     }
 
-    /** Dashboard's "Active Trip" card. */
+    /** Dashboard's "Active Trip" card, with the ETA to the next stop once the trip is under way. */
     @GetMapping("/drivers/{driverId}/active")
     public ApiResponse<Optional<DriverActiveTripResponse>> activeTripForDriver(@AuthenticationPrincipal CoRydUserDetails principal, @PathVariable String driverId) {
-        return ApiResponse.ok(bookingService.getActiveTripForDriver(driverId, principal.getUserId()));
+        return ApiResponse.ok(bookingService.getActiveTripForDriver(driverId, principal.getUserId())
+                .map(trip -> trip.withNextStop(nextStopEtaService.forTrip(trip))));
     }
 
     /** Dashboard's "Trips this week" tile. */

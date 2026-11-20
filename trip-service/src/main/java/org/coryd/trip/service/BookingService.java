@@ -287,9 +287,15 @@ public class BookingService {
             return Optional.empty();
         }
         RoutePost route = active.get();
-        List<Booking> activeBookings = bookingRepository.findByRoutePostId(route.getId()).stream()
+        List<Booking> routeBookings = bookingRepository.findByRoutePostId(route.getId());
+        List<Booking> activeBookings = routeBookings.stream()
                 .filter(b -> ACTIVE_TRIP_STATUSES.contains(b.getStatus()))
                 .toList();
+        // Paid and then cancelled - an unpaid hold that lapsed never was a rider on this trip.
+        int cancelledCount = (int) routeBookings.stream()
+                .filter(b -> b.getConfirmedAt() != null)
+                .filter(b -> b.getStatus() == BookingStatus.CANCELLED_RIDER || b.getStatus() == BookingStatus.CANCELLED_DRIVER)
+                .count();
 
         Map<String, RatingRepository.RatingSummary> riderRatings = riderRatingsFor(activeBookings);
         Map<String, ProfileServiceClient.RiderSummaryItem> riders = ridersFor(activeBookings);
@@ -305,7 +311,7 @@ public class BookingService {
                 route.getDestinationLabel(), route.getDestinationLat(), route.getDestinationLng(),
                 route.getDepartureTime(), route.getFarePerSeat(),
                 route.getSeatCapacity(), route.getSeatsAvailable(), seatsBooked, route.getStatus(),
-                bookingSummaries));
+                bookingSummaries, cancelledCount, null));
     }
 
     /** Driver Home's "Upcoming routes" - published routes still outside the active window, soonest first.
