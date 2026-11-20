@@ -2,6 +2,8 @@ package org.coryd.profile.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.coryd.common.enums.UserRole;
+import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.VehicleRegistrationRequest;
@@ -30,6 +32,10 @@ public class VehicleController {
     public ApiResponse<Vehicle> register(@AuthenticationPrincipal CoRydUserDetails principal,
                                           @PathVariable String driverId,
                                           @Valid @RequestBody VehicleRegistrationRequest request) {
+        // A rider can't register a car (and so can't claim a plate a real driver then can't use) - switch to driver mode first.
+        if (principal.getActiveRole() != UserRole.DRIVER) {
+            throw new BadRequestException("Switch to driver mode to register a vehicle");
+        }
         refuseOthersPhotos(request, principal.getUserId());
         return ApiResponse.ok(vehicleService.register(driverId, principal.getUserId(), request));
     }
