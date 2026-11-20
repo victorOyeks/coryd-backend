@@ -27,8 +27,9 @@ public class VehicleService {
         if (!callerId.equals(driverId)) {
             throw new UnauthorizedException("Only this driver can register their own vehicle");
         }
-        if (vehicleRepository.existsByPlateNumber(request.plateNumber())) {
-            throw new BadRequestException("A vehicle with this plate number is already registered");
+        String plate = normalizePlate(request.plateNumber());
+        if (plateTaken(plate, null)) {
+            throw new BadRequestException(PLATE_TAKEN);
         }
         Vehicle vehicle = Vehicle.builder()
                 .driverId(driverId)
@@ -36,7 +37,7 @@ public class VehicleService {
                 .model(request.model())
                 .year(request.year())
                 .color(request.color())
-                .plateNumber(request.plateNumber())
+                .plateNumber(plate)
                 .seatCapacity(request.seatCapacity())
                 .exteriorPhotoUrl(request.exteriorPhotoUrl())
                 .exteriorPhotoPublicId(request.exteriorPhotoPublicId())
@@ -59,11 +60,16 @@ public class VehicleService {
             throw new UnauthorizedException("Only this vehicle's driver can update it");
         }
 
+        String plate = normalizePlate(request.plateNumber());
+        if (plateTaken(plate, vehicle.getId())) {
+            throw new BadRequestException(PLATE_TAKEN);
+        }
+
         vehicle.setMake(request.make());
         vehicle.setModel(request.model());
         vehicle.setYear(request.year());
         vehicle.setColor(request.color());
-        vehicle.setPlateNumber(request.plateNumber());
+        vehicle.setPlateNumber(plate);
         vehicle.setSeatCapacity(request.seatCapacity());
         replacedFiles.replaced(vehicle.getExteriorPhotoPublicId(), vehicle.getExteriorPhotoUrl(), request.exteriorPhotoPublicId());
         replacedFiles.replaced(vehicle.getInteriorPhotoPublicId(), vehicle.getInteriorPhotoUrl(), request.interiorPhotoPublicId());
@@ -81,6 +87,30 @@ public class VehicleService {
         vehicle.setRejectionReason(null);
 
         return vehicleRepository.save(vehicle);
+    }
+
+    static final String PLATE_TAKEN = "A vehicle with this plate number is already registered";
+
+    /** Trimmed, single spaces - otherwise as the driver wrote it. */
+    static String normalizePlate(String raw) {
+        String plate = raw == null ? "" : raw.trim().replaceAll("\\s+", " ");
+        if (plateKey(plate).isEmpty()) {
+            throw new BadRequestException("Enter the plate number as it appears on the car");
+        }
+        return plate;
+    }
+
+    /**
+     * What makes two plates the same car: letters and digits only, so "LAG-123 AB" and "lag123ab" collide. The unique
+     * plate column only catches an exact match; this catches a second registration in another spelling, and makes an
+     * edit onto another car's plate a 400 rather than a database error.
+     */
+    static String plateKey(String plate) {
+        return plate == null ? "" : plate.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+    }
+
+    private boolean plateTaken(String plate, String exceptVehicleId) {
+        return vehicleRepository.existsByPlateKey(plateKey(plate), exceptVehicleId == null ? "" : exceptVehicleId);
     }
 
     public List<Vehicle> findByDriver(String driverId) {
