@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
+import org.coryd.trip.dto.CancelledBy;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.CancellationFault;
 import org.coryd.trip.entity.CancellationLog;
@@ -15,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Writes the Cancellations Log - called from every place a trip or a paid seat ends, inside that cancellation's own
@@ -137,6 +139,21 @@ public class CancellationLogService {
                 .originLabel(route.getOriginLabel())
                 .destinationLabel(route.getDestinationLabel())
                 .build());
+    }
+
+    /**
+     * Who ended this booking, from the log - its own row when it was paid, else the trip's ROUTE row when the whole trip
+     * was called off (unpaid seats on a cancelled trip get no row of their own). Empty when the log has neither, which
+     * is an unpaid hold let go: the caller falls back to the status.
+     */
+    @Transactional(readOnly = true)
+    public Optional<CancelledBy> whoCancelled(Booking booking) {
+        Optional<CancellationLog> row = cancellationLogRepository.findFirstByBookingIdAndKind(booking.getId(), CancellationLog.Kind.BOOKING);
+        if (row.isEmpty() && booking.getStatus() == BookingStatus.CANCELLED_DRIVER) {
+            row = cancellationLogRepository.findFirstByRoutePostIdAndKindOrderByCancelledAtDesc(booking.getRoutePostId(),
+                    CancellationLog.Kind.ROUTE);
+        }
+        return row.map(CancelledBy::of);
     }
 
     static int minutesBefore(Instant departure, Instant at) {

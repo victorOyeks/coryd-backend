@@ -33,6 +33,7 @@ import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.BookingPaymentView;
 import org.coryd.trip.dto.BookingRouteSummary;
 import org.coryd.trip.dto.BookingDetailsResponse;
+import org.coryd.trip.dto.CancelledBy;
 import org.coryd.trip.event.RouteSearchRelevantChangeEvent;
 import org.coryd.trip.dto.BookingStatusHistoryEntry;
 import org.coryd.trip.dto.BookingSummary;
@@ -664,8 +665,33 @@ public class BookingService {
                 route.getTimeChangeCount(),
                 freeCancellation(booking),
                 soloCab,
-                soloCab == null ? null : soloCab.subtract(booking.getFareTotal()).max(BigDecimal.ZERO)
+                soloCab == null ? null : soloCab.subtract(booking.getFareTotal()).max(BigDecimal.ZERO),
+                cancelledBy(booking)
         );
+    }
+
+    /** What every note written when CoRyd support ends a seat says - the only trace of an unpaid hold ops let go. */
+    private static final String SUPPORT_NOTE_MARKER = "CoRyd support";
+
+    /**
+     * Who ended a cancelled booking, for the apps - null while it isn't cancelled. The Cancellations Log answers for paid
+     * seats and whole trips; an unpaid hold has no row, so a support note in its history marks one ops let go, and
+     * otherwise the status says it.
+     */
+    CancelledBy cancelledBy(Booking booking) {
+        BookingStatus status = booking.getStatus();
+        if (status != BookingStatus.CANCELLED_RIDER && status != BookingStatus.CANCELLED_DRIVER) {
+            return null;
+        }
+        return cancellationLogService.whoCancelled(booking).orElseGet(() -> {
+            boolean bySupport = historyRepository.findByBookingIdOrderByCreatedAtAsc(booking.getId()).stream()
+                    .filter(h -> h.getStatus() == status)
+                    .anyMatch(h -> h.getNote() != null && h.getNote().contains(SUPPORT_NOTE_MARKER));
+            if (bySupport) {
+                return CancelledBy.CORYD;
+            }
+            return status == BookingStatus.CANCELLED_RIDER ? CancelledBy.RIDER : CancelledBy.DRIVER;
+        });
     }
 
     /** Best-effort, same "a Maps hiccup shouldn't take down the screen" pattern used elsewhere - a Directions failure means no line on the map, not a broken Pay Now/Booking Confirmed screen. Cached 7 days in MapsService keyed by rounded coordinates. */

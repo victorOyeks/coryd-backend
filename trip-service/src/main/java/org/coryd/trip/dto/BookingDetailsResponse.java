@@ -52,6 +52,8 @@ public record BookingDetailsResponse(
         /** Roughly what a solo cab would charge for this rider's stretch - null when it can't be worked out or is turned off. */
         BigDecimal soloCabEstimate,
         /** soloCabEstimate less what they paid, never below 0 - "You saved about N". Null with soloCabEstimate. */
-        BigDecimal estimatedSaving
+        BigDecimal estimatedSaving,
+        /** Who ended the booking - RIDER, DRIVER or CORYD (support, a suspension, or the platform). Null unless it's cancelled. */
+        CancelledBy cancelledBy
 ) {
 }

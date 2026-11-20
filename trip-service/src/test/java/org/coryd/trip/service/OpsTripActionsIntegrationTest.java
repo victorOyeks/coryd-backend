@@ -14,6 +14,7 @@ import org.coryd.trip.config.StuckTripProperties;
 import org.coryd.trip.config.policy.CancellationPolicy;
 import org.coryd.trip.config.policy.DriverVerificationPolicy;
 import org.coryd.trip.dto.BookSeatsRequest;
+import org.coryd.trip.dto.CancelledBy;
 import org.coryd.trip.dto.LocationResponse;
 import org.coryd.trip.dto.OpsActionResult;
 import org.coryd.trip.dto.OpsCancelRequest;
@@ -346,6 +347,55 @@ class OpsTripActionsIntegrationTest {
 
         assertThatThrownBy(() -> opsTripActionService.cancelBooking(held.getId(), cancel("again", CancellationFault.PLATFORM)))
                 .isInstanceOf(BadRequestException.class).hasMessageContaining("CANCELLED_RIDER");
+    }
+
+    // ---- who cancelled, as the apps are told ----------------------------------------------------------------------
+
+    @Test
+    void theAppsAreToldCoRydCancelledWheneverSupportDidWhateverTheStatusSays() {
+        RoutePost route = route(6);
+        Booking riderFault = paid(route, RIDER);
+        Booking driverFault = paid(route, OTHER_RIDER);
+        Booking letGo = book(route, THIRD_RIDER);
+        Booking ownCancel = paid(route, "rider-4");
+        Booking backedOut = book(route, "rider-5");
+        Booking live = paid(route, "rider-6");
+
+        opsTripActionService.cancelBooking(riderFault.getId(), cancel("Rider asked support", CancellationFault.RIDER));
+        opsTripActionService.cancelBooking(driverFault.getId(), cancel("Driver rang in", CancellationFault.DRIVER));
+        opsTripActionService.cancelBooking(letGo.getId(), cancel("Duplicate hold", CancellationFault.PLATFORM));
+        bookingService.cancelByRider(ownCancel.getId(), "rider-4");
+        bookingService.releaseHold(backedOut.getId(), "rider-5");
+
+        assertThat(bookingStatus(riderFault)).as("the status still says rider").isEqualTo(BookingStatus.CANCELLED_RIDER);
+        assertThat(whoCancelled(riderFault)).isEqualTo(CancelledBy.CORYD);
+        assertThat(whoCancelled(driverFault)).isEqualTo(CancelledBy.CORYD);
+        assertThat(whoCancelled(letGo)).as("an unpaid hold has no log row - the support note says it").isEqualTo(CancelledBy.CORYD);
+        assertThat(whoCancelled(ownCancel)).isEqualTo(CancelledBy.RIDER);
+        assertThat(whoCancelled(backedOut)).isEqualTo(CancelledBy.RIDER);
+        assertThat(whoCancelled(live)).as("not cancelled").isNull();
+
+        RoutePost driverCancelled = route(4);
+        Booking paidOnDriversTrip = paid(driverCancelled, RIDER);
+        Booking heldOnDriversTrip = book(driverCancelled, OTHER_RIDER);
+        routeService.cancel(driverCancelled.getId(), DRIVER);
+        assertThat(whoCancelled(paidOnDriversTrip)).isEqualTo(CancelledBy.DRIVER);
+        assertThat(whoCancelled(heldOnDriversTrip)).isEqualTo(CancelledBy.DRIVER);
+
+        RoutePost opsCancelled = route(4);
+        Booking paidOnOpsTrip = paid(opsCancelled, RIDER);
+        Booking heldOnOpsTrip = book(opsCancelled, OTHER_RIDER);
+        opsTripActionService.cancelTrip(opsCancelled.getId(), cancel("Driver phoned in sick", CancellationFault.DRIVER));
+        assertThat(bookingStatus(paidOnOpsTrip)).isEqualTo(BookingStatus.CANCELLED_DRIVER);
+        assertThat(whoCancelled(paidOnOpsTrip)).isEqualTo(CancelledBy.CORYD);
+        assertThat(whoCancelled(heldOnOpsTrip)).as("an unpaid seat goes by the trip's own row").isEqualTo(CancelledBy.CORYD);
+
+        assertThat(bookingService.getBookingDetails(riderFault.getId(), RIDER).cancelledBy()).isEqualTo(CancelledBy.CORYD);
+        assertThat(bookingService.getBookingDetails(paidOnDriversTrip.getId(), DRIVER).cancelledBy()).isEqualTo(CancelledBy.DRIVER);
+    }
+
+    private CancelledBy whoCancelled(Booking booking) {
+        return bookingService.cancelledBy(bookingRepository.findById(booking.getId()).orElseThrow());
     }
 
     // ---- stuck trips ---------------------------------------------------------------------------------------------
