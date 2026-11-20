@@ -6,18 +6,25 @@ import org.coryd.common.enums.ChatMessageType;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.exception.UnauthorizedException;
+import org.coryd.common.kafka.KafkaTopics;
+import org.coryd.common.kafka.events.ChatMessageSentEvent;
+import org.coryd.common.util.Names;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.dto.ChatMessageResponse;
 import org.coryd.trip.dto.SendChatMessageRequest;
+import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.ChatMessage;
 import org.coryd.trip.entity.RoutePost;
 import org.coryd.trip.repository.BookingRepository;
 import org.coryd.trip.repository.ChatMessageRepository;
 import org.coryd.trip.repository.RoutePostRepository;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +50,11 @@ public class ChatService {
     private final BookingRepository bookingRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final ProfileServiceClient profileServiceClient;
+    private final UserBlockService userBlockService;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    static final int PREVIEW_LENGTH = 100;
+    static final String VOICE_PREVIEW = "🎤 Voice note";
 
     public List<ChatMessageResponse> getMessages(String routePostId, String callerId) {
         RoutePost route = requireParty(routePostId, callerId);
@@ -65,7 +77,75 @@ public class ChatService {
 
         ChatMessageResponse response = enrich(List.of(message), route).get(0);
         messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/chat", response);
+
+        ChatMessageSentEvent event = pushEvent(route, message, response);
+        if (!event.getRecipients().isEmpty()) {
+            // Only once the message is really saved - a rolled-back message must never reach anyone's lock screen.
+            OpsAuditWriter.afterCommit(() -> kafkaTemplate.send(KafkaTopics.CHAT_MESSAGE_SENT, routePostId, event));
+        }
         return response;
+    }
+
+    /**
+     * Everyone in the chat but the sender - the driver, and each rider with a live booking (one entry per rider, with
+     * their booking so a tap opens their trip). Anyone kept apart from the sender by a block, either way, is left out.
+     */
+    private ChatMessageSentEvent pushEvent(RoutePost route, ChatMessage message, ChatMessageResponse response) {
+        String senderId = message.getSenderId();
+        Set<String> keptApart = userBlockService.keptApartFrom(senderId);
+
+        Map<String, ChatMessageSentEvent.Recipient> recipients = new LinkedHashMap<>();
+        if (!route.getDriverId().equals(senderId)) {
+            recipients.put(route.getDriverId(), ChatMessageSentEvent.Recipient.builder()
+                    .userId(route.getDriverId()).role("DRIVER").build());
+        }
+        for (Booking b : bookingRepository.findByRoutePostId(route.getId())) {
+            if (NON_TERMINAL_BOOKING_STATUSES.contains(b.getStatus()) && !b.getRiderId().equals(senderId)) {
+                recipients.putIfAbsent(b.getRiderId(), ChatMessageSentEvent.Recipient.builder()
+                        .userId(b.getRiderId()).role("RIDER").bookingId(b.getId()).build());
+            }
+        }
+        keptApart.forEach(recipients::remove);
+
+        return ChatMessageSentEvent.builder()
+                .routePostId(route.getId())
+                .routeLabel(route.getOriginLabel() + " → " + route.getDestinationLabel())
+                .messageId(message.getId())
+                .senderId(senderId)
+                .senderName(shortName(response.senderName()))
+                .senderRole(route.getDriverId().equals(senderId) ? "DRIVER" : "RIDER")
+                .messageType(message.getType().name())
+                .preview(preview(message.getType(), message.getContent()))
+                .sentAt(message.getCreatedAt() != null ? message.getCreatedAt() : java.time.Instant.now())
+                .recipients(new ArrayList<>(recipients.values()))
+                .build();
+    }
+
+    /** "Tunde Adewale Bakare" -> "Tunde B." - enough to tell people apart on a lock screen without the full name. */
+    static String shortName(String fullName) {
+        String first = Names.firstName(fullName);
+        if (first == null || first.isEmpty()) {
+            return null;
+        }
+        String last = Names.lastName(fullName);
+        return last == null ? first : first + " " + last.charAt(0) + ".";
+    }
+
+    /** A text message as one line of at most about 100 characters; a voice note as "🎤 Voice note". */
+    static String preview(ChatMessageType type, String content) {
+        if (type == ChatMessageType.VOICE) {
+            return VOICE_PREVIEW;
+        }
+        String oneLine = content == null ? "" : content.strip().replaceAll("\\s+", " ");
+        if (oneLine.length() <= PREVIEW_LENGTH) {
+            return oneLine;
+        }
+        int end = PREVIEW_LENGTH;
+        // Never cut an emoji (a surrogate pair) in half.
+        if (Character.isHighSurrogate(oneLine.charAt(end - 1))) {
+            end--;
+        }
+        return oneLine.substring(0, end).stripTrailing() + "…";
     }
 
     /** One driver lookup + one batched rider-summaries lookup for the whole thread, not one call

@@ -25,6 +25,8 @@ public final class KafkaTopics {
     public static final String SOS_TRIGGERED = "coryd-sos-triggered";
     public static final String ISSUE_REPORTED = "coryd-issue-reported";
     public static final String TRIP_SHARE_REQUESTED = "coryd-trip-share-requested";
+    /** A message was sent in a trip's group chat - everyone else in the chat gets a push. */
+    public static final String CHAT_MESSAGE_SENT = "coryd-chat-message-sent";
 
     public static final String PAYMENT_SUCCEEDED = "coryd-payment-succeeded";
     public static final String PAYMENT_FAILED = "coryd-payment-failed";

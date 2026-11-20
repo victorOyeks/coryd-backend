@@ -76,6 +76,11 @@ public class KafkaTopicsConfig {
     }
 
     @Bean
+    public NewTopic chatMessageSentTopic() {
+        return TopicBuilder.name(KafkaTopics.CHAT_MESSAGE_SENT).partitions(3).replicas(1).build();
+    }
+
+    @Bean
     public NewTopic bookingConfirmedTopic() {
         return TopicBuilder.name(KafkaTopics.BOOKING_CONFIRMED).partitions(3).replicas(1).build();
     }
