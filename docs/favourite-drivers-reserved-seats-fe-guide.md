@@ -185,6 +185,12 @@ No body. The seat is released back into the route's `seatsAvailable` immediately
 
 If neither endpoint is called within the 15-minute window, the backend's own sweep releases the seat and cancels the booking (`CANCELLED_RIDER`) automatically — no client action needed. If your countdown widget hits zero, just re-`GET` the booking (or trust the countdown) and drop back to whatever screen you'd show for an expired hold today.
 
+The offer also ends early if the trip stops taking bookings before the rider answers:
+
+- **Driver starts (or completes) the trip** → the reservation is released the same way (`CANCELLED_RIDER`, seat back), silently, like the 15-minute expiry. No push.
+- **Driver or CoRyd cancels the trip** → as before, the reservation is cancelled with the rest of the route's bookings (`CANCELLED_DRIVER`) and the rider gets the usual `BOOKING_CANCELLED` push.
+- `GET /trip/bookings/riders/me/reserved-seat` only returns a reservation the rider can still accept: its trip is open and still inside its booking window. A reservation on a trip that has started, finished or closed for booking is never returned, so Home won't prompt for it. If the app is already showing Accept when the trip starts, accept answers 400 `"This ride is no longer taking bookings"` — drop the card.
+
 ---
 
 ## What NOT to expect

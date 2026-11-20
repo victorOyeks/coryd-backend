@@ -1861,6 +1861,71 @@ class BookingFlowIntegrationTest {
                 new org.coryd.trip.dto.AcceptReservationRequest("Pickup point", 6.45, 3.39)).getStatus()).isEqualTo(BookingStatus.HELD);
     }
 
+    // ---- M52: a "saved you a seat" offer ends when the trip leaves the booking window -----------------------
+
+    @Test
+    void startingTheTripQuietlyLetsGoOfAReservationNobodyAnswered() {
+        RoutePost route = route(3);
+        Booking reserved = reservation(route, RIDER);
+        assertThat(bookingService.getReservedSeatForRider(RIDER)).isPresent();
+        clearInvocations(kafkaTemplate);
+
+        start(route);
+
+        assertThat(status(reserved)).isEqualTo(BookingStatus.CANCELLED_RIDER);
+        assertThat(bookingService.getReservedSeatForRider(RIDER)).isEmpty();
+        assertThat(historyRepository.findByBookingIdOrderByCreatedAtAsc(reserved.getId()).getLast().getNote())
+                .isEqualTo("Trip started before the reservation was answered - seat released");
+        assertThat(routePostRepository.findById(route.getId()).orElseThrow().getSeatsAvailable()).isEqualTo(3);
+        assertThat(routePostRepository.findById(route.getId()).orElseThrow().getStatus()).isEqualTo(RouteStatus.IN_PROGRESS);
+        // Silent, like the 15-minute expiry - no cancellation push for an offer the rider never took.
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.BOOKING_CANCELLED), any());
+    }
+
+    @Test
+    void completingTheTripLetsGoOfAReservationStillWaiting() {
+        RoutePost route = startedRouteWithConfirmed(OTHER_RIDER);
+        // Left over from a start before reservations were released there.
+        Booking reserved = reservation(route, RIDER);
+        pickUp(onlyBookingOf(route, OTHER_RIDER));
+
+        bookingService.completeRoute(route.getId(), DRIVER);
+
+        assertThat(status(reserved)).isEqualTo(BookingStatus.CANCELLED_RIDER);
+        assertThat(historyRepository.findByBookingIdOrderByCreatedAtAsc(reserved.getId()).getLast().getNote())
+                .isEqualTo("Trip completed before the reservation was answered - seat released");
+    }
+
+    @Test
+    void theRiderIsOnlyEverShownAReservationTheyCanStillAccept() {
+        RoutePost started = route(3);
+        Booking onStarted = reservation(started, RIDER);
+        RoutePost s = routePostRepository.findById(started.getId()).orElseThrow();
+        s.setStatus(RouteStatus.IN_PROGRESS);
+        routePostRepository.save(s);
+        RoutePost closed = routeAt(Instant.now().minus(11, ChronoUnit.MINUTES), 50);
+        reservation(closed, RIDER);
+
+        assertThat(bookingService.getReservedSeatForRider(RIDER)).as("nothing acceptable").isEmpty();
+        assertThat(status(onStarted)).as("the read changes nothing").isEqualTo(BookingStatus.RESERVED);
+
+        RoutePost open = route(3);
+        Booking acceptable = reservation(open, RIDER);
+        assertThat(bookingService.getReservedSeatForRider(RIDER)).hasValueSatisfying(d ->
+                assertThat(d.bookingId()).isEqualTo(acceptable.getId()));
+    }
+
+    private Booking reservation(RoutePost route, String riderId) {
+        jdbcTemplate.update("update trip.route_posts set seats_available = seats_available - 1 where id = ?", route.getId());
+        return bookingRepository.save(Booking.builder().routePostId(route.getId()).riderId(riderId).seatCount(1)
+                .fareTotal(FARE).status(BookingStatus.RESERVED).holdExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES)).build());
+    }
+
+    private Booking onlyBookingOf(RoutePost route, String riderId) {
+        return bookingRepository.findByRoutePostId(route.getId()).stream().filter(b -> b.getRiderId().equals(riderId))
+                .filter(b -> b.getStatus() != BookingStatus.RESERVED).findFirst().orElseThrow();
+    }
+
     @Test
     void undoingANoShowSendsTheRidersNumbersAgain() {
         RoutePost route = route(4);

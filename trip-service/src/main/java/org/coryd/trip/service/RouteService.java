@@ -826,6 +826,8 @@ public class RouteService {
         route.setStatus(RouteStatus.IN_PROGRESS);
         route.setStartedAt(Instant.now());
         routePostRepository.save(route);
+        // Synchronous, so an unanswered "saved you a seat" offer ends with the start rather than up to 15 minutes later (M52).
+        eventPublisher.publishEvent(new org.coryd.trip.event.RouteStartedEvent(routePostId));
         eventPublisher.publishEvent(new RouteSearchRelevantChangeEvent(routePostId));
     }
 

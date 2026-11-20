@@ -242,8 +242,35 @@ public class BookingService {
      * tap it), without already knowing a bookingId. An unanswered offer is never a trip the rider is
      * "on", so it stays out of the active/upcoming lists. */
     public Optional<BookingDetailsResponse> getReservedSeatForRider(String riderId) {
-        return bookingRepository.findFirstByRiderIdAndStatusInOrderByCreatedAtDesc(riderId, List.of(BookingStatus.RESERVED))
+        // M52: an offer on a trip that has started, finished or closed for booking can't be accepted - never prompt for it.
+        return bookingRepository.findByRiderIdAndStatus(riderId, BookingStatus.RESERVED).stream()
+                .sorted(Comparator.comparing(Booking::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .filter(booking -> stillTakingBookings(routeOf(booking)))
+                .findFirst()
                 .map(booking -> buildDetails(booking, true));
+    }
+
+    /** The one rule for whether a reserved seat can still be taken: the route is open and inside its booking window. */
+    private boolean stillTakingBookings(RoutePost route) {
+        return (route.getStatus() == RouteStatus.PUBLISHED || route.getStatus() == RouteStatus.FULL)
+                && Instant.now().isBefore(matchingProperties.bookableUntil(route.getDepartureTime()));
+    }
+
+    /**
+     * M52: once the driver starts the route, a reservation the rider hasn't answered is let go - silently, exactly as when
+     * its 15 minutes run out. Same transaction as the start.
+     */
+    @org.springframework.context.event.EventListener
+    public void onRouteStarted(org.coryd.trip.event.RouteStartedEvent event) {
+        releaseReservations(event.routePostId(), "Trip started before the reservation was answered - seat released");
+    }
+
+    private void releaseReservations(String routePostId, String note) {
+        for (Booking booking : bookingRepository.findByRoutePostId(routePostId)) {
+            if (booking.getStatus() == BookingStatus.RESERVED) {
+                releaseUnpaid(booking, BookingStatus.RESERVED, note);
+            }
+        }
     }
 
     /** Dashboard's "Live - Active Trip" card - the driver's route that is under way or departs within the
@@ -923,9 +950,7 @@ public class BookingService {
         RoutePost reservedRoute = routeOf(booking);
         Instant bookableUntil = matchingProperties.bookableUntil(reservedRoute.getDepartureTime());
         if (booking.getStatus() == BookingStatus.RESERVED) {
-            boolean stillTaking = (reservedRoute.getStatus() == RouteStatus.PUBLISHED || reservedRoute.getStatus() == RouteStatus.FULL)
-                    && Instant.now().isBefore(bookableUntil);
-            if (!stillTaking) {
+            if (!stillTakingBookings(reservedRoute)) {
                 throw new BadRequestException("This ride is no longer taking bookings");
             }
             // The same rule as booking a seat: the driver doesn't leave their road, so the pickup must be on it.
@@ -1457,6 +1482,8 @@ public class BookingService {
         for (Booking booking : bookings) {
             completeBookingInternal(booking, route);
         }
+        // A route started before reservations were let go at start can still have one waiting (M52).
+        releaseReservations(routePostId, "Trip completed before the reservation was answered - seat released");
 
         route.setStatus(RouteStatus.COMPLETED);
         route.setCompletedAt(Instant.now());
