@@ -3,6 +3,7 @@ package org.coryd.payment.ops;
 import org.coryd.common.enums.PayoutStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.kafka.KafkaTopics;
+import org.coryd.common.kafka.events.RefundIssuedEvent;
 import org.coryd.payment.client.ProfileServiceClient;
 import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.dto.DebtEntryType;
@@ -89,6 +90,7 @@ import java.util.concurrent.Future;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
@@ -143,6 +145,7 @@ class OpsMoneyIntegrationTest {
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockBean PaystackGatewayClient gateway;
     @MockBean ProfileServiceClient profileServiceClient;
+    @MockBean org.coryd.payment.client.TripServiceClient tripServiceClient;
 
     @BeforeEach
     void cleanSlate() {
@@ -166,6 +169,8 @@ class OpsMoneyIntegrationTest {
     @Test
     void aPartialRefundAtOrBelowTheThresholdGoesThroughTheRefundPathAtOnce() {
         String booking = paidBooking("5000.00");
+        when(tripServiceClient.fetchBookingRoutes(List.of(booking))).thenReturn(java.util.Map.of(booking,
+                new org.coryd.payment.client.TripServiceClient.BookingRoute(booking, "route-1", "Ikorodu", "Victoria Island", Instant.now())));
 
         OpsMoneyRequestView done = refundService.submit(booking, new ManualRefundRequest(new BigDecimal("2000"), "Rider overcharged", null), ADA);
 
@@ -182,7 +187,10 @@ class OpsMoneyIntegrationTest {
         // The driver's share (95%) of what went back is owed by them, like every other refund.
         assertThat(earningsService().amountOwed(DRIVER)).isEqualByComparingTo("1900.00");
         assertThat(refundService.refundable(booking).refundable()).isEqualByComparingTo("3000.00");
-        verify(kafkaTemplate).send(eq(KafkaTopics.REFUND_ISSUED), any());
+        // M50: marked as an ops refund with the trip's route, so the rider isn't told the booking was cancelled.
+        verify(kafkaTemplate).send(eq(KafkaTopics.REFUND_ISSUED), argThat(e -> e instanceof RefundIssuedEvent r && r.isOpsRefund()
+                && "Ikorodu".equals(r.getOriginLabel()) && "Victoria Island".equals(r.getDestinationLabel())
+                && r.getAmount().compareTo(new BigDecimal("2000")) == 0));
         assertThat(auditRepository.findByRequestIdOrderByCreatedAtAsc(done.id())).extracting(OpsMoneyAudit::getAction)
                 .containsExactly(OpsMoneyAudit.Action.REFUND_REQUESTED, OpsMoneyAudit.Action.REFUND_EXECUTED);
         OpsMoneyAudit executed = auditRepository.findByRequestIdOrderByCreatedAtAsc(done.id()).get(1);

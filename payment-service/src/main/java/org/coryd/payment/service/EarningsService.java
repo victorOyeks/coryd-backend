@@ -303,6 +303,7 @@ public class EarningsService {
                 .amount(amount)
                 .reason(reason)
                 .refundedAt(LocalDateTime.now())
+                .cause(RefundIssuedEvent.CAUSE_CANCELLATION)
                 .build());
     }
 

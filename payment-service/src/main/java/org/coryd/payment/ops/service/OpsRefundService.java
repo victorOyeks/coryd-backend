@@ -8,6 +8,7 @@ import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.RefundIssuedEvent;
+import org.coryd.payment.client.TripServiceClient;
 import org.coryd.payment.dto.RefundKind;
 import org.coryd.payment.dto.RefundStatus;
 import org.coryd.payment.entity.FareHold;
@@ -62,6 +63,7 @@ public class OpsRefundService implements OpsMoneyExecutor {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final OpsRequestSupport support;
     private final OpsMoneyAuditService audit;
+    private final TripServiceClient tripServiceClient;
 
     @Override
     public OpsRequestType type() {
@@ -230,13 +232,20 @@ public class OpsRefundService implements OpsMoneyExecutor {
         audit.record(actor, OpsMoneyAudit.Action.REFUND_EXECUTED, OpsMoneyAudit.TargetType.BOOKING, bookingId, saved.getId(),
                 amount, before, after, saved.getReason());
         String reason = saved.getReason();
-        OpsRequestSupport.afterCommit(() -> kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
-                .bookingId(bookingId)
-                .riderId(riderId)
-                .amount(amount)
-                .reason(reason)
-                .refundedAt(LocalDateTime.now())
-                .build()));
+        OpsRequestSupport.afterCommit(() -> {
+            // M50: the rider's push names the trip and never says "cancelled" - a manual refund is often on a trip that ran.
+            TripServiceClient.BookingRoute route = tripServiceClient.fetchBookingRoutes(List.of(bookingId)).get(bookingId);
+            kafkaTemplate.send(KafkaTopics.REFUND_ISSUED, RefundIssuedEvent.builder()
+                    .bookingId(bookingId)
+                    .riderId(riderId)
+                    .amount(amount)
+                    .reason(reason)
+                    .refundedAt(LocalDateTime.now())
+                    .cause(RefundIssuedEvent.CAUSE_OPS_REFUND)
+                    .originLabel(route == null ? null : route.originLabel())
+                    .destinationLabel(route == null ? null : route.destinationLabel())
+                    .build());
+        });
         log.info("OPS refund {} of {} on booking {} accepted by Paystack", saved.getId(), amount, bookingId);
         return saved;
     }

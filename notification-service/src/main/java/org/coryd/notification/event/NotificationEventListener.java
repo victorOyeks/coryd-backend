@@ -147,9 +147,18 @@ public class NotificationEventListener {
 
     @KafkaListener(topics = KafkaTopics.REFUND_ISSUED, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onRefundIssued(RefundIssuedEvent event) {
-        dispatchService.sendPush(event.getRiderId(), "Refund issued",
-                "You've been refunded ₦" + event.getAmount().toPlainString() + " for a cancelled booking.",
-                "REFUND_ISSUED", event.getBookingId());
+        dispatchService.sendPush(event.getRiderId(), "Refund issued", refundCopy(event), "REFUND_ISSUED", event.getBookingId());
+    }
+
+    /** Only a cancellation's refund says the booking was cancelled - an ops refund is often on a trip that ran (M50). */
+    static String refundCopy(RefundIssuedEvent event) {
+        String amount = "₦" + event.getAmount().toPlainString();
+        if (!event.isOpsRefund()) {
+            return "You've been refunded " + amount + " for a cancelled booking.";
+        }
+        String trip = event.getOriginLabel() == null || event.getDestinationLabel() == null ? "your trip"
+                : "your trip " + place(event.getOriginLabel()) + " → " + place(event.getDestinationLabel());
+        return "CoRyd refunded " + amount + " to your card for " + trip + ".";
     }
 
     @KafkaListener(topics = KafkaTopics.DRIVER_OWED_CHANGED, groupId = KafkaConfig.GROUP_ID_TRIP)

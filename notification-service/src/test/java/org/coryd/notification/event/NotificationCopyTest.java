@@ -26,6 +26,29 @@ class NotificationCopyTest {
     private final org.coryd.notification.config.SosAlertProperties sos = new org.coryd.notification.config.SosAlertProperties();
     private final NotificationEventListener listener = new NotificationEventListener(dispatch, sos);
 
+    // M50: a partial ops refund on a trip that ran was announced as "refunded for a cancelled booking".
+    @Test
+    void onlyACancellationsRefundSaysTheBookingWasCancelled() {
+        listener.onRefundIssued(refund(null, "750.00", null, null));
+        verify(dispatch).sendPush(eq("rider-1"), eq("Refund issued"), eq("You've been refunded ₦750.00 for a cancelled booking."),
+                eq("REFUND_ISSUED"), eq("b-1"));
+
+        listener.onRefundIssued(refund(org.coryd.common.kafka.events.RefundIssuedEvent.CAUSE_OPS_REFUND, "1000.00",
+                "Ikeja City Mall, Obafemi Awolowo Way", "Victoria Island, Lagos"));
+        verify(dispatch).sendPush(eq("rider-1"), eq("Refund issued"),
+                eq("CoRyd refunded ₦1000.00 to your card for your trip Ikeja City Mall → Victoria Island."), eq("REFUND_ISSUED"), eq("b-1"));
+
+        assertThat(NotificationEventListener.refundCopy(refund(org.coryd.common.kafka.events.RefundIssuedEvent.CAUSE_OPS_REFUND,
+                "500.00", null, null))).isEqualTo("CoRyd refunded ₦500.00 to your card for your trip.").doesNotContain("cancel");
+        assertThat(NotificationEventListener.refundCopy(refund(org.coryd.common.kafka.events.RefundIssuedEvent.CAUSE_CANCELLATION,
+                "1200.00", "A", "B"))).isEqualTo("You've been refunded ₦1200.00 for a cancelled booking.");
+    }
+
+    private static org.coryd.common.kafka.events.RefundIssuedEvent refund(String cause, String amount, String origin, String destination) {
+        return org.coryd.common.kafka.events.RefundIssuedEvent.builder().bookingId("b-1").riderId("rider-1")
+                .amount(new java.math.BigDecimal(amount)).cause(cause).originLabel(origin).destinationLabel(destination).build();
+    }
+
     @Test
     void everyoneButTheSenderGetsOneChatPushTitledWithTheRouteAndGroupedByIt() {
         listener.onChatMessageSent(chatEvent("RIDER", "Ada O.", "TEXT", "Running 2 mins late", List.of(
