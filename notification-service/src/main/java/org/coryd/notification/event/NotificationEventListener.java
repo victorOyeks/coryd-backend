@@ -182,7 +182,7 @@ public class NotificationEventListener {
     /** Driver reminders deep-link by routePostId (manifest), rider reminders by bookingId (trip details). */
     @KafkaListener(topics = KafkaTopics.ROUTE_DEPARTURE_REMINDER, groupId = KafkaConfig.GROUP_ID_TRIP)
     public void onRouteDepartureReminder(RouteDepartureReminderEvent event) {
-        String routeSummary = event.getOriginLabel() + " -> " + event.getDestinationLabel();
+        String routeSummary = place(event.getOriginLabel()) + " -> " + place(event.getDestinationLabel());
         int riderCount = event.getRiders() == null ? 0 : event.getRiders().size();
         String kind = event.getKind() == null ? "RIDER_GET_READY" : event.getKind();
 
@@ -222,7 +222,7 @@ public class NotificationEventListener {
     }
 
     static String timeChangedCopy(RouteTimeChangedEvent event, boolean freeCancellation) {
-        String body = "Your ride " + event.getOriginLabel() + " -> " + event.getDestinationLabel() + " now leaves "
+        String body = "Your ride " + place(event.getOriginLabel()) + " -> " + place(event.getDestinationLabel()) + " now leaves "
                 + RIDE_TIME.format(event.getDepartureTime())
                 + (event.getPreviousDepartureTime() == null ? "." : " (was " + RIDE_TIME.format(event.getPreviousDepartureTime()) + ").");
         return body + (freeCancellation
@@ -259,8 +259,27 @@ public class NotificationEventListener {
         }
     }
 
+    /**
+     * "Ikeja City Mall, Obafemi Awolowo Way, Ojodu, Nigeria" -> "Ikeja City Mall": the place name a rider or driver
+     * recognises, without the rest of the geocoded address. Route labels are stored as Google returns them, which ran
+     * pushes such as "Your route Ikeja City Mall, Obafemi Awolowo Way, Ojodu, Nigeria -> Victoria Island, Lagos, Nigeria
+     * departs in 29 minutes" off the edge of the lock screen. Ops alerts keep the full address.
+     */
+    static String place(String label) {
+        if (label == null) {
+            return null;
+        }
+        String first = label.split(",", 2)[0].strip();
+        return first.isEmpty() ? label.strip() : first;
+    }
+
     static String chatTitle(ChatMessageSentEvent event) {
-        return event.getRouteLabel() == null || event.getRouteLabel().isBlank() ? "Trip chat" : event.getRouteLabel();
+        if (event.getRouteLabel() == null || event.getRouteLabel().isBlank()) {
+            return "Trip chat";
+        }
+        // The route label is "<origin> → <destination>" with full geocoded addresses; a lock-screen title only has room for the place names.
+        String[] ends = event.getRouteLabel().split(" → ", 2);
+        return ends.length == 2 ? place(ends[0]) + " → " + place(ends[1]) : event.getRouteLabel();
     }
 
     /** "Tunde B.: On my way" - "Driver"/"Rider" when the sender's name couldn't be looked up. */
@@ -298,7 +317,7 @@ public class NotificationEventListener {
 
     static String nearbyDemandCopy(DriverNearbyDemandEvent event) {
         String where = event.getDestinationLabel() == null || event.getDestinationLabel().isBlank()
-                ? "your way" : "to " + event.getDestinationLabel();
+                ? "your way" : "to " + place(event.getDestinationLabel());
         return count(event.getRiderCount(), "person", "people") + " near you " + (event.getRiderCount() == 1 ? "is" : "are")
                 + " going " + where + ". Leaving now? Share your empty seats.";
     }
@@ -366,14 +385,14 @@ public class NotificationEventListener {
         boolean named = event.getOriginLabel() != null && event.getDestinationLabel() != null && event.getDepartureTime() != null;
         if (event.isSeatOpened()) {
             return named
-                    ? "A seat just opened on the " + event.getOriginLabel() + " → " + event.getDestinationLabel() + " ride on "
+                    ? "A seat just opened on the " + place(event.getOriginLabel()) + " → " + place(event.getDestinationLabel()) + " ride on "
                             + RIDE_TIME.format(event.getDepartureTime()) + ". Book it before it goes."
                     : "A seat just opened on a ride matching your search. Book it before it goes.";
         }
         if (!named) {
             return "A driver just posted a ride matching your search. Book your seat.";
         }
-        return "A driver is heading from " + event.getOriginLabel() + " to " + event.getDestinationLabel() + " on "
+        return "A driver is heading from " + place(event.getOriginLabel()) + " to " + place(event.getDestinationLabel()) + " on "
                 + RIDE_TIME.format(event.getDepartureTime()) + ". Book your seat.";
     }
 
@@ -392,7 +411,7 @@ public class NotificationEventListener {
         }
         DriverDemandAlertEvent.DemandRoute route = event.getRoutes().get(0);
         String where = route.getOriginLabel() != null && route.getDestinationLabel() != null
-                ? route.getOriginLabel() + " → " + route.getDestinationLabel()
+                ? place(route.getOriginLabel()) + " → " + place(route.getDestinationLabel())
                 : "a route you drive";
         return count(route.getRiderCount(), "rider wants", "riders want") + " " + where + " tomorrow "
                 + window(route.getWindowStart(), route.getWindowEnd()) + ". Post a ride.";

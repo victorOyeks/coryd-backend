@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -60,6 +61,30 @@ class NotificationCopyTest {
                 .routePostId("route-9").routeLabel("Ikeja City Mall → Victoria Island").messageId("msg-1")
                 .senderId("DRIVER".equals(senderRole) ? "driver-1" : "rider-1").senderName(senderName).senderRole(senderRole)
                 .messageType(type).preview(preview).sentAt(Instant.parse("2026-11-20T08:00:00Z")).recipients(recipients).build();
+    }
+
+    @Test
+    void pushesNameThePlacesNotTheWholeGeocodedAddress() {
+        listener.onChatMessageSent(org.coryd.common.kafka.events.ChatMessageSentEvent.builder()
+                .routePostId("route-9").routeLabel("Ikeja City Mall, Obafemi Awolowo Way, Ojodu, Nigeria → Victoria Island, Lagos, Nigeria")
+                .messageId("msg-1").senderId("driver-1").senderName("Qa D.").senderRole("DRIVER").messageType("TEXT").preview("Here")
+                .sentAt(Instant.parse("2026-11-20T08:00:00Z"))
+                .recipients(List.of(org.coryd.common.kafka.events.ChatMessageSentEvent.Recipient.builder()
+                        .userId("rider-2").role("RIDER").bookingId("b-2").build()))
+                .build());
+        verify(dispatch).sendChatPush(eq("rider-2"), eq("Ikeja City Mall → Victoria Island"), eq("Qa D.: Here"),
+                eq("CHAT_MESSAGE"), any(), eq("route-9"));
+
+        listener.onNotifyMeMatched(org.coryd.common.kafka.events.NotifyMeMatchedEvent.builder()
+                .riderId("rider-1").routePostId("route-9").originLabel("Ikeja City Mall, Obafemi Awolowo Way, Ojodu, Nigeria")
+                .destinationLabel("Victoria Island, Lagos, Nigeria").departureTime(Instant.parse("2026-10-13T06:00:00Z")).build());
+        verify(dispatch).sendRoutePush(eq("rider-1"), eq("A ride is available"),
+                eq("A driver is heading from Ikeja City Mall to Victoria Island on Tue 13 Oct at 7:00 AM. Book your seat."),
+                eq("NOTIFY_ME_MATCHED"), eq("route-9"));
+
+        assertThat(NotificationEventListener.place("Victoria Island, Lagos, Nigeria")).isEqualTo("Victoria Island");
+        assertThat(NotificationEventListener.place("Lekki")).isEqualTo("Lekki");
+        assertThat(NotificationEventListener.place(", Lagos")).isEqualTo(", Lagos");
     }
 
     @Test
