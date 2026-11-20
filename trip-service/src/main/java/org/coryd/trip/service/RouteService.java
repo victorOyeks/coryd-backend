@@ -594,6 +594,25 @@ public class RouteService {
      * Live Trip map. Falls back to a direct origin->destination preview (no waypoints) when
      * there are no confirmed pickups yet, or when there are more than a single Directions call
      * can take - a degraded straight-line-for-the-uncovered-stops map beats no map at all. */
+    /**
+     * The Live Trip map's line, for the route's driver or a rider booked on it. The line runs through every booked rider's
+     * pickup point and lists their booking ids, so it isn't for anyone else (and each call is a paid Directions request).
+     */
+    private static final List<BookingStatus> TRIP_MAP_BOOKING_STATUSES = List.of(BookingStatus.CONFIRMED,
+            BookingStatus.EN_ROUTE_TO_PICKUP, BookingStatus.AT_PICKUP, BookingStatus.IN_PROGRESS, BookingStatus.COMPLETED);
+
+    public MultiStopRoutePreview getMultiStopRoutePreviewFor(String routePostId, String callerId) {
+        RoutePost route = routePostRepository.findById(routePostId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
+        boolean isDriver = callerId.equals(route.getDriverId());
+        boolean isBookedRider = !isDriver && bookingRepository.findByRoutePostId(routePostId).stream()
+                .anyMatch(b -> callerId.equals(b.getRiderId()) && TRIP_MAP_BOOKING_STATUSES.contains(b.getStatus()));
+        if (!isDriver && !isBookedRider) {
+            throw new UnauthorizedException("Only this route's driver or a rider booked on it can see its trip map");
+        }
+        return getMultiStopRoutePreview(routePostId);
+    }
+
     public MultiStopRoutePreview getMultiStopRoutePreview(String routePostId) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));

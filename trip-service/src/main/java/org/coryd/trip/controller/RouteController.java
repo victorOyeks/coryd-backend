@@ -116,8 +116,9 @@ public class RouteController {
     /** Multi-stop road-following line for the driver's Ready to Depart / Live Trip map and the
      * rider's Live Trip map - origin -> every still-active pickup -> destination. */
     @GetMapping("/{routePostId}/route-preview")
-    public ApiResponse<MultiStopRoutePreview> multiStopRoutePreview(@PathVariable String routePostId) {
-        return ApiResponse.ok(routeService.getMultiStopRoutePreview(routePostId));
+    public ApiResponse<MultiStopRoutePreview> multiStopRoutePreview(@AuthenticationPrincipal CoRydUserDetails principal,
+                                                                     @PathVariable String routePostId) {
+        return ApiResponse.ok(routeService.getMultiStopRoutePreviewFor(routePostId, principal.getUserId()));
     }
 
     @GetMapping("/suggested-fare")

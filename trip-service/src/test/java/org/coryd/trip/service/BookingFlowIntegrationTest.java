@@ -1610,6 +1610,28 @@ class BookingFlowIntegrationTest {
                 .isInstanceOf(BadRequestException.class).hasMessageContaining("isn't registered to you");
     }
 
+    @Test
+    void theTripMapIsOnlyForTheDriverAndBookedRiders() {
+        org.mockito.Mockito.when(mapsService.getRoutePreview(org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble(),
+                        org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble()))
+                .thenReturn(new org.coryd.trip.dto.RoutePreview(5.0, 15, "15 mins", "Marina", "abc"));
+        org.mockito.Mockito.when(mapsService.getMultiStopRoutePreview(org.mockito.ArgumentMatchers.anyDouble(),
+                        org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble(),
+                        org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(new org.coryd.trip.dto.DirectionsMultiStopResult(6.0, 18, "abc", java.util.List.of(0)));
+        RoutePost route = route(3);
+        Booking held = book(route, OTHER_RIDER, 1);
+
+        assertThat(routeService.getMultiStopRoutePreviewFor(route.getId(), DRIVER)).isNotNull();
+        assertThatThrownBy(() -> routeService.getMultiStopRoutePreviewFor(route.getId(), "a-stranger"))
+                .isInstanceOf(org.coryd.common.exception.UnauthorizedException.class);
+        assertThatThrownBy(() -> routeService.getMultiStopRoutePreviewFor(route.getId(), OTHER_RIDER))
+                .as("a seat only held, not paid for").isInstanceOf(org.coryd.common.exception.UnauthorizedException.class);
+
+        bookingService.confirm(held.getId());
+        assertThat(routeService.getMultiStopRoutePreviewFor(route.getId(), OTHER_RIDER)).isNotNull();
+    }
+
     /** Google's encoded-polyline format, so tests can hand the service a road of their own. */
     private static String encode(double[][] points) {
         StringBuilder out = new StringBuilder();
