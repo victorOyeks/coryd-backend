@@ -132,6 +132,12 @@ public class LocationService {
 
     /** Driver write path for the Live Trip map - one shared point per route instead of one per passenger, since it's the same physical vehicle. */
     public LocationResponse recordLocationForRoute(String routePostId, String callerId, double lat, double lng) {
+        return recordLocationForRoute(routePostId, callerId, lat, lng, null, null);
+    }
+
+    /** As above, with the phone's GPS heading (degrees) and speed (m/s) when it sent them - relayed to the riders' maps as-is. */
+    public LocationResponse recordLocationForRoute(String routePostId, String callerId, double lat, double lng,
+                                                   Double heading, Double speed) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Route post not found"));
         if (!callerId.equals(route.getDriverId())) {
@@ -142,11 +148,12 @@ public class LocationService {
         }
 
         Instant now = Instant.now();
-        String value = lat + "," + lng + "," + now.toEpochMilli();
+        // lat,lng,epochMillis[,heading,speed] - the two extra fields are empty when unknown; parse() reads both shapes.
+        String value = lat + "," + lng + "," + now.toEpochMilli() + "," + orEmpty(heading) + "," + orEmpty(speed);
         redisTemplate.opsForValue().set(ROUTE_LOCATION_KEY_PREFIX + routePostId, value, LOCATION_TTL);
         redisTemplate.opsForValue().set(ROUTE_LAST_SEEN_KEY_PREFIX + routePostId, value, LAST_SEEN_TTL);
 
-        LocationResponse response = new LocationResponse(true, lat, lng, now, null);
+        LocationResponse response = new LocationResponse(true, lat, lng, now, null, heading, speed);
 
         messagingTemplate.convertAndSend("/topic/routes/" + routePostId + "/location", response);
         routeDeviationService.checkAndHandleDeviation(routePostId, lat, lng);
@@ -189,7 +196,8 @@ public class LocationService {
         }
         LocationResponse point = parse(raw);
         boolean fresh = point.recordedAt().isAfter(Instant.now().minus(LOCATION_TTL));
-        return new LocationResponse(fresh, point.lat(), point.lng(), point.recordedAt(), fresh ? null : "Last position is stale");
+        return new LocationResponse(fresh, point.lat(), point.lng(), point.recordedAt(), fresh ? null : "Last position is stale",
+                point.heading(), point.speed());
     }
 
     private LocationResponse readRouteLocation(String routePostId) {
@@ -200,12 +208,23 @@ public class LocationService {
         return parse(raw);
     }
 
-    private static LocationResponse parse(String raw) {
-        String[] parts = raw.split(",", 3);
+    /** Reads lat,lng,epochMillis (points stored before heading existed) and lat,lng,epochMillis,heading,speed. */
+    static LocationResponse parse(String raw) {
+        String[] parts = raw.split(",", -1);
         double lat = Double.parseDouble(parts[0]);
         double lng = Double.parseDouble(parts[1]);
         Instant recordedAt = Instant.ofEpochMilli(Long.parseLong(parts[2]));
+        Double heading = parts.length > 3 ? parseOptional(parts[3]) : null;
+        Double speed = parts.length > 4 ? parseOptional(parts[4]) : null;
 
-        return new LocationResponse(true, lat, lng, recordedAt, null);
+        return new LocationResponse(true, lat, lng, recordedAt, null, heading, speed);
+    }
+
+    private static Double parseOptional(String part) {
+        return part == null || part.isBlank() ? null : Double.valueOf(part);
+    }
+
+    private static String orEmpty(Double value) {
+        return value == null ? "" : value.toString();
     }
 }

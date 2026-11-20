@@ -115,10 +115,14 @@ You'll get one of two shapes back. Either a real position:
     "lat": 6.6018,
     "lng": 3.3515,
     "recordedAt": "2026-08-01T06:41:12Z",
-    "message": null
+    "message": null,
+    "heading": 147.5,
+    "speed": 12.3
   }
 }
 ```
+
+`heading` (degrees clockwise from north) and `speed` (metres per second) come straight from the driver's phone GPS on the route-scoped feed (`/routes/{routePostId}/location` and `/topic/routes/{routePostId}/location`). Both are `null` when the phone didn't know them (stopped, weak fix, or an older driver app). Use the planned route's direction to turn the car while it's on the route; fall back to `heading` when it's off the route.
 
 Notice there's no `etaMinutes` here anymore — the backend used to guess it with straight-line distance ÷ an assumed speed, which was a poor estimate in a lagoon city like Lagos. Now it's your job: call Google Directions/Distance Matrix yourself with this `lat`/`lng` as the origin and `originLat`/`originLng` (from Step 2's response) as the destination, and use its `duration` field. Real road-and-traffic data, not a guess. See **Maps & ETA — what moved to your side** at the bottom.
 
@@ -205,6 +209,15 @@ Authorization: Bearer {driverAccessToken}
 ```
 
 The instant that lands on the server, the server pushes that exact same data down the rider's already-open connection from Step 4. The rider's app never asked for it — it just arrives, and your `client.subscribe(...)` handler from the code above fires with it.
+
+On the route-scoped endpoint the driver's app can also send the phone's GPS heading and speed - both optional:
+
+```
+POST /routes/{routePostId}/location
+{ "lat": 6.6021, "lng": 3.3519, "heading": 147.5, "speed": 12.3 }
+```
+
+Send expo-location's `coords.heading` and `coords.speed` as they are; values the phone reports as unknown (`-1`) are dropped by the server, never refused.
 
 That's the full loop: driver posts → server pushes → rider's map updates. Repeat for the whole trip.
 

@@ -26,7 +26,8 @@ public class RouteLocationController {
     @PostMapping("/{routePostId}/location")
     public ApiResponse<LocationResponse> record(@AuthenticationPrincipal CoRydUserDetails principal,
                                                  @PathVariable String routePostId, @Valid @RequestBody LocationUpdateRequest request) {
-        return ApiResponse.ok(locationService.recordLocationForRoute(routePostId, principal.getUserId(), request.lat(), request.lng()));
+        return ApiResponse.ok(locationService.recordLocationForRoute(routePostId, principal.getUserId(), request.lat(), request.lng(),
+                request.cleanHeading(), request.cleanSpeed()));
     }
 
     @GetMapping("/{routePostId}/location")
