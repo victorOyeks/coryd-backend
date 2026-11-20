@@ -293,7 +293,7 @@ The app reads the person's own check from `GET /profile/identity-verification/me
 
 | Ops action | Push (title / body) | What the app reads afterwards |
 |---|---|---|
-| **Approve** | "Identity verified" / "Your identity has been verified. You're all set." | `status: "APPROVED"`. Booking (rider) or posting (driver) unlocks. Their profile name becomes read-only. |
+| **Approve** | "Identity verified" / "Your identity has been verified." | `status: "APPROVED"`. Booking (rider) or posting (driver) unlocks. Their profile name becomes read-only. |
 | **Approve** (driver on the NIN lookup, licence still outstanding) | "NIN confirmed" / "Your NIN has been confirmed. Finish verifying your licence to complete your identity check." | `/drivers/me` → `ninStatus: "MATCH"`; identity completes when the licence is approved |
 | **Reject** | "Identity check needs attention" / the `reason` | `status: "REJECTED"`, `rejectionReason` = the reason. The app shows it with a **Try again** button; a new check is allowed while `attemptsLeft > 0`. |
 | **Reset tries** | "You can verify your identity again" / "We've reset your identity check. Open the app to try again." | `attemptsLeft` back to 5 (`ninTriesLeft` back to 3); the "contact support" message goes away |

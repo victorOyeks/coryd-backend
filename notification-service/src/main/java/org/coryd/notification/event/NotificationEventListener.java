@@ -533,7 +533,7 @@ public class NotificationEventListener {
         switch (action) {
             case "APPROVED", "OVERRIDE_APPROVED" -> dispatchService.sendPush(event.getUserId(),
                     event.isVerified() ? "Identity verified" : "NIN confirmed",
-                    event.isVerified() ? "Your identity has been verified. You're all set."
+                    event.isVerified() ? "Your identity has been verified."
                             : "Your NIN has been confirmed. Finish verifying your licence to complete your identity check.",
                     "IDENTITY_VERIFICATION_APPROVED", null);
             case "REJECTED" -> dispatchService.sendPush(event.getUserId(), "Identity check needs attention",

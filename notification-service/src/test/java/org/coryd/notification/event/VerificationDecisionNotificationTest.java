@@ -25,7 +25,7 @@ class VerificationDecisionNotificationTest {
     void anOpsApprovalTellsThePersonTheyAreVerified() {
         listener.onIdentityVerificationChanged(event("OVERRIDE_APPROVED", true, null));
 
-        verify(dispatch).sendPush(eq("rider-1"), eq("Identity verified"), eq("Your identity has been verified. You're all set."),
+        verify(dispatch).sendPush(eq("rider-1"), eq("Identity verified"), eq("Your identity has been verified."),
                 eq("IDENTITY_VERIFICATION_APPROVED"), eq(null));
     }
 

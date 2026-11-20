@@ -200,7 +200,7 @@ Counted in **Lagos days** from the **anchor**: when the person signed up, or las
 
 | Ops action | `type` | Title | Body |
 |---|---|---|---|
-| Approve (identity now verified) | `IDENTITY_VERIFICATION_APPROVED` | "Identity verified" | "Your identity has been verified. You're all set." |
+| Approve (identity now verified) | `IDENTITY_VERIFICATION_APPROVED` | "Identity verified" | "Your identity has been verified." |
 | Approve, driver on the NIN lookup whose licence isn't approved yet | `IDENTITY_VERIFICATION_APPROVED` | "NIN confirmed" | "Your NIN has been confirmed. Finish verifying your licence to complete your identity check." |
 | Reject | `IDENTITY_VERIFICATION_REJECTED` | "Identity check needs attention" | **the reason ops typed, word for word** (up to 500 characters) |
 | Reset tries | `IDENTITY_VERIFICATION_RETRY` | "You can verify your identity again" | "We've reset your identity check. Open the app to try again." |
