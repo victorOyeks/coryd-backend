@@ -32,6 +32,16 @@ class OpsAccessPolicyTest {
     }
 
     @Test
+    void aCancelPreviewNeedsTheSamePermissionAsTheCancel() {
+        assertThat(OpsAccessPolicy.required("GET", "/trips/t-1")).isEqualTo(OpsPermission.TRIPS_VIEW);
+        assertThat(OpsAccessPolicy.required("GET", "/trips/t-1/cancel-preview")).isEqualTo(OpsPermission.TRIPS_MANAGE);
+        assertThat(OpsAccessPolicy.required("POST", "/trips/t-1/cancel")).isEqualTo(OpsPermission.TRIPS_MANAGE);
+        assertThat(OpsAccessPolicy.required("GET", "/bookings/b-1/cancel-preview")).isEqualTo(OpsPermission.TRIPS_MANAGE);
+        assertThat(OpsAccessPolicy.required("POST", "/bookings/b-1/cancel")).isEqualTo(OpsPermission.TRIPS_MANAGE);
+        assertThat(OpsRole.FINANCE.can(OpsAccessPolicy.required("GET", "/trips/t-1/cancel-preview"))).isFalse();
+    }
+
+    @Test
     void theRoleMatrixIsWhatThePlanSays() {
         assertThat(OpsRole.SUPER_ADMIN.permissions()).containsExactlyInAnyOrder(OpsPermission.values());
         assertThat(OpsRole.VERIFICATION.can(OpsPermission.VERIFICATION_DECIDE)).isTrue();

@@ -41,6 +41,7 @@ A **trip** is one route a driver posted: one driver, one vehicle, one departure,
 | **View** one trip (passengers, payments, timeline) | `GET /trips/{routePostId}` |
 | Live Trips map + cards | `GET /trips/live` |
 | Stuck trips queue | `GET /trips/stuck` |
+| What a cancel would refund (the confirm dialogs) | `GET /trips/{routePostId}/cancel-preview`, `GET /bookings/{bookingId}/cancel-preview?fault=&waiveFee=` |
 | **Cancel trip** | `POST /trips/{routePostId}/cancel` |
 | **Resolve** a stuck trip (complete / cancel) | `POST /trips/{routePostId}/resolve` |
 | **Cancel booking** | `POST /bookings/{bookingId}/cancel` |
@@ -249,7 +250,7 @@ All three return what happened:
   "bookingId": null,
   "statusBefore": "PUBLISHED",
   "statusAfter": "CANCELLED",
-  "refunds": [ { "bookingId": "…", "riderId": "…", "fareTotal": 1200.00, "fee": 0, "refund": 1259.30, "refundEstimated": false } ],
+  "refunds": [ { "bookingId": "…", "riderId": "…", "fareTotal": 1200.00, "fee": 0, "refund": 1259.30, "refundEstimated": false, "cardFeeRefund": 59.30 } ],
   "completed": [],
   "noShows": []
 }
@@ -264,6 +265,37 @@ All three return what happened:
 - `0` when nothing is left to refund (an earlier manual refund took it all).
 
 `refundEstimated: true` means payment-service couldn't be reached: `refund` is then only `fareTotal - fee` (no card fee, no earlier refunds taken off). Check the log for the real figure.
+
+`cardFeeRefund` is the part of `refund` that is the card fee going back: `0` when it stays with the payment provider (rider's fault, or a payment from before card fees were recorded), `null` when `refundEstimated`. Say "(includes card fee)" when it is more than `0`.
+
+### 6.0 Preview what a cancel would refund
+
+Before ops confirms, the dialog can show exactly what the cancel will report: trip-service works out the fee the same way the cancel does and asks payment-service for the same split (fare left after any earlier refund, less the fee, plus the card fee when it goes back). Nothing is changed, sent or audited. Same permission as the cancel itself (`TRIPS_MANAGE`; a role without it gets `403` "Your ops role (FINANCE) can't cancel or resolve trips and bookings").
+
+- **One seat:** `GET /bookings/{bookingId}/cancel-preview?fault=RIDER&waiveFee=false`. `fault` is required (`RIDER` · `DRIVER` · `PLATFORM`); `waiveFee` defaults to `false` and only matters for `RIDER`. Ask again whenever the fault or the waiver changes.
+- **A whole trip** (Cancel trip, and Resolve stuck trip): `GET /trips/{routePostId}/cancel-preview`. One row per paid seat still running (`CONFIRMED`, `EN_ROUTE_TO_PICKUP`, `AT_PICKUP`, `IN_PROGRESS`), each in full with the card fee. Resolving as completed with `REFUND` refunds only the riders never picked up: add up their rows (`bookingId`).
+
+```json
+{
+  "routePostId": "…",
+  "bookingId": "…",
+  "fault": "DRIVER",
+  "feeWaived": false,
+  "refunds": [ { "bookingId": "…", "riderId": "…", "fareTotal": 3000.00, "fee": 0, "refund": 2147.21, "refundEstimated": false, "cardFeeRefund": 147.21 } ],
+  "refundTotal": 2147.21,
+  "cardFeeRefundTotal": 147.21,
+  "refundEstimated": false
+}
+```
+
+`refunds` rows are the same shape, worked out the same way, as the action's `refunds` (above). `bookingId` and `fault` are `null` for a trip preview; `refunds` is empty for an unpaid seat or a trip with no paid seats. `refundEstimated: true` (any row): payment-service couldn't say, so that row is `fareTotal - fee`; label the figure as an estimate. If the preview call itself fails, fall back to `fareTotal - riderFaultFeeNow` from the trip and label it an estimate; the cancel still works.
+
+| Error | When |
+|---|---|
+| `400` "fault: …" | `fault` missing or unknown (seat preview) |
+| `400` "This trip is already completed - its bookings can't be cancelled" / "This booking can't be cancelled - it's already …" | same as the cancel (seat preview) |
+| `400` "This trip is already cancelled" / "…completed" | trip preview on a finished trip |
+| `404` "Booking not found" / "Trip not found" | unknown id |
 
 ### 6.1 Cancel a trip: `POST /trips/{routePostId}/cancel`
 
@@ -381,6 +413,7 @@ Every cancelled trip and every paid seat that ended: by the rider, the driver, t
 - **Who:** `source`, and `actorName` (the admin for `OPS`, the rider or driver for their own; `null` for the system).
 - **Time before departure:** `minutesBeforeDeparture`, negative once departure had passed.
 - **`ROUTE` rows:** `rider` is `null`; `seatCount`, `fareTotal`, `feeAmount`, `refund` are summed over `childBookingIds`; `bookingsAffected` counts them.
+- **`refund.expected`** is what that cancellation sends back to the card, as payment-service worked it out when the cancellation went out: the fare left after any earlier manual refund, less the fee kept, plus the card fee when it goes back (driver's or CoRyd's doing). It is the figure the cancel action's `refunds[].refund` showed. Only when payment-service couldn't be reached at that moment is it `fareTotal - feeAmount`. Rows written before 20 Nov 2026 keep the old `fareTotal - feeAmount` figure.
 - **`refund.state`** (from payment-service): `NOT_PAID` · `NO_REFUND_DUE` (the fee kept the whole fare) · `NOT_STARTED` (payment-service hasn't refunded yet) · `PENDING` (Paystack hasn't accepted it; payment-service retries) · `PARTIAL` · `REFUNDED` (sent; reaches the card in hours to days) · `UNKNOWN` (payment-service unreachable; the row still shows).
 - **`backfilled: true`:** recorded before this log existed and rebuilt from the trip data: no reason, and `source`/`fault`/fee are best guesses. Show a "reconstructed" hint.
 

@@ -75,6 +75,12 @@ public class InternalOpsTripController {
         return ApiResponse.ok(opsTripQueryService.live(search));
     }
 
+    /** What cancelling (or resolving) this trip now would refund each paid seat - nothing is changed. */
+    @GetMapping("/{routePostId}/cancel-preview")
+    public ApiResponse<org.coryd.trip.dto.OpsCancelPreview> cancelPreview(@PathVariable String routePostId) {
+        return ApiResponse.ok(opsTripActionService.previewTripCancel(routePostId));
+    }
+
     /** In-progress trips past their expected arrival plus the configured grace - longest overdue first. */
     @GetMapping("/stuck")
     public ApiResponse<PagedResponse<OpsStuckTripItem>> stuck(@RequestParam(defaultValue = "0") int page,

@@ -3,6 +3,7 @@ package org.coryd.trip.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.enums.BookingStatus;
 import org.coryd.common.enums.RouteStatus;
+import org.coryd.trip.client.PaymentServiceClient;
 import org.coryd.trip.dto.CancelledBy;
 import org.coryd.trip.entity.Booking;
 import org.coryd.trip.entity.CancellationFault;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -27,6 +29,7 @@ import java.util.Optional;
 public class CancellationLogService {
 
     private final CancellationLogRepository cancellationLogRepository;
+    private final PaymentServiceClient paymentServiceClient;
 
     /**
      * Who cancelled and why. actorId is the rider, the driver or the ops admin; null when the system did it. A null
@@ -101,12 +104,32 @@ public class CancellationLogService {
     }
 
     /**
-     * One paid seat ended. fee is what the rider doesn't get back (null or 0 for a full refund). A seat already in the
-     * log isn't written again - a booking only ends once - and null comes back.
+     * One paid seat ended. fee is what the rider doesn't get back (null or 0 for a full refund); refundCardFee is the
+     * card-fee rule the BOOKING_CANCELLED event carries. refundExpected is what payment-service says this cancellation
+     * will send back (CancellationRefund.of - the fare left after any earlier ops refund, less the fee, plus the card fee
+     * when it goes back), asked before the event goes out; the fare less the fee only when payment-service can't say.
+     * A seat already in the log isn't written again - a booking only ends once - and null comes back.
      */
     @Transactional
     public CancellationLog recordBooking(Booking booking, RoutePost route, RouteStatus routeStatusBefore, BookingStatus statusBefore,
-                                         Context context, BigDecimal fee, String parentId) {
+                                         Context context, BigDecimal fee, String parentId, boolean refundCardFee) {
+        if (cancellationLogRepository.existsByBookingId(booking.getId())) {
+            return null;
+        }
+        PaymentServiceClient.CancellationRefund split = paymentServiceClient.cancellationRefunds(List.of(
+                new PaymentServiceClient.CancellationRefundQuery(booking.getId(), fee == null ? BigDecimal.ZERO : fee, refundCardFee)))
+                .get(booking.getId());
+        return recordBooking(booking, route, routeStatusBefore, statusBefore, context, fee, parentId,
+                split == null ? null : split.refund());
+    }
+
+    /**
+     * The same, when the caller already asked payment-service what this cancellation refunds (an ops cancel, a whole
+     * trip) - refund null falls back to the fare less the fee.
+     */
+    @Transactional
+    public CancellationLog recordBooking(Booking booking, RoutePost route, RouteStatus routeStatusBefore, BookingStatus statusBefore,
+                                         Context context, BigDecimal fee, String parentId, BigDecimal refund) {
         if (cancellationLogRepository.existsByBookingId(booking.getId())) {
             return null;
         }
@@ -135,7 +158,7 @@ public class CancellationLogService {
                 .fareTotal(fare)
                 .paid(true)
                 .feeAmount(kept)
-                .refundExpected(fare.subtract(kept))
+                .refundExpected(refund != null ? refund : fare.subtract(kept))
                 .originLabel(route.getOriginLabel())
                 .destinationLabel(route.getDestinationLabel())
                 .build());

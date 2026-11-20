@@ -23,6 +23,7 @@ import org.coryd.common.kafka.events.TripShareRequestedEvent;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.util.RouteProgress;
 import org.coryd.trip.client.IdentityServiceClient;
+import org.coryd.trip.client.PaymentServiceClient;
 import org.coryd.trip.client.ProfileServiceClient;
 import org.coryd.trip.config.MatchingProperties;
 import org.coryd.trip.config.policy.CancellationPolicy;
@@ -867,8 +868,9 @@ public class BookingService {
         if (routeGone || !moveStatus(booking, BookingStatus.CONFIRMED, List.of(BookingStatus.HELD))) {
             log.warn("Payment succeeded for booking {} but it's no longer HELD (status={}) - refunding instead of confirming",
                     bookingId, booking.getStatus());
+            // No refundCardFee on the event: payment-service refunds the card fee for anyone but the rider.
             cancellationLogService.recordBooking(booking, bookedRoute, routeStatus, statusBefore,
-                    CancellationLogService.Context.of("SYSTEM", null), null, null);
+                    CancellationLogService.Context.of("SYSTEM", null), null, null, true);
             kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                     .bookingId(booking.getId())
                     .routePostId(booking.getRoutePostId())
@@ -1011,7 +1013,8 @@ public class BookingService {
             }
             RoutePost route = routeOf(booking);
             cancellationLogService.recordBooking(booking, route, route.getStatus(), statusBefore,
-                    CancellationLogService.Context.of(cancelledBy, riderId), null, null);
+                    CancellationLogService.Context.of(cancelledBy, riderId), null, null,
+                    !org.coryd.trip.event.AccountDeletionEventListener.CANCELLED_BY.equals(cancelledBy));
             routePostRepository.releaseSeats(booking.getRoutePostId(), booking.getSeatCount());
             routeService.reopenIfSeatsAvailable(booking.getRoutePostId());
             recordHistory(booking.getId(), BookingStatus.CANCELLED_RIDER, why + " - refunded in full");
@@ -1060,7 +1063,8 @@ public class BookingService {
                 : quote.reason() == CancellationQuoteResponse.Reason.FREE_TIME_CHANGED
                 ? "Cancelled free of charge - the driver changed the trip's time" : "Cancelled free of charge");
         cancellationLogService.recordBooking(booking, route, route.getStatus(), statusBefore,
-                CancellationLogService.Context.of("RIDER", callerId), fee, null);
+                CancellationLogService.Context.of("RIDER", callerId), fee, null,
+                quote.reason() == CancellationQuoteResponse.Reason.FREE_TIME_CHANGED);
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                 .bookingId(booking.getId())
@@ -1095,8 +1099,17 @@ public class BookingService {
         }
         boolean paid = !UNPAID_STATUSES.contains(status);
         CancellationQuoteResponse quote = quoteRiderCancellation(booking, paid, routeOf(booking), Instant.now());
+        if (!paid) {
+            return quote;
+        }
         // M10: what goes back to the card is the fare part, plus the card fee only when the rider isn't the cause.
-        return paid ? quote.withCardFee(paymentServiceClient.cardFee(bookingId)) : quote;
+        CancellationQuoteResponse withFee = quote.withCardFee(paymentServiceClient.cardFee(bookingId));
+        // What payment-service will actually send if they cancel now - the same split (and the same fee and card-fee rule)
+        // cancelByRider's BOOKING_CANCELLED gets, so a seat ops already part-refunded isn't quoted the whole fare again.
+        PaymentServiceClient.CancellationRefund split = paymentServiceClient.cancellationRefunds(List.of(
+                new PaymentServiceClient.CancellationRefundQuery(bookingId, quote.feeAmount(),
+                        quote.reason() == CancellationQuoteResponse.Reason.FREE_TIME_CHANGED))).get(bookingId);
+        return split == null ? withFee : withFee.withRefund(split.refund(), split.kept());
     }
 
     /**
@@ -1136,7 +1149,53 @@ public class BookingService {
 
     /** What an ops cancellation did: the status before and after, whether anything had been paid, and the money. */
     public record OpsCancellation(String bookingId, String routePostId, BookingStatus statusBefore, BookingStatus statusAfter,
-                                  boolean paid, BigDecimal fareTotal, BigDecimal fee, BigDecimal refund, boolean refundEstimated) {
+                                  boolean paid, BigDecimal fareTotal, BigDecimal fee, BigDecimal refund, boolean refundEstimated,
+                                  BigDecimal cardFeeRefund) {
+    }
+
+    /** What ops cancelling one seat would keep and send back - the fee, and whether the card fee goes back too (M10). */
+    public record OpsCancelTerms(BigDecimal fee, boolean refundCardFee) {
+    }
+
+    /**
+     * The one rule for an ops seat cancellation's money - cancelAsOps and the console's cancel preview both read it.
+     * RIDER keeps the late-cancellation fee that applies now (unless waived) and the card fee; DRIVER and PLATFORM refund
+     * both in full.
+     */
+    public OpsCancelTerms opsCancelTerms(Booking booking, RoutePost route, org.coryd.trip.entity.CancellationFault fault,
+                                         boolean waiveFee, Instant now) {
+        boolean riderFault = fault == org.coryd.trip.entity.CancellationFault.RIDER;
+        BigDecimal fee = riderFault && !waiveFee ? riderFaultFee(booking, route, now) : BigDecimal.ZERO;
+        return new OpsCancelTerms(fee, !riderFault);
+    }
+
+    /**
+     * The console's cancel preview for one seat: what cancelling it now with this fault would refund - asked of
+     * payment-service exactly as cancelAsOps asks, so the preview and the result match. Empty for a seat not paid for;
+     * a seat ops can't cancel is refused with the same message cancelAsOps gives.
+     */
+    @Transactional(readOnly = true)
+    public List<org.coryd.trip.dto.OpsActionResult.Refund> previewOpsCancel(String bookingId, org.coryd.trip.entity.CancellationFault fault,
+                                                                             boolean waiveFee) {
+        Booking booking = getOrThrow(bookingId);
+        RoutePost route = routeOf(booking);
+        BookingStatus status = booking.getStatus();
+        if (FINISHED_ROUTE_STATUSES.contains(route.getStatus())) {
+            throw new BadRequestException("This trip is already " + route.getStatus().name().toLowerCase()
+                    + " - its bookings can't be cancelled");
+        }
+        if (status == BookingStatus.HELD || status == BookingStatus.RESERVED) {
+            return List.of();
+        }
+        if (!OPS_CANCELLABLE_STATUSES.contains(status)) {
+            throw new BadRequestException("This booking can't be cancelled - it's already " + status);
+        }
+        OpsCancelTerms terms = opsCancelTerms(booking, route, fault, waiveFee, Instant.now());
+        org.coryd.trip.client.PaymentServiceClient.CancellationRefund split = paymentServiceClient.cancellationRefunds(
+                List.of(new org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery(bookingId, terms.fee(), terms.refundCardFee())))
+                .get(bookingId);
+        return List.of(org.coryd.trip.dto.OpsActionResult.Refund.of(bookingId, booking.getRiderId(), booking.getFareTotal(),
+                terms.fee(), split));
     }
 
     /**
@@ -1168,21 +1227,22 @@ public class BookingService {
                 throw new BadRequestException("This booking changed while you were cancelling it - reload and try again");
             }
             return new OpsCancellation(bookingId, route.getId(), before, booking.getStatus(), false, booking.getFareTotal(),
-                    BigDecimal.ZERO, BigDecimal.ZERO, false);
+                    BigDecimal.ZERO, BigDecimal.ZERO, false, BigDecimal.ZERO);
         }
         if (!OPS_CANCELLABLE_STATUSES.contains(before)) {
             throw new BadRequestException("This booking can't be cancelled - it's already " + before);
         }
 
-        BigDecimal fee = fault == org.coryd.trip.entity.CancellationFault.RIDER && !waiveFee
-                ? riderFaultFee(booking, route, Instant.now()) : BigDecimal.ZERO;
-        boolean feeApplies = fee.signum() > 0;
         // The rider's fault keeps the card fee; the driver's or CoRyd's refunds it with the fare (M10).
-        boolean refundCardFee = fault != org.coryd.trip.entity.CancellationFault.RIDER;
+        OpsCancelTerms terms = opsCancelTerms(booking, route, fault, waiveFee, Instant.now());
+        BigDecimal fee = terms.fee();
+        boolean feeApplies = fee.signum() > 0;
+        boolean refundCardFee = terms.refundCardFee();
         // B19: asked before BOOKING_CANCELLED goes out (payment-service may refund the moment it lands), so ops sees what
         // payment-service will actually send - card fee included, earlier ops refunds taken off - not the fare less the fee.
-        BigDecimal refund = paymentServiceClient.cancellationRefunds(
-                List.of(new org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery(bookingId, fee, refundCardFee))).get(bookingId);
+        org.coryd.trip.dto.OpsActionResult.Refund refund = org.coryd.trip.dto.OpsActionResult.Refund.of(bookingId, booking.getRiderId(),
+                booking.getFareTotal(), fee, paymentServiceClient.cancellationRefunds(
+                        List.of(new org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery(bookingId, fee, refundCardFee))).get(bookingId));
         BookingStatus to = fault == org.coryd.trip.entity.CancellationFault.RIDER
                 ? BookingStatus.CANCELLED_RIDER : BookingStatus.CANCELLED_DRIVER;
         if (!moveStatus(booking, to, OPS_CANCELLABLE_STATUSES)) {
@@ -1194,7 +1254,8 @@ public class BookingService {
                 + (feeApplies ? ", late fee kept" : waiveFee && fault == org.coryd.trip.entity.CancellationFault.RIDER ? ", fee waived" : "")
                 + "): " + reason));
         cancellationLogService.recordBooking(booking, route, route.getStatus(), before,
-                new CancellationLogService.Context(CANCELLED_BY_OPS, actorId, actorName, reason, fault), fee, null);
+                new CancellationLogService.Context(CANCELLED_BY_OPS, actorId, actorName, reason, fault), fee, null,
+                refund.refundEstimated() ? null : refund.refund());
 
         kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                 .bookingId(booking.getId())
@@ -1209,7 +1270,7 @@ public class BookingService {
                 .cancelledAt(LocalDateTime.now())
                 .build());
         return new OpsCancellation(bookingId, route.getId(), before, to, true, booking.getFareTotal(), fee,
-                refund != null ? refund : booking.getFareTotal().subtract(fee), refund == null);
+                refund.refund(), refund.refundEstimated(), refund.cardFeeRefund());
     }
 
     /** What ops wants done with riders still waiting to be picked up when it marks a stuck trip completed. */
@@ -1227,10 +1288,12 @@ public class BookingService {
     /**
      * Ops marks a trip left in progress as having happened: everyone aboard is completed exactly as the driver's Complete
      * Trip does (TRIP_COMPLETED, which settles the driver's earnings), riders never picked up are refunded or marked
-     * no-shows as ops chooses, and the trip ends COMPLETED.
+     * no-shows as ops chooses, and the trip ends COMPLETED. quotes: payment-service's refund for each seat, asked by the
+     * caller before anything changed (null to have each refunded seat asked as it goes) - the Cancellations Log shows it.
      */
     @Transactional
-    public OpsCompletion completeAsOps(String routePostId, String actorId, String actorName, String reason, UnboardedOutcome unboarded) {
+    public OpsCompletion completeAsOps(String routePostId, String actorId, String actorName, String reason, UnboardedOutcome unboarded,
+                                       Map<String, PaymentServiceClient.CancellationRefund> quotes) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found"));
         if (route.getStatus() != RouteStatus.IN_PROGRESS) {
@@ -1263,7 +1326,13 @@ public class BookingService {
                 } else if (moveStatus(booking, BookingStatus.CANCELLED_DRIVER, AWAITING_PICKUP_STATUSES)) {
                     recordHistory(booking.getId(), BookingStatus.CANCELLED_DRIVER,
                             truncate("Never picked up - refunded by CoRyd support: " + reason));
-                    cancellationLogService.recordBooking(booking, route, RouteStatus.IN_PROGRESS, before, context, null, null);
+                    PaymentServiceClient.CancellationRefund split = quotes == null ? null : quotes.get(booking.getId());
+                    if (split != null) {
+                        cancellationLogService.recordBooking(booking, route, RouteStatus.IN_PROGRESS, before, context, null, null,
+                                split.refund());
+                    } else {
+                        cancellationLogService.recordBooking(booking, route, RouteStatus.IN_PROGRESS, before, context, null, null, true);
+                    }
                     kafkaTemplate.send(KafkaTopics.BOOKING_CANCELLED, BookingCancelledEvent.builder()
                             .bookingId(booking.getId())
                             .routePostId(routePostId)

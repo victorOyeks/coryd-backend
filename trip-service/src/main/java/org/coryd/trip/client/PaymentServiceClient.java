@@ -61,10 +61,10 @@ public class PaymentServiceClient {
 
     /**
      * What payment-service will send back to the card for each of these cancellations - the fare left after any earlier
-     * ops refund, less the fee, plus the card fee when it goes back. Empty when payment-service can't be reached: callers
-     * fall back to their own figure and say it's an estimate.
+     * ops refund, less the fee, plus the card fee when it goes back (CancellationRefund.of, the split EarningsService.refund
+     * sends). Empty when payment-service can't be reached: callers fall back to their own figure and say it's an estimate.
      */
-    public Map<String, BigDecimal> cancellationRefunds(List<CancellationRefundQuery> queries) {
+    public Map<String, CancellationRefund> cancellationRefunds(List<CancellationRefundQuery> queries) {
         if (queries.isEmpty()) {
             return Map.of();
         }
@@ -77,8 +77,8 @@ public class PaymentServiceClient {
             if (response == null || response.data() == null) {
                 return Map.of();
             }
-            return response.data().stream().filter(r -> r.refund() != null)
-                    .collect(Collectors.toMap(CancellationRefund::bookingId, CancellationRefund::refund, (a, b) -> a));
+            return response.data().stream().filter(r -> r.bookingId() != null && r.refund() != null)
+                    .collect(Collectors.toMap(CancellationRefund::bookingId, r -> r, (a, b) -> a));
         } catch (Exception e) {
             log.warn("Could not ask payment-service what {} cancellation(s) will refund: {}", queries.size(), e.getMessage());
             return Map.of();
@@ -88,8 +88,20 @@ public class PaymentServiceClient {
     public record CancellationRefundQuery(String bookingId, BigDecimal fee, boolean refundCardFee) {
     }
 
+    /**
+     * payment-service's split for one cancellation: refund = fareBack + cardFeeBack goes back to the card; kept is the fee
+     * the driver keeps (never more than the fare still on the hold). All zero when nothing is left to refund.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record CancellationRefund(String bookingId, BigDecimal refund) {
+    public record CancellationRefund(String bookingId, BigDecimal refund, BigDecimal fareBack, BigDecimal cardFeeBack, BigDecimal kept) {
+
+        public static CancellationRefund of(String bookingId, BigDecimal refund) {
+            return new CancellationRefund(bookingId, refund, refund, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        public BigDecimal cardFeeBackOrZero() {
+            return cardFeeBack == null ? BigDecimal.ZERO : cardFeeBack;
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

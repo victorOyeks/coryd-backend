@@ -162,6 +162,14 @@ public class TripOpsService {
         return tripServiceClient.cancelBooking(bookingId, body);
     }
 
+    public JsonNode bookingCancelPreview(String bookingId, org.coryd.ops.dto.CancellationFault fault, boolean waiveFee) {
+        return tripServiceClient.bookingCancelPreview(bookingId, fault, waiveFee);
+    }
+
+    public JsonNode tripCancelPreview(String routePostId) {
+        return tripServiceClient.tripCancelPreview(routePostId);
+    }
+
     public JsonNode resolve(String routePostId, ResolveTripRequest request, CoRydUserDetails admin) {
         Map<String, Object> body = signed(admin, request.reason());
         body.put("outcome", request.outcome());

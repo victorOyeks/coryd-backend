@@ -17,6 +17,7 @@ import org.coryd.trip.dto.BookSeatsRequest;
 import org.coryd.trip.dto.CancelledBy;
 import org.coryd.trip.dto.LocationResponse;
 import org.coryd.trip.dto.OpsActionResult;
+import org.coryd.trip.dto.OpsCancelPreview;
 import org.coryd.trip.dto.OpsCancelRequest;
 import org.coryd.trip.dto.OpsCancellationFilter;
 import org.coryd.trip.dto.OpsCancellationInfo;
@@ -311,7 +312,7 @@ class OpsTripActionsIntegrationTest {
                 riderFault.getId(), new BigDecimal("900.00"));
         when(paymentServiceClient.cancellationRefunds(any())).thenAnswer(inv -> {
             List<org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery> q = inv.getArgument(0);
-            return java.util.Map.of(q.getFirst().bookingId(), quotes.get(q.getFirst().bookingId()));
+            return java.util.Map.of(q.getFirst().bookingId(), split(q.getFirst().bookingId(), quotes.get(q.getFirst().bookingId()).toPlainString()));
         });
 
         OpsActionResult d = opsTripActionService.cancelBooking(driverFault.getId(), cancel("Driver's car broke down", CancellationFault.DRIVER));
@@ -329,6 +330,137 @@ class OpsTripActionsIntegrationTest {
                 && q.getFirst().fee().compareTo(new BigDecimal("300.00")) == 0 && !q.getFirst().refundCardFee()));
         assertThat(opsAuditLogRepository.findById(d.auditId()).orElseThrow().getAfterState())
                 .contains("\"refund\":759.30").contains("\"refundEstimated\":false");
+        // The Cancellations Log keeps the same figure - not the fare less the fee - without asking payment-service again.
+        assertThat(cancellationLogRepository.findFirstByBookingIdAndKind(driverFault.getId(), CancellationLog.Kind.BOOKING).orElseThrow()
+                .getRefundExpected()).isEqualByComparingTo("759.30");
+        assertThat(cancellationLogRepository.findFirstByBookingIdAndKind(riderFault.getId(), CancellationLog.Kind.BOOKING).orElseThrow()
+                .getRefundExpected()).isEqualByComparingTo("900.00");
+        verify(paymentServiceClient, times(2)).cancellationRefunds(any());
+    }
+
+    // ---- the console's cancel preview ----------------------------------------------------------------------------
+
+    @Test
+    void theSeatPreviewAsksPaymentServiceExactlyAsTheCancelWillAndChangesNothing() {
+        RoutePost route = routeAt(Instant.now().plus(90, ChronoUnit.MINUTES));
+        Booking booking = paid(route, RIDER);
+        // ₦1,200 fare + ₦59.30 card fee, ₦500 already refunded by ops: driver's fault = ₦700 + ₦59.30; rider's = ₦700 - ₦300.
+        when(paymentServiceClient.cancellationRefunds(any())).thenAnswer(inv -> {
+            List<org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery> q = inv.getArgument(0);
+            var x = q.getFirst();
+            return x.refundCardFee()
+                    ? java.util.Map.of(x.bookingId(), new org.coryd.trip.client.PaymentServiceClient.CancellationRefund(x.bookingId(),
+                            new BigDecimal("759.30"), new BigDecimal("700.00"), new BigDecimal("59.30"), BigDecimal.ZERO))
+                    : java.util.Map.of(x.bookingId(), new org.coryd.trip.client.PaymentServiceClient.CancellationRefund(x.bookingId(),
+                            new BigDecimal("400.00"), new BigDecimal("400.00"), BigDecimal.ZERO, x.fee()));
+        });
+        clearInvocations(kafkaTemplate);
+
+        OpsCancelPreview driver = opsTripActionService.previewBookingCancel(booking.getId(), CancellationFault.DRIVER, false);
+        OpsCancelPreview rider = opsTripActionService.previewBookingCancel(booking.getId(), CancellationFault.RIDER, false);
+        OpsCancelPreview waived = opsTripActionService.previewBookingCancel(booking.getId(), CancellationFault.RIDER, true);
+
+        assertThat(driver.refunds()).singleElement().satisfies(r -> {
+            assertThat(r.refund()).isEqualByComparingTo("759.30");
+            assertThat(r.cardFeeRefund()).isEqualByComparingTo("59.30");
+            assertThat(r.fee()).isEqualByComparingTo("0");
+            assertThat(r.refundEstimated()).isFalse();
+        });
+        assertThat(driver.refundTotal()).isEqualByComparingTo("759.30");
+        assertThat(driver.cardFeeRefundTotal()).isEqualByComparingTo("59.30");
+        assertThat(rider.refunds().getFirst().fee()).isEqualByComparingTo("300.00");
+        assertThat(rider.refunds().getFirst().refund()).isEqualByComparingTo("400.00");
+        assertThat(rider.refunds().getFirst().cardFeeRefund()).isEqualByComparingTo("0");
+        assertThat(waived.feeWaived()).isTrue();
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> !q.getFirst().refundCardFee()
+                && q.getFirst().fee().compareTo(new BigDecimal("300.00")) == 0));
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> !q.getFirst().refundCardFee() && q.getFirst().fee().signum() == 0));
+
+        // Nothing changed: the seat is still booked, nothing was sent, logged or audited.
+        assertThat(bookingStatus(booking)).isEqualTo(BookingStatus.CONFIRMED);
+        verify(kafkaTemplate, never()).send(any(), any());
+        assertThat(cancellationLogRepository.count()).isZero();
+        assertThat(opsAuditLogRepository.count()).isZero();
+
+        // And the cancel then reports what the preview said.
+        OpsActionResult done = opsTripActionService.cancelBooking(booking.getId(), cancel("Driver's car broke down", CancellationFault.DRIVER));
+        assertThat(done.refunds().getFirst().refund()).isEqualByComparingTo(driver.refundTotal());
+        assertThat(done.refunds().getFirst().cardFeeRefund()).isEqualByComparingTo("59.30");
+    }
+
+    @Test
+    void theSeatPreviewFallsBackToTheFareLessTheFeeMarkedEstimated() {
+        RoutePost route = routeAt(Instant.now().plus(90, ChronoUnit.MINUTES));
+        Booking booking = paid(route, RIDER);
+        Booking unpaid = book(route, OTHER_RIDER);
+
+        OpsCancelPreview preview = opsTripActionService.previewBookingCancel(booking.getId(), CancellationFault.RIDER, false);
+
+        assertThat(preview.refundEstimated()).isTrue();
+        assertThat(preview.refunds()).singleElement().satisfies(r -> {
+            assertThat(r.refund()).isEqualByComparingTo("900.00");
+            assertThat(r.cardFeeRefund()).isNull();
+        });
+        assertThat(opsTripActionService.previewBookingCancel(unpaid.getId(), CancellationFault.RIDER, false).refunds())
+                .as("an unpaid seat has nothing to refund").isEmpty();
+        assertThatThrownBy(() -> opsTripActionService.previewBookingCancel(booking.getId(), null, false))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void theTripPreviewListsEachPaidSeatsRealRefund() {
+        RoutePost route = route(4);
+        Booking paid1 = paid(route, RIDER);
+        Booking paid2 = paid(route, OTHER_RIDER);
+        book(route, THIRD_RIDER);
+        when(paymentServiceClient.cancellationRefunds(any()))
+                .thenReturn(java.util.Map.of(paid1.getId(), new org.coryd.trip.client.PaymentServiceClient.CancellationRefund(paid1.getId(),
+                        new BigDecimal("1259.30"), FARE, new BigDecimal("59.30"), BigDecimal.ZERO)));
+
+        OpsCancelPreview preview = opsTripActionService.previewTripCancel(route.getId());
+
+        assertThat(preview.refunds()).extracting(OpsActionResult.Refund::bookingId).containsExactlyInAnyOrder(paid1.getId(), paid2.getId());
+        assertThat(preview.refundTotal()).as("₦1,259.30 from payment-service + ₦1,200 estimated").isEqualByComparingTo("2459.30");
+        assertThat(preview.cardFeeRefundTotal()).isEqualByComparingTo("59.30");
+        assertThat(preview.refundEstimated()).isTrue();
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.size() == 2
+                && q.stream().allMatch(x -> x.fee().signum() == 0 && x.refundCardFee())));
+        assertThat(status(route)).isEqualTo(RouteStatus.PUBLISHED);
+    }
+
+    // ---- the Cancellations Log keeps payment-service's figure ----------------------------------------------------
+
+    @Test
+    void theLogsRefundExpectedIsPaymentServicesFigureForTheRidersOwnCancelAndTheDriversTripCancel() {
+        RoutePost route = routeAt(Instant.now().plus(90, ChronoUnit.MINUTES));
+        Booking riderCancels = paid(route, RIDER);
+        Booking onTheTrip = paid(route, OTHER_RIDER);
+        when(paymentServiceClient.cancellationRefunds(any())).thenAnswer(inv -> {
+            List<org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery> q = inv.getArgument(0);
+            java.util.Map<String, org.coryd.trip.client.PaymentServiceClient.CancellationRefund> out = new java.util.HashMap<>();
+            q.forEach(x -> out.put(x.bookingId(), split(x.bookingId(), x.bookingId().equals(riderCancels.getId()) ? "400.00" : "1259.30")));
+            return out;
+        });
+
+        bookingService.cancelByRider(riderCancels.getId(), RIDER);
+        routeService.cancel(route.getId(), DRIVER);
+
+        assertThat(cancellationLogRepository.findFirstByBookingIdAndKind(riderCancels.getId(), CancellationLog.Kind.BOOKING).orElseThrow()
+                .getRefundExpected()).as("not ₦1,200 - ₦300").isEqualByComparingTo("400.00");
+        CancellationLog seat = cancellationLogRepository.findFirstByBookingIdAndKind(onTheTrip.getId(), CancellationLog.Kind.BOOKING).orElseThrow();
+        assertThat(seat.getRefundExpected()).isEqualByComparingTo("1259.30");
+        CancellationLog routeRow = cancellationLogRepository.findFirstByRoutePostIdAndKindOrderByCancelledAtDesc(route.getId(),
+                CancellationLog.Kind.ROUTE).orElseThrow();
+        assertThat(routeRow.getRefundExpected()).isEqualByComparingTo("1259.30");
+        // Asked with the rule each event carries: the rider's own late cancel keeps the fee and the card fee.
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.size() == 1 && q.getFirst().bookingId().equals(riderCancels.getId())
+                && q.getFirst().fee().compareTo(new BigDecimal("300.00")) == 0 && !q.getFirst().refundCardFee()));
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.size() == 1 && q.getFirst().bookingId().equals(onTheTrip.getId())
+                && q.getFirst().fee().signum() == 0 && q.getFirst().refundCardFee()));
+    }
+
+    private static org.coryd.trip.client.PaymentServiceClient.CancellationRefund split(String bookingId, String refund) {
+        return org.coryd.trip.client.PaymentServiceClient.CancellationRefund.of(bookingId, new BigDecimal(refund));
     }
 
     @Test
@@ -351,7 +483,7 @@ class OpsTripActionsIntegrationTest {
         Booking paid2 = paid(route, OTHER_RIDER);
         book(route, THIRD_RIDER);
         when(paymentServiceClient.cancellationRefunds(any()))
-                .thenReturn(java.util.Map.of(paid1.getId(), new BigDecimal("1259.30"), paid2.getId(), new BigDecimal("1200.00")));
+                .thenReturn(java.util.Map.of(paid1.getId(), split(paid1.getId(), "1259.30"), paid2.getId(), split(paid2.getId(), "1200.00")));
 
         OpsActionResult result = opsTripActionService.cancelTrip(route.getId(), cancel("Driver phoned in sick", CancellationFault.DRIVER));
 

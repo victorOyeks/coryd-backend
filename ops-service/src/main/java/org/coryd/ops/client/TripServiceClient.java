@@ -152,6 +152,24 @@ public class TripServiceClient {
         return post("/internal/ops/bookings/{id}/cancel", bookingId, body);
     }
 
+    /**
+     * What cancelling this seat now with this fault would refund - trip-service works out the fee and asks payment-service
+     * for its split, exactly as the cancel will. Nothing is changed.
+     */
+    public JsonNode bookingCancelPreview(String bookingId, org.coryd.ops.dto.CancellationFault fault, boolean waiveFee) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri(b -> b.path("/internal/ops/bookings/{id}/cancel-preview").queryParam("fault", fault)
+                        .queryParam("waiveFee", waiveFee).build(bookingId))
+                .retrieve().body(JsonNode.class));
+    }
+
+    /** What cancelling (or resolving) this trip now would refund each paid seat. Nothing is changed. */
+    public JsonNode tripCancelPreview(String routePostId) {
+        return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.get()
+                .uri("/internal/ops/trips/{id}/cancel-preview", routePostId)
+                .retrieve().body(JsonNode.class));
+    }
+
     private JsonNode post(String path, String id, Map<String, Object> body) {
         return DownstreamCalls.data(SERVICE, objectMapper, () -> restClient.post()
                 .uri(path, id)

@@ -18,11 +18,13 @@ public record CancellationQuoteResponse(
         int freeCancellationWindowHours,
         /** What the rider paid for the seat(s). */
         BigDecimal fareTotal,
-        /** Kept back if they cancel now - 0 unless feeApplies. */
+        /** Kept back if they cancel now - 0 unless feeApplies; never more than the fare still held after earlier refunds. */
         BigDecimal feeAmount,
         /**
-         * Back to the card if they cancel now: fareTotal less feeAmount, plus the card fee when it goes back too
-         * (cardFeeRefunded); 0 for a hold that was never paid.
+         * Back to the card if they cancel now - payment-service's own figure: the fare still held (fareTotal less anything
+         * CoRyd support already refunded) less feeAmount, plus the card fee when it goes back too (cardFeeRefunded); 0 for
+         * a hold that was never paid, or once everything has already been refunded. Only when payment-service can't be
+         * reached is it worked out here as fareTotal less feeAmount (plus the card fee).
          */
         BigDecimal refundAmount,
         /** When the fee starts to apply (departure less the window) - in the past once it applies; null when it never will (NOT_PAID, FREE_TIME_CHANGED). */
@@ -49,6 +51,13 @@ public record CancellationQuoteResponse(
         boolean back = reason == Reason.FREE_TIME_CHANGED;
         return new CancellationQuoteResponse(bookingId, reason, feeApplies, feePercent, freeCancellationWindowHours, fareTotal,
                 feeAmount, back ? refundAmount.add(fee) : refundAmount, freeUntil, currency, fee, back, fareTotal.add(fee));
+    }
+
+    /** The same quote with payment-service's refund and the fee it would really keep (CancellationRefund.of). */
+    public CancellationQuoteResponse withRefund(BigDecimal refund, BigDecimal kept) {
+        return new CancellationQuoteResponse(bookingId, reason, feeApplies, feePercent, freeCancellationWindowHours, fareTotal,
+                kept == null ? feeAmount : kept, refund == null ? refundAmount : refund, freeUntil, currency, cardFee,
+                cardFeeRefunded, amountPaid);
     }
 
     public static final String CURRENCY = "NGN";

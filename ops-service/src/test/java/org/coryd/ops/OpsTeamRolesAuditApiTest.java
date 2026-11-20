@@ -171,6 +171,12 @@ class OpsTeamRolesAuditApiTest {
         mockMvc.perform(postJson("/trips/" + ROUTE + "/cancel", "{\"reason\":\"x\"}").header("Authorization", bearer("f-1", OpsRole.FINANCE)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("Your ops role (FINANCE) can't cancel or resolve trips and bookings"));
+        // the cancel preview is part of cancelling: a role that can view trips but not cancel them can't preview either
+        mockMvc.perform(get("/trips/" + ROUTE + "/cancel-preview").header("Authorization", bearer("f-1", OpsRole.FINANCE)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Your ops role (FINANCE) can't cancel or resolve trips and bookings"));
+        mockMvc.perform(get("/bookings/b-1/cancel-preview").param("fault", "RIDER").header("Authorization", bearer("f-1", OpsRole.FINANCE)))
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/team").header("Authorization", bearer("s-1", OpsRole.SUPPORT)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("Your ops role (SUPPORT) can't manage the admin team"));

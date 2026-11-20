@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.response.PagedResponse;
 import org.coryd.trip.dto.OpsActionResult;
+import org.coryd.trip.dto.OpsCancelPreview;
 import org.coryd.trip.dto.OpsCancelRequest;
 import org.coryd.trip.dto.OpsCancellationCounts;
 import org.coryd.trip.dto.OpsCancellationFilter;
@@ -40,6 +41,13 @@ public class InternalOpsBookingController {
     @PostMapping("/bookings/{bookingId}/cancel")
     public ApiResponse<OpsActionResult> cancel(@PathVariable String bookingId, @Valid @RequestBody OpsCancelRequest request) {
         return ApiResponse.ok("Booking cancelled", opsTripActionService.cancelBooking(bookingId, request));
+    }
+
+    /** What cancelling this seat now with this fault would refund - nothing is changed (the console's confirm dialog). */
+    @GetMapping("/bookings/{bookingId}/cancel-preview")
+    public ApiResponse<OpsCancelPreview> cancelPreview(@PathVariable String bookingId, @RequestParam CancellationFault fault,
+                                                       @RequestParam(defaultValue = "false") boolean waiveFee) {
+        return ApiResponse.ok(opsTripActionService.previewBookingCancel(bookingId, fault, waiveFee));
     }
 
     @GetMapping("/cancellations")

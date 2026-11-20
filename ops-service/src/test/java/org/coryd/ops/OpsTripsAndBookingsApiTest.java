@@ -206,6 +206,35 @@ class OpsTripsAndBookingsApiTest {
         assertThat(resolve.has("fault")).isFalse();
     }
 
+    @Test
+    void theCancelPreviewsAskTripServiceAndChangeNothing() throws Exception {
+        replies.put("/trip/internal/ops/bookings/b-1/cancel-preview", new Reply(200, "{\"data\":{\"bookingId\":\"b-1\","
+                + "\"refunds\":[{\"bookingId\":\"b-1\",\"fareTotal\":3000.00,\"fee\":0,\"refund\":2147.21,\"refundEstimated\":false,"
+                + "\"cardFeeRefund\":147.21}],\"refundTotal\":2147.21,\"cardFeeRefundTotal\":147.21,\"refundEstimated\":false}}"));
+        replies.put("/trip/internal/ops/trips/t-1/cancel-preview", new Reply(200, "{\"data\":{\"routePostId\":\"t-1\",\"refunds\":[],"
+                + "\"refundTotal\":0,\"cardFeeRefundTotal\":0,\"refundEstimated\":false}}"));
+        String token = bearer(UserRole.OPS_ADMIN);
+
+        mockMvc.perform(get("/bookings/b-1/cancel-preview").param("fault", "DRIVER").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.refundTotal").value(2147.21))
+                .andExpect(jsonPath("$.data.refunds[0].cardFeeRefund").value(147.21));
+        Request sent = only("/trip/internal/ops/bookings/b-1/cancel-preview");
+        assertThat(sent.method()).isEqualTo("GET");
+        assertThat(sent.uri()).contains("fault=DRIVER").contains("waiveFee=false");
+        mockMvc.perform(get("/trips/t-1/cancel-preview").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.routePostId").value("t-1"));
+
+        mockMvc.perform(get("/bookings/b-1/cancel-preview").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/bookings/b-1/cancel-preview").param("fault", "WEATHER").header("Authorization", token))
+                .andExpect(status().isBadRequest());
+        for (UserRole role : List.of(UserRole.RIDER, UserRole.DRIVER)) {
+            mockMvc.perform(get("/trips/t-1/cancel-preview").header("Authorization", bearer(role))).andExpect(status().isForbidden());
+            mockMvc.perform(get("/bookings/b-1/cancel-preview").param("fault", "RIDER").header("Authorization", bearer(role)))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
     // ---- reads ---------------------------------------------------------------------------------------------------
 
     @Test

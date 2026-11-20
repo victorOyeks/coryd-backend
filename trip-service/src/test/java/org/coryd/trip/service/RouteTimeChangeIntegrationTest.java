@@ -47,10 +47,12 @@ import java.sql.Connection;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -333,6 +335,40 @@ class RouteTimeChangeIntegrationTest {
         assertThat(quote.feeAmount()).isEqualByComparingTo("0");
         assertThat(quote.refundAmount()).isEqualByComparingTo("1200.00");
         assertThat(quote.freeUntil()).isNull();
+    }
+
+    // After a ₦500 ops refund on a ₦1,200 fare (+ ₦59.30 card fee) the quote is payment-service's figure, not the fare again.
+    @Test
+    void theQuoteIsWhatPaymentServiceWillRefundAfterAnEarlierOpsRefund() {
+        RoutePost late = routeDepartingIn(30);
+        Booking lateSeat = confirmed(late, RIDER);
+        RoutePost moved = routeDepartingIn(600);
+        Booking movedSeat = confirmed(moved, OTHER_RIDER);
+        routeTimeChangeService.change(moved.getId(), DRIVER, plus(30));
+        when(paymentServiceClient.cardFee(anyString())).thenReturn(new BigDecimal("59.30"));
+        when(paymentServiceClient.cancellationRefunds(anyList())).thenAnswer(inv -> {
+            List<PaymentServiceClient.CancellationRefundQuery> q = inv.getArgument(0);
+            PaymentServiceClient.CancellationRefundQuery x = q.getFirst();
+            BigDecimal kept = x.fee().min(new BigDecimal("700.00"));
+            BigDecimal fareBack = new BigDecimal("700.00").subtract(kept);
+            BigDecimal cardBack = x.refundCardFee() ? new BigDecimal("59.30") : BigDecimal.ZERO;
+            return Map.of(x.bookingId(), new PaymentServiceClient.CancellationRefund(x.bookingId(), fareBack.add(cardBack), fareBack, cardBack, kept));
+        });
+
+        CancellationQuoteResponse lateQuote = bookingService.getCancellationQuote(lateSeat.getId(), RIDER);
+        CancellationQuoteResponse movedQuote = bookingService.getCancellationQuote(movedSeat.getId(), OTHER_RIDER);
+
+        assertThat(lateQuote.feeAmount()).isEqualByComparingTo("300.00");
+        assertThat(lateQuote.refundAmount()).as("₦700 left less the ₦300 fee - not ₦900").isEqualByComparingTo("400.00");
+        assertThat(lateQuote.cardFee()).isEqualByComparingTo("59.30");
+        assertThat(lateQuote.cardFeeRefunded()).isFalse();
+        assertThat(lateQuote.amountPaid()).isEqualByComparingTo("1259.30");
+        assertThat(movedQuote.refundAmount()).as("₦700 left + the card fee").isEqualByComparingTo("759.30");
+        assertThat(movedQuote.cardFeeRefunded()).isTrue();
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.getFirst().bookingId().equals(lateSeat.getId())
+                && q.getFirst().fee().compareTo(new BigDecimal("300.00")) == 0 && !q.getFirst().refundCardFee()));
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.getFirst().bookingId().equals(movedSeat.getId())
+                && q.getFirst().fee().signum() == 0 && q.getFirst().refundCardFee()));
     }
 
     @Test

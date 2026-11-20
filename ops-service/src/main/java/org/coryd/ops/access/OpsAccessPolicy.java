@@ -66,6 +66,8 @@ public final class OpsAccessPolicy {
             new Rule(HttpMethod.POST, "/users/*/reveal", OpsPermission.VERIFICATION_DECIDE, Set.of(OpsPermission.ACCOUNT_MANAGE)),
             new Rule(ANY, "/users/**", OpsPermission.ACCOUNT_MANAGE),
             // trips and bookings
+            // the cancel preview is part of cancelling - TRIPS_MANAGE, like the cancel it previews
+            new Rule(GET, "/trips/*/cancel-preview", OpsPermission.TRIPS_MANAGE),
             new Rule(GET, "/trips/**", OpsPermission.TRIPS_VIEW),
             new Rule(GET, "/cancellations/**", OpsPermission.TRIPS_VIEW),
             new Rule(ANY, "/trips/**", OpsPermission.TRIPS_MANAGE),

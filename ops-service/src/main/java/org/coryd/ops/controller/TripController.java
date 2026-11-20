@@ -99,6 +99,15 @@ public class TripController {
         return ApiResponse.ok(tripOpsService.trip(routePostId));
     }
 
+    /**
+     * What cancelling (or resolving) this trip now would refund each paid seat, for the confirm dialog - payment-service's
+     * split, as the cancel then reports it. Changes nothing; needs TRIPS_MANAGE like the cancel (OpsAccessPolicy).
+     */
+    @GetMapping("/{routePostId}/cancel-preview")
+    public ApiResponse<JsonNode> cancelPreview(@PathVariable String routePostId) {
+        return ApiResponse.ok(tripOpsService.tripCancelPreview(routePostId));
+    }
+
     /** Cancel the whole trip for the driver - every paid rider refunded in full. */
     @PostMapping("/{routePostId}/cancel")
     public ApiResponse<JsonNode> cancel(@AuthenticationPrincipal CoRydUserDetails admin, @PathVariable String routePostId,

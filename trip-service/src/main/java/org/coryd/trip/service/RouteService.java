@@ -1031,7 +1031,7 @@ public class RouteService {
         if (route.getStatus() == RouteStatus.COMPLETED) {
             throw new BadRequestException("This trip is already completed - it can't be cancelled");
         }
-        cancelRoute(route, CancellationLogService.Context.of(cancelledBy, callerId));
+        cancelRoute(route, CancellationLogService.Context.of(cancelledBy, callerId), null);
     }
 
     /** cancelledBy on every event of a whole trip ops cancelled - riders get support's copy, the driver isn't told once per seat. */
@@ -1044,7 +1044,8 @@ public class RouteService {
      */
     @Transactional
     public List<String> cancelAsOps(String routePostId, String actorId, String actorName, String reason,
-                                    org.coryd.trip.entity.CancellationFault fault) {
+                                    org.coryd.trip.entity.CancellationFault fault,
+                                    Map<String, PaymentServiceClient.CancellationRefund> quotes) {
         RoutePost route = routePostRepository.findById(routePostId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found"));
         if (route.getStatus() == RouteStatus.CANCELLED) {
@@ -1054,7 +1055,7 @@ public class RouteService {
             throw new BadRequestException("This trip is already completed - it can't be cancelled");
         }
         List<String> refunded = cancelRoute(route,
-                new CancellationLogService.Context(CANCELLED_BY_OPS_TRIP, actorId, actorName, reason, fault));
+                new CancellationLogService.Context(CANCELLED_BY_OPS_TRIP, actorId, actorName, reason, fault), quotes);
         if (refunded == null) {
             throw new BadRequestException("This trip changed while you were cancelling it - reload and try again");
         }
@@ -1064,8 +1065,13 @@ public class RouteService {
     private static final List<RouteStatus> CANCELLABLE_ROUTE_STATUSES = List.of(
             RouteStatus.DRAFT, RouteStatus.PUBLISHED, RouteStatus.FULL, RouteStatus.IN_PROGRESS);
 
-    /** Null when another writer finished or cancelled the route first - nothing was done. */
-    private List<String> cancelRoute(RoutePost route, CancellationLogService.Context context) {
+    /**
+     * Null when another writer finished or cancelled the route first - nothing was done. quotes: what payment-service
+     * will refund each paid seat (asked by the caller); null to ask here, once for the whole trip, before any
+     * BOOKING_CANCELLED goes out - the Cancellations Log's refundExpected is that figure.
+     */
+    private List<String> cancelRoute(RoutePost route, CancellationLogService.Context context,
+                                     Map<String, PaymentServiceClient.CancellationRefund> quotes) {
         String routePostId = route.getId();
         RouteStatus before = route.getStatus();
         // Compare-and-set, so two cancellations landing together can't both send the route's refunds and pushes.
@@ -1075,6 +1081,14 @@ public class RouteService {
         route.setStatus(RouteStatus.CANCELLED);
         driverStatsPublisher.changed(route.getDriverId());
         org.coryd.trip.entity.CancellationLog routeRow = cancellationLogService.recordRoute(route, before, context);
+        if (quotes == null) {
+            // No refundCardFee on these events: payment-service refunds the card fee for anyone but the rider - a whole trip
+            // is never the rider's doing.
+            quotes = paymentServiceClient.cancellationRefunds(bookingRepository.findByRoutePostId(routePostId).stream()
+                    .filter(b -> b.getConfirmedAt() != null && CANCELLABLE_BY_ROUTE_CANCELLATION.contains(b.getStatus()))
+                    .map(b -> new PaymentServiceClient.CancellationRefundQuery(b.getId(), BigDecimal.ZERO, true))
+                    .toList());
+        }
 
         String cancelledBy = context.cancelledBy();
         List<String> refundedIds = new ArrayList<>();
@@ -1086,8 +1100,10 @@ public class RouteService {
                 boolean paid = booking.getConfirmedAt() != null;
                 if (paid) {
                     refundedIds.add(booking.getId());
+                    PaymentServiceClient.CancellationRefund split = quotes.get(booking.getId());
                     org.coryd.trip.entity.CancellationLog seat = cancellationLogService.recordBooking(
-                            booking, route, before, bookingBefore, context, null, routeRow.getId());
+                            booking, route, before, bookingBefore, context, null, routeRow.getId(),
+                            split == null ? null : split.refund());
                     if (seat != null) {
                         cancellationLogService.addToRoute(routeRow, seat);
                     }
