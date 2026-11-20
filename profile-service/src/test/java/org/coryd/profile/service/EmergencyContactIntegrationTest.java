@@ -180,6 +180,26 @@ class EmergencyContactIntegrationTest {
         assertThat(emergencyContactService.getContacts("no-contact")).isEmpty();
     }
 
+    @Test
+    void aContactPhoneThatIsNotAPhoneNumberIsRefused() {
+        assertThatThrownBy(() -> emergencyContactService.addContact(USER,
+                new org.coryd.profile.dto.AddEmergencyContactRequest("Bad", "abc")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("valid phone number");
+        assertThatThrownBy(() -> riderProfileService.updateMine(USER, rider("Ada", null, "Mum", "12")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("valid phone number");
+        assertThat(emergencyContactService.getContacts(USER)).isEmpty();
+    }
+
+    @Test
+    void aContactPhoneIsStoredInTheLocalForm() {
+        EmergencyContact contact = emergencyContactService.addContact(USER,
+                new org.coryd.profile.dto.AddEmergencyContactRequest("Mum", "+234 803 000 0000"));
+
+        assertThat(contact.getPhone()).isEqualTo("08030000000");
+    }
+
     private static UpdateRiderProfileRequest rider(String firstName, String photoUrl, String contactName, String contactPhone) {
         return new UpdateRiderProfileRequest(firstName, null, null, photoUrl, contactName, contactPhone);
     }

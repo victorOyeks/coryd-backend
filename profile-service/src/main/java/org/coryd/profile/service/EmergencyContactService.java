@@ -3,6 +3,7 @@ package org.coryd.profile.service;
 import lombok.RequiredArgsConstructor;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.common.util.PhoneNumbers;
 import org.coryd.profile.dto.AddEmergencyContactRequest;
 import org.coryd.profile.entity.EmergencyContact;
 import org.coryd.profile.entity.RiderProfile;
@@ -53,7 +54,7 @@ public class EmergencyContactService {
             primary = EmergencyContact.builder().riderId(userId).primary(true).build();
         }
         primary.setName(name.trim());
-        primary.setPhone(phone.trim());
+        primary.setPhone(checkedPhone(phone));
         syncPrimaryOntoProfile(userId, emergencyContactRepository.save(primary), false);
     }
 
@@ -63,8 +64,8 @@ public class EmergencyContactService {
 
         EmergencyContact contact = emergencyContactRepository.save(EmergencyContact.builder()
                 .riderId(riderId)
-                .name(request.name())
-                .phone(request.phone())
+                .name(request.name().trim())
+                .phone(checkedPhone(request.phone()))
                 .primary(isFirstContact)
                 .build());
 
@@ -87,6 +88,16 @@ public class EmergencyContactService {
                 .orElseThrow(() -> new ResourceNotFoundException("Emergency contact not found"));
         syncPrimaryOntoProfile(riderId, contact, true);
         return contact;
+    }
+
+    /** Phone characters only, 10 to 15 digits - an SOS text or call to anything else silently goes nowhere. */
+    static String checkedPhone(String phone) {
+        String trimmed = phone == null ? "" : phone.trim();
+        String digits = trimmed.replaceAll("[^0-9]", "");
+        if (!trimmed.matches("\\+?[0-9 ()-]+") || digits.length() < 10 || digits.length() > 15) {
+            throw new BadRequestException("Enter a valid phone number for your emergency contact");
+        }
+        return PhoneNumbers.normalize(trimmed);
     }
 
     /** createIfMissing keeps the list endpoints' existing behaviour of creating a rider profile; the
