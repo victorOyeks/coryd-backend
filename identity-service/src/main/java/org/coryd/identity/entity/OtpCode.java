@@ -38,6 +38,11 @@ public class OtpCode extends BaseEntity {
     @Column(nullable = false)
     private boolean used = false;
 
+    /** Wrong codes entered against this one - at OtpAttempts.MAX it is spent and a new one has to be requested. */
+    @Builder.Default
+    @Column(nullable = false)
+    private int attempts = 0;
+
     /** Scopes a code to the flow it was issued for, so a signup code can never be replayed to reset a password or vice versa. */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)

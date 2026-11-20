@@ -93,6 +93,7 @@ public class AuthService {
     private final OpsSecurityPolicy opsSecurityPolicy;
     private final MfaChallengeService mfaChallengeService;
     private final SessionRevocationService sessionRevocationService;
+    private final OtpAttempts otpAttempts;
 
     @Transactional
     public void signup(SignupRequest request) {
@@ -138,6 +139,7 @@ public class AuthService {
 
     private void issueOtp(String phone, OtpChannel channel, OtpPurpose purpose) {
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+        otpCodeRepository.spendUnused(phone, purpose);
         otpCodeRepository.save(OtpCode.builder()
                 .phone(phone)
                 .code(code)
@@ -176,7 +178,7 @@ public class AuthService {
             throw new BadRequestException("OTP has expired");
         }
         if (!codeMatches(otp, request.code())) {
-            throw new BadRequestException("Incorrect OTP");
+            otpAttempts.recordWrongCode(otp.getId());
         }
 
         otp.setUsed(true);
@@ -263,7 +265,7 @@ public class AuthService {
             throw new BadRequestException("OTP has expired");
         }
         if (!codeMatches(otp, request.code())) {
-            throw new BadRequestException("Incorrect OTP");
+            otpAttempts.recordWrongCode(otp.getId());
         }
         otp.setUsed(true);
         otpCodeRepository.save(otp);

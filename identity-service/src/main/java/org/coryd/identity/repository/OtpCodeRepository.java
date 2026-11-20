@@ -15,4 +15,9 @@ public interface OtpCodeRepository extends JpaRepository<OtpCode, String> {
     @Query("delete from OtpCode o where o.phone = :phone")
     void deleteByPhone(@Param("phone") String phone);
     Optional<OtpCode> findTopByPhoneAndPurposeAndUsedFalseOrderByCreatedAtDesc(String phone, OtpPurpose purpose);
+
+    /** A new code replaces every earlier one for the same flow - otherwise each resend would add its own allowance of guesses. */
+    @Modifying
+    @Query("update OtpCode o set o.used = true where o.phone = :phone and o.purpose = :purpose and o.used = false")
+    int spendUnused(@Param("phone") String phone, @Param("purpose") OtpPurpose purpose);
 }
