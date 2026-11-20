@@ -176,8 +176,14 @@ The FE uses `type` (+ `referenceId` when present) from the data payload to
 navigate on tap. Current event types wired to push: `BOOKING_CONFIRMED`,
 `BOOKING_CANCELLED`, `DRIVER_EN_ROUTE`, `DRIVER_ARRIVED`, `ROUTE_CANCELLED`,
 `TRIP_COMPLETED`, `NOTIFY_ME_MATCHED`, `DOCUMENT_EXPIRING`, `DRIVER_APPROVED`,
-`DRIVER_REJECTED`, `SOS_TRIGGERED`, `CHAT_MESSAGE` - see `NotificationEventListener.java`
+`DRIVER_DOCUMENTS_APPROVED`, `DRIVER_REJECTED`, `SOS_TRIGGERED`, `CHAT_MESSAGE` - see `NotificationEventListener.java`
 for the full, current list.
+
+`DRIVER_APPROVED` ("You're verified!") is sent once, when a driver is first fully verified: all four items approved
+**and** their identity (NIN) check approved (with `IDENTITY_VERIFICATION_ENFORCEMENT=STRICT`, the default), whichever
+lands last. All four items approved while the NIN check isn't sends `DRIVER_DOCUMENTS_APPROVED` ("Your documents are
+approved" / "Finish your NIN check to start posting routes.") instead. Neither has a `referenceId`; the driver app opens
+the NIN step for `DRIVER_DOCUMENTS_APPROVED`. See docs/mobile/ops-console-changes-for-apps.md section 5.6.
 
 ---
 

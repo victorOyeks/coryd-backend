@@ -83,11 +83,13 @@ Every driver, with their car, trips, rating, earnings, reliability, last trip an
 | Value | Meaning | Badge |
 |---|---|---|
 | `SUSPENDED` | Ops suspended the account | red "✕ SUSPENDED" |
-| `VERIFIED` | All four documents approved; the driver can post trips | green "✓ VERIFIED" |
+| `VERIFIED` | Fully verified: all four documents approved **and** the identity (NIN) check approved (while `IDENTITY_VERIFICATION_ENFORCEMENT` is `STRICT`, the default); the driver can post trips | green "✓ VERIFIED" |
 | `RESUBMITTED` | The driver re-uploaded something ops rejected, and it's waiting again | amber "RESUBMITTED" |
-| `PENDING` | Anything else: not finished, waiting for review, or rejected | amber "PENDING" |
+| `PENDING` | Anything else: not finished, waiting for review, rejected, or all four documents approved with the NIN check outstanding (`ninPending`) | amber "PENDING" |
 
-`verificationStatus` is the documents' overall state: `PENDING`, `IN_REVIEW`, `APPROVED`, `REJECTED` or `EXPIRED`. A suspended driver keeps theirs, so you can show both.
+`verificationStatus` is the driver's overall state: `PENDING`, `IN_REVIEW`, `APPROVED`, `REJECTED` or `EXPIRED`. It is `APPROVED` only when the driver is fully verified, as `status` `VERIFIED` is. A suspended driver keeps theirs, so you can show both.
+
+`ninPending` (boolean, on every row and on the profile) is `true` when all four documents are approved but the identity (NIN) check isn't yet. `verificationStatus` is then `PENDING` (the driver's turn) or `IN_REVIEW` (ops has the identity check), and `status` is `PENDING`, so the Pending tab and count include these drivers and Verified doesn't. Show an amber **"NIN pending"** badge for them, never "Verified". With `IDENTITY_VERIFICATION_ENFORCEMENT=OFF` it is always `false` and the documents alone make a driver verified.
 
 **Where the numbers come from:**
 - Profile-service keeps one indexed row per driver, and the list is filtered, sorted and paged by the database. It stays fast however many drivers there are.
@@ -131,7 +133,7 @@ Every driver, with their car, trips, rating, earnings, reliability, last trip an
 |---|---|
 | Header: name, ref | `driver.name`, `driver.ref` |
 | Card: photo, short name ("Emeka O."), stars and count, phone | `driver.photoUrl`, `driver.name`, `performance.rating` (`ratingCount`), `driver.phone` |
-| "Verified Driver" badge | Show when `verificationStatus` is `APPROVED` |
+| "Verified Driver" badge | Show when `verificationStatus` is `APPROVED`. When `ninPending` is `true`, show "NIN pending" (amber) instead |
 | Vehicle: make & model, plate | `vehicle` |
 | Performance: Total Trips, Rating, Total Earning, Reliability Score, Reports Filed | `performance.*`. **Reports filed** counts problems riders reported on this driver's trips. |
 | Account: Driver ID, Joined | `account.ref`, `account.joinedAt` |

@@ -19,7 +19,7 @@ Some notifications are not on this list:
 
 - **Voice OTP and SMS OTP** don't change.
 - **Push and email** don't change.
-- **Driver verification and document decisions** (`VERIFICATION_ITEM_*`, `DRIVER_APPROVED`) go by push and
+- **Driver verification and document decisions** (`VERIFICATION_ITEM_*`, `DRIVER_APPROVED`, `DRIVER_DOCUMENTS_APPROVED`) go by push and
   email only. Their events carry no phone number, so they can't go on WhatsApp yet. To add them, put the
   driver's phone on those events in `common`, then add a template the same way as the others.
 

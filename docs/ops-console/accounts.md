@@ -109,6 +109,7 @@ One call each returns the whole profile.
   "driver": { "id": "4f2a91c0-…", "ref": "D-4F2A91", "name": "Emeka Okafor", "phone": "08053636321", "photoUrl": "…" },
   "status": "SUSPENDED",
   "verificationStatus": "APPROVED",
+  "ninPending": false,
   "suspension": {
     "suspendedAt": "2026-10-01T10:00:00Z",
     "reason": "Threatened a rider",

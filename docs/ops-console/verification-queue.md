@@ -617,6 +617,8 @@ It also includes the driver's **identity (NIN)** decisions made on the identity 
 | `APPROVED` | Verified |
 | `REJECTED` | Rejected |
 
+`overallStatus` is `APPROVED` only when the driver is fully verified: all four items approved and their identity (NIN) check approved too (while `IDENTITY_VERIFICATION_ENFORCEMENT` is `STRICT`, the default). The review page also carries **`ninPending`**: `true` when all four items are approved but the NIN check isn't. `overallStatus` is then `PENDING` or `IN_REVIEW` (ops has the identity check); show **NIN pending** (amber) instead of either. The NIN check is decided on the Identity Checks screen.
+
 **Queue `tab`**: `PENDING`, `IN_REVIEW` or `RESUBMITTED`; see section 3.
 
 **`providerChecks[].outcome`.** These are advisory; ops always makes the final call.
@@ -698,7 +700,7 @@ The driver app reads its documents from `GET /profile/drivers/{driverId}/verific
 
 | Ops action | Push (title / body) | What the app reads afterwards |
 |---|---|---|
-| **Approve** one document / **Approve Driver** | "Driver's licence approved" / "Your driver's licence has been approved." | The item's `status: "APPROVED"`. With all four approved, `overallStatus: "APPROVED"` and the driver can post (plus the usual "You're verified" push the first time). |
+| **Approve** one document / **Approve Driver** | "Driver's licence approved" / "Your driver's licence has been approved." | The item's `status: "APPROVED"`. With all four approved and the NIN check approved, `overallStatus: "APPROVED"` and the driver can post (plus "You're verified!" the first time). With the NIN check still outstanding, `ninPending: true` and the driver gets "Your documents are approved" / "Finish your NIN check to start posting routes." (`DRIVER_DOCUMENTS_APPROVED`) instead; "You're verified!" follows once, when the NIN check is approved. |
 | **Request resubmission** | "Please upload your insurance certificate again" / the `reason` | The item's `status: "REJECTED"` with `rejectionReason` = the reason, and an entry in **`resubmissionRequests`** (`item`, `label`, `reason`, `requestedAt`). `overallStatus: "REJECTED"`; an approved driver can't post until the new upload is approved. |
 | **Reject** / **Save Changes** with a flag | "Insurance certificate needs attention" / the flag's note | `status: "REJECTED"`, `rejectionReason`. Not in `resubmissionRequests` (that's only for an explicit request). |
 

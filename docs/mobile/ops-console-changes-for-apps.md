@@ -48,6 +48,7 @@ Priority: **Must** means the app is wrong or confusing without the change. **Sho
 | Onboarding | New daily push `ONBOARDING_REMINDER`, with `step`, `reason` and `role` in the data and `step` and `role` on the bell entry | Route each step to its screen. `NIN_LOCKED_OUT` goes to support | **Must** |
 | Identity | New pushes `IDENTITY_VERIFICATION_APPROVED`, `_REJECTED` and `_RETRY` when ops decides a NIN check | Refresh the identity status. Show `rejectionReason` and a Try again button | **Must** |
 | Driver documents | `VERIFICATION_ITEM_REJECTED` is reused for "Please upload your X again". There's a new `resubmissionRequests[]` on verification-status | Show the reason and a re-upload button for each document. Expect posting to be blocked | **Must** |
+| Driver verification | "You're verified!" (`DRIVER_APPROVED`) now waits for the identity (NIN) check as well as the four documents, whichever is approved last, and is sent once. Documents approved while the NIN check isn't: new push `DRIVER_DOCUMENTS_APPROVED`. `overallStatus` is `APPROVED` only once both are; new `ninPending` on verification-status (section 5.6) | Route `DRIVER_DOCUMENTS_APPROVED` to the NIN step. Show "documents approved, finish your NIN check" when `ninPending` | **Must** |
 | Driver documents | `DOCUMENT_EXPIRING` now carries `documentType` (and `vehicleId`) in the push data, and `documentType` on the bell entry | Open Verification Status on that document | Should |
 | Driver documents | New pushes `VERIFICATION_ITEM_IN_REVIEW` (vehicle being re-checked after an ops edit) and `VERIFICATION_ITEM_RETRY` (licence tries given back) | Open vehicle status or the licence check | Should |
 | Trips | Ops can cancel a trip or a seat. The existing `BOOKING_CANCELLED` and `ROUTE_CANCELLED` pushes now say "CoRyd support cancelled…" | No new type. Make sure an active or live booking screen handles cancellation at any stage, including a rider already aboard | Should |
@@ -261,9 +262,10 @@ The driver app reads them from `GET /profile/drivers/{driverId}/verification-sta
 | Reject, or Save Changes with a flag | `VERIFICATION_ITEM_REJECTED` | "{Label} needs attention" | the flag's note (or "Your {label} was not accepted. Please review and resubmit.") |
 | Ops edits plate, make, model or year of an approved car (new) | **`VERIFICATION_ITEM_IN_REVIEW`** | "Vehicle registration being re-checked" | "We've updated your vehicle details and are checking your vehicle registration again. You can post trips once it's approved." |
 | Ops gives licence tries back (new) | **`VERIFICATION_ITEM_RETRY`** | "You can verify your driver's licence again" | "We've reset your driver's licence check. Open the app to try again." |
-| First time all four are approved | `DRIVER_APPROVED` | "You're verified!" | unchanged. **Not** sent again when a driver is re-approved after a resubmission or renewal. |
+| First time the driver is fully verified: all four approved **and** the identity (NIN) check approved, whichever is last | `DRIVER_APPROVED` | "You're verified!" | "Your CoRyd driver verification is complete. You can start posting routes now." Sent **once**. **Not** sent again when a driver is re-approved after a resubmission or renewal. |
+| All four approved while the NIN check isn't (new) | **`DRIVER_DOCUMENTS_APPROVED`** | "Your documents are approved" | "Finish your NIN check to start posting routes." Sent each time the four become all approved while the NIN check is outstanding. See 5.6. |
 
-None of these has a `referenceId`. On tap, open the verification or documents screen. For `VERIFICATION_ITEM_RETRY`, open the licence check.
+None of these has a `referenceId`. On tap, open the verification or documents screen. For `VERIFICATION_ITEM_RETRY`, open the licence check. For `DRIVER_DOCUMENTS_APPROVED`, open the NIN step (`nin-lookup`, as for `IDENTITY_VERIFICATION_RETRY`).
 
 ### 5.2 `resubmissionRequests[]` (new on verification-status)
 
@@ -331,6 +333,17 @@ This isn't a new type, but ops can now also send it by hand from the console. Th
 - Only insurance and roadworthiness are tracked. **Please make the expiry date required on upload:** documents uploaded without one can't be tracked or reminded.
 
 ---
+
+### 5.6 Verified means NIN too (`ninPending`, B31)
+
+A driver is verified only when all four items **and** their identity (NIN) check are approved (while `IDENTITY_VERIFICATION_ENFORCEMENT` is `STRICT`, the default; with `OFF`, the four items alone, as before). trip-service's posting-eligibility already refused such a driver with `IDENTITY_NOT_VERIFIED`; now everything else agrees:
+
+- `GET /profile/drivers/{driverId}/verification-status`: `overallStatus` is `APPROVED` only when fully verified. All four items approved but the NIN check outstanding: `overallStatus` is `PENDING` (the driver's turn) or `IN_REVIEW` (ops has their identity check), and new **`ninPending: true`**. `verifiedSince` is the first time they were fully verified.
+- `GET /profile/drivers/me/onboarding-status`: `overallStatus` follows the same rule.
+- Pushes: `DRIVER_DOCUMENTS_APPROVED` when the documents are all approved and the NIN check isn't; `DRIVER_APPROVED` ("You're verified!") once, when the last of the two lands - the NIN check approved by ops, by Smile ID, or by the NIN lookup and licence together. A driver who is approved by ops for the identity check also gets the existing `IDENTITY_VERIFICATION_APPROVED`.
+- Payout account and amount owed are separate gates (`PAYOUT_ACCOUNT_REQUIRED`, `AMOUNT_OWED`) and don't affect being verified.
+
+Older app builds: `DRIVER_DOCUMENTS_APPROVED` is an unknown type to them, so tapping it opens the notifications list; `overallStatus` stays one of the existing values; `ninPending` is ignored.
 
 ## 6. Account actions: suspension, sign-out everywhere, deletion, edits
 
@@ -708,6 +721,8 @@ works on the suspended-account screen and never triggers a refresh or sign-out:
 | `VERIFICATION_ITEM_REJECTED` (resubmission title) | reused | driver | documents → that item | **Must** | Request resubmission; reason and re-upload shown |
 | `VERIFICATION_ITEM_APPROVED` | existing | driver | documents | Should | Approve after re-upload; banner clears |
 | `VERIFICATION_ITEM_IN_REVIEW` | new | driver | vehicle status | Should | Ops edits plate; "being re-checked" and posting blocked |
+| `DRIVER_DOCUMENTS_APPROVED` | new | driver | the NIN step (`nin-lookup`) | **Must** | Approve all four for a driver whose NIN check isn't approved: this push, not "You're verified!"; posting says identity. Then approve the NIN check: "You're verified!" once |
+| `DRIVER_APPROVED` | existing | driver | Verification Status | **Must** | Sent once, only when documents and NIN check are both approved |
 | `VERIFICATION_ITEM_RETRY` | new | driver | licence check | Should | Ops gives licence tries back; check opens again |
 | `SIGNED_OUT_EVERYWHERE` | new | both | sign-in | Must | Sign out everywhere; push arrives and app is at sign-in |
 | `ISSUE_REPORT_UPDATED` | new | both | the trip (`referenceId`) or the bell | Should | Resolve a report with a message |
@@ -728,6 +743,7 @@ works on the suspended-account screen and never triggers a refresh or sign-out:
 | `rejectionReason`, `attemptsLeft` | `GET /profile/identity-verification/me` | **Must** | After ops reject and reset |
 | `ninStatus`, `ninTriesLeft`, `licenceAttemptsLeft`, `nameVerified` | `GET /profile/drivers/me` | **Must** | Driver NIN reject and licence reset |
 | `resubmissionRequests[]` | `GET /profile/drivers/{id}/verification-status` | **Must** | Request resubmission, then re-upload: entry appears then clears |
+| `ninPending`, `overallStatus` (APPROVED only with the NIN check) | `GET /profile/drivers/{id}/verification-status` | **Must** | Documents approved, NIN pending: Verification Status says finish the NIN check, no "Verified driver" pill |
 | `blockedReason` after a resubmission or vehicle edit | `GET /trip/routes/drivers/me/posting-eligibility` | **Must** | Posting blocked with the right screen |
 | `OPS_ADJUSTMENT` (signed `amount`, `note`) | `…/owed/history`, `…/statement` | Should | Credit and debit both render |
 | `promotionalOptIn`, `whatsappOptIn` | `GET` (read) / `PUT` (change) `/notification/preferences/users/{userId}` | Should / Nice | Switch off announcements: a non-urgent broadcast is skipped, an urgent one arrives |
