@@ -5,8 +5,8 @@ import lombok.RequiredArgsConstructor;
 import org.coryd.common.response.ApiResponse;
 import org.coryd.common.security.CoRydUserDetails;
 import org.coryd.profile.dto.RiderProfileResponse;
+import org.coryd.profile.dto.RiderSummary;
 import org.coryd.profile.dto.UpdateRiderProfileRequest;
-import org.coryd.profile.entity.RiderProfile;
 import org.coryd.profile.service.RiderProfileService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,9 +23,13 @@ public class RiderProfileController {
 
     private final RiderProfileService riderProfileService;
 
+    /**
+     * Another rider's public card - name and photo only. Email and emergency contact are the rider's own business
+     * (GET /riders/me), and this used to hand them to any signed-in user who had the id.
+     */
     @GetMapping("/{userId}")
-    public ApiResponse<RiderProfile> get(@PathVariable String userId) {
-        return ApiResponse.ok(riderProfileService.get(userId));
+    public ApiResponse<RiderSummary> get(@PathVariable String userId) {
+        return ApiResponse.ok(RiderSummary.from(riderProfileService.get(userId)));
     }
 
     @GetMapping("/me")
