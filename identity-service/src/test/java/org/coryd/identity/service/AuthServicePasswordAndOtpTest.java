@@ -51,7 +51,7 @@ class AuthServicePasswordAndOtpTest {
 
     private final AuthService service = new AuthService(users, mock(BetaSignupService.class), otps, refreshTokens,
             mock(UserDeviceRepository.class), mock(TokenFamilyRevoker.class), mock(JwtUtil.class), encoder, environment, kafka,
-            mock(ProfileServiceClient.class), mock(OpsSecurityPolicy.class), mock(MfaChallengeService.class), sessions, otpAttempts);
+            mock(ProfileServiceClient.class), mock(OpsSecurityPolicy.class), mock(MfaChallengeService.class), sessions, otpAttempts, mock(OtpSendLimits.class));
 
     private User user;
 

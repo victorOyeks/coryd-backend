@@ -1,3 +1,7 @@
+# Per-IP cap on the endpoints that text an OTP (each one is a paid SMS). Generous because Nigerian mobile
+# networks put many phones behind one carrier IP; identity-service's per-phone limit is the real guard.
+limit_req_zone $binary_remote_addr zone=coryd_otp:10m rate=20r/m;
+
 server {
     listen 80;
     listen [::]:80;
@@ -6,6 +10,19 @@ server {
     # Spring accepts uploads up to 10MB (licence, vehicle and document photos); nginx's own default
     # is 1MB, which turned a phone-camera photo into a 413 before it ever reached the app.
     client_max_body_size 10m;
+
+    location ~ ^/identity/auth/(signup|resend-otp|forgot-password)$ {
+        limit_req zone=coryd_otp burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:9100;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:9100;

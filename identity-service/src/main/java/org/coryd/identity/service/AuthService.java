@@ -94,6 +94,7 @@ public class AuthService {
     private final MfaChallengeService mfaChallengeService;
     private final SessionRevocationService sessionRevocationService;
     private final OtpAttempts otpAttempts;
+    private final OtpSendLimits otpSendLimits;
 
     @Transactional
     public void signup(SignupRequest request) {
@@ -138,6 +139,7 @@ public class AuthService {
     }
 
     private void issueOtp(String phone, OtpChannel channel, OtpPurpose purpose) {
+        otpSendLimits.checkCanSend(phone);
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
         otpCodeRepository.spendUnused(phone, purpose);
         otpCodeRepository.save(OtpCode.builder()
