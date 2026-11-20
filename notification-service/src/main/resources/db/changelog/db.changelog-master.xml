@@ -19,5 +19,6 @@
     <include file="db/changelog/008-notification-preferences-whatsapp.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/009-ops-broadcasts.sql" relativeToChangelogFile="false"/>
     <include file="db/changelog/010-onboarding-reminders.sql" relativeToChangelogFile="false"/>
+    <include file="db/changelog/011-notification-feed-document-type.sql" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

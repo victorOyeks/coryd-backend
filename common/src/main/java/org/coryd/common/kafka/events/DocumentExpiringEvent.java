@@ -13,7 +13,10 @@ import java.time.LocalDate;
 @AllArgsConstructor
 public class DocumentExpiringEvent {
     private String driverId;
+    /** DocumentType - INSURANCE or ROADWORTHINESS_CERT. */
     private String documentType;
+    /** The vehicle the document is for - null for a document not tied to one. */
+    private String vehicleId;
     private LocalDate expiresOn;
     private int daysRemaining;
 }

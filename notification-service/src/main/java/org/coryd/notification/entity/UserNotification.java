@@ -53,6 +53,10 @@ public class UserNotification extends BaseEntity {
     @Column(length = 10)
     private String role;
 
+    /** DOCUMENT_EXPIRING only: which document (INSURANCE, ROADWORTHINESS_CERT), so the bell opens it as the push does. */
+    @Column(length = 30)
+    private String documentType;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean read = false;

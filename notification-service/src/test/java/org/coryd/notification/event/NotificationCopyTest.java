@@ -59,31 +59,31 @@ class NotificationCopyTest {
     @Test
     void aDriverIsToldHowLongTheirDocumentHasLeftInWords() {
         listener.onDocumentExpiring(org.coryd.common.kafka.events.DocumentExpiringEvent.builder()
-                .driverId("driver-1").documentType("INSURANCE").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(3).build());
+                .driverId("driver-1").documentType("INSURANCE").vehicleId("vehicle-1").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(3).build());
         listener.onDocumentExpiring(org.coryd.common.kafka.events.DocumentExpiringEvent.builder()
-                .driverId("driver-1").documentType("ROADWORTHINESS_CERT").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(1).build());
+                .driverId("driver-1").documentType("ROADWORTHINESS_CERT").vehicleId("vehicle-1").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(1).build());
         listener.onDocumentExpiring(org.coryd.common.kafka.events.DocumentExpiringEvent.builder()
                 .driverId("driver-1").documentType("INSURANCE").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(0).build());
 
-        verify(dispatch).sendPush(eq("driver-1"), eq("Insurance certificate expiring soon"),
+        verify(dispatch).sendDocumentPush(eq("driver-1"), eq("Insurance certificate expiring soon"),
                 eq("Your insurance certificate expires in 3 days. Upload the renewed one before then to keep posting trips."),
-                eq("DOCUMENT_EXPIRING"), eq(null));
-        verify(dispatch).sendPush(eq("driver-1"), eq("Roadworthiness certificate expiring soon"),
+                eq("DOCUMENT_EXPIRING"), eq("INSURANCE"), eq("vehicle-1"));
+        verify(dispatch).sendDocumentPush(eq("driver-1"), eq("Roadworthiness certificate expiring soon"),
                 eq("Your roadworthiness certificate expires tomorrow. Upload the renewed one before then to keep posting trips."),
-                eq("DOCUMENT_EXPIRING"), eq(null));
-        verify(dispatch).sendPush(eq("driver-1"), eq("Insurance certificate expiring soon"),
+                eq("DOCUMENT_EXPIRING"), eq("ROADWORTHINESS_CERT"), eq("vehicle-1"));
+        verify(dispatch).sendDocumentPush(eq("driver-1"), eq("Insurance certificate expiring soon"),
                 eq("Your insurance certificate expires today. Upload the renewed one before then to keep posting trips."),
-                eq("DOCUMENT_EXPIRING"), eq(null));
+                eq("DOCUMENT_EXPIRING"), eq("INSURANCE"), eq(null));
     }
 
     @Test
     void anExpiredDocumentSaysWhenAndWhatToDo() {
         listener.onDocumentExpiring(org.coryd.common.kafka.events.DocumentExpiringEvent.builder()
-                .driverId("driver-1").documentType("INSURANCE").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(-4).build());
+                .driverId("driver-1").documentType("INSURANCE").vehicleId("vehicle-1").expiresOn(java.time.LocalDate.of(2026, 9, 2)).daysRemaining(-4).build());
 
-        verify(dispatch).sendPush(eq("driver-1"), eq("Insurance certificate expired"),
+        verify(dispatch).sendDocumentPush(eq("driver-1"), eq("Insurance certificate expired"),
                 eq("Your insurance certificate expired on 2 Sep 2026. Upload a current one to post trips again."),
-                eq("DOCUMENT_EXPIRING"), eq(null));
+                eq("DOCUMENT_EXPIRING"), eq("INSURANCE"), eq("vehicle-1"));
     }
 
     @Test

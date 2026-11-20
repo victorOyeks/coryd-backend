@@ -150,6 +150,33 @@ public class NotificationDispatchService {
     }
 
     /**
+     * A document expiring or expired: the push data and the bell entry name the document (documentType, and vehicleId
+     * when it's a vehicle's), so a tap opens that document on Verification Status.
+     */
+    @Async("notificationExecutor")
+    @Transactional
+    public void sendDocumentPush(String userId, String title, String body, String eventType, String documentType, String vehicleId) {
+        userNotificationRepository.save(UserNotification.builder()
+                .userId(userId)
+                .title(title)
+                .body(body)
+                .eventType(eventType)
+                .documentType(documentType)
+                .build());
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        if (documentType != null) {
+            data.put("documentType", documentType);
+        }
+        if (vehicleId != null) {
+            data.put("vehicleId", vehicleId);
+        }
+        for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
+            FcmService.PushResult result = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, data);
+            logPush(userId, eventType, result);
+        }
+    }
+
+    /**
      * The last push to this account's phones, then their tokens are dropped - in one task, so the push can't lose the race
      * to the delete. For a forced sign-out: the app can't unregister its token itself once its session is dead.
      */
@@ -195,15 +222,19 @@ public class NotificationDispatchService {
 
         for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
             FcmService.PushResult result = fcmService.sendPush(userId, token.getFcmToken(), title, body, eventType, bookingId, routePostId);
-            notificationLogRepository.save(NotificationLog.builder()
-                    .userId(userId)
-                    .channel(NotificationChannel.PUSH)
-                    .eventType(eventType)
-                    .delivered(result.delivered())
-                    .providerMessageId(result.messageId())
-                    .errorCode(result.errorCode())
-                    .build());
+            logPush(userId, eventType, result);
         }
+    }
+
+    private void logPush(String userId, String eventType, FcmService.PushResult result) {
+        notificationLogRepository.save(NotificationLog.builder()
+                .userId(userId)
+                .channel(NotificationChannel.PUSH)
+                .eventType(eventType)
+                .delivered(result.delivered())
+                .providerMessageId(result.messageId())
+                .errorCode(result.errorCode())
+                .build());
     }
 
     /** Caller decides whether an email is worth sending (e.g. only if the recipient has one on file) - this method always attempts it. */

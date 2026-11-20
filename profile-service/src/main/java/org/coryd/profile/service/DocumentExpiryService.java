@@ -291,6 +291,7 @@ public class DocumentExpiryService {
         return DocumentExpiringEvent.builder()
                 .driverId(doc.getDriverId())
                 .documentType(doc.getDocumentType().name())
+                .vehicleId(doc.getVehicleId())
                 .expiresOn(doc.getExpiresOn())
                 .daysRemaining((int) ChronoUnit.DAYS.between(window.today(), doc.getExpiresOn()))
                 .build();

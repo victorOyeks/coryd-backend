@@ -201,6 +201,9 @@ class DocumentExpiryIntegrationTest {
         assertThat(sent.getDriverId()).isEqualTo(soon.driverId());
         assertThat(sent.getDaysRemaining()).isEqualTo(3);
         assertThat(sent.getExpiresOn()).isEqualTo(today.plusDays(3));
+        assertThat(sent.getDocumentType()).as("the app opens this document").isEqualTo(soon.documentType().name());
+        assertThat(sent.getVehicleId()).isEqualTo(jdbcTemplate.queryForObject(
+                "select vehicle_id from profile.driver_documents where id = ?", String.class, soon.documentId()));
     }
 
     @Test

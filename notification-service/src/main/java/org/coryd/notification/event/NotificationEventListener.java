@@ -379,14 +379,15 @@ public class NotificationEventListener {
         int days = event.getDaysRemaining();
         String when = event.getExpiresOn() == null ? "" : " on " + event.getExpiresOn().format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH));
         if (days < 0) {
-            dispatchService.sendPush(event.getDriverId(), label + " expired",
-                    "Your " + label.toLowerCase() + " expired" + when + ". Upload a current one to post trips again.", "DOCUMENT_EXPIRING", null);
+            dispatchService.sendDocumentPush(event.getDriverId(), label + " expired",
+                    "Your " + label.toLowerCase() + " expired" + when + ". Upload a current one to post trips again.", "DOCUMENT_EXPIRING",
+                    event.getDocumentType(), event.getVehicleId());
             return;
         }
         String in = days == 0 ? "today" : days == 1 ? "tomorrow" : "in " + days + " days";
-        dispatchService.sendPush(event.getDriverId(), label + " expiring soon",
+        dispatchService.sendDocumentPush(event.getDriverId(), label + " expiring soon",
                 "Your " + label.toLowerCase() + " expires " + in + ". Upload the renewed one before then to keep posting trips.",
-                "DOCUMENT_EXPIRING", null);
+                "DOCUMENT_EXPIRING", event.getDocumentType(), event.getVehicleId());
     }
 
     private static String documentLabel(String documentType) {
