@@ -58,8 +58,9 @@ class AudienceAndFunnelIntegrationTest {
         rider(R1, "08011110001", "ACTIVE", "APPROVED", now.minus(3, ChronoUnit.DAYS), "amaka@example.com");
         rider(R2, "08011110002", "ACTIVE", "NOT_STARTED", null, null);
         rider(R_SUSPENDED, "08011110003", "SUSPENDED", "APPROVED", now.minus(1, ChronoUnit.DAYS), null);
-        driver(D1, "08022220001", "VERIFIED", "APPROVED", now.minus(1, ChronoUnit.DAYS), "PENDING");
-        driver(D2, null, "PENDING", "IN_REVIEW", null, "IN_REVIEW");
+        // D1 is approved: driver_index still keeps a queue_tab for it, but nothing waits on ops, so the queue leaves it out.
+        driver(D1, "08022220001", "VERIFIED", "APPROVED", now.minus(1, ChronoUnit.DAYS), "PENDING", false);
+        driver(D2, null, "PENDING", "IN_REVIEW", null, "IN_REVIEW", true);
     }
 
     @Test
@@ -124,7 +125,8 @@ class AudienceAndFunnelIntegrationTest {
         VerificationFunnelService.Pipeline p = funnel.pipeline();
         assertThat(p.driversTotal()).isEqualTo(2);
         assertThat(p.driversVerified()).isEqualTo(1);
-        assertThat(p.driverQueue()).containsEntry("IN_REVIEW", 1L).containsEntry("PENDING", 1L);
+        // Only the drivers the verification queue lists: D2 (in review), not D1 (approved, nothing waiting on ops).
+        assertThat(p.driverQueue()).containsExactly(java.util.Map.entry("IN_REVIEW", 1L));
         assertThat(p.ridersTotal()).isEqualTo(3);
         assertThat(p.ridersSuspended()).isEqualTo(1);
         assertThat(p.ridersActiveLast7Days()).isEqualTo(2);
@@ -139,9 +141,9 @@ class AudienceAndFunnelIntegrationTest {
                 UUID.randomUUID().toString(), id, email);
     }
 
-    private void driver(String id, String phone, String status, String overall, Instant lastTrip, String queueTab) {
+    private void driver(String id, String phone, String status, String overall, Instant lastTrip, String queueTab, boolean inReview) {
         jdbc.update("insert into profile.driver_index (driver_id, ref_key, first_name, last_name, phone, joined_at, overall_status,"
-                        + " directory_status, last_trip_at, queue_tab, submitted_at) values (?, ?, 'Emeka', 'Okafor', ?, now(), ?, ?, ?, ?, now())",
-                id, id.replace("-", ""), phone, overall, status, lastTrip == null ? null : Timestamp.from(lastTrip), queueTab);
+                        + " directory_status, last_trip_at, queue_tab, submitted_at, in_review) values (?, ?, 'Emeka', 'Okafor', ?, now(), ?, ?, ?, ?, now(), ?)",
+                id, id.replace("-", ""), phone, overall, status, lastTrip == null ? null : Timestamp.from(lastTrip), queueTab, inReview);
     }
 }

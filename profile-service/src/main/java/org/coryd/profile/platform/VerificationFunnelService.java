@@ -25,6 +25,10 @@ public class VerificationFunnelService {
 
     private final NamedParameterJdbcTemplate jdbc;
 
+    /** Same rule as the verification queue: a licence still with Smile ID only counts as waiting on ops after this long. */
+    @org.springframework.beans.factory.annotation.Value("${verification.provider-pending-queue-after-minutes:10}")
+    private long providerPendingQueueAfterMinutes = 10;
+
     public record Stage(String audience, String stage, long people, Double percentOfJoined) {
     }
 
@@ -74,7 +78,8 @@ public class VerificationFunnelService {
     }
 
     public Pipeline pipeline() {
-        MapSqlParameterSource p = new MapSqlParameterSource("week", Timestamp.from(java.time.Instant.now().minus(7, ChronoUnit.DAYS)));
+        MapSqlParameterSource p = new MapSqlParameterSource("week", Timestamp.from(java.time.Instant.now().minus(7, ChronoUnit.DAYS)))
+                .addValue("providerCutoff", Timestamp.from(java.time.Instant.now().minus(providerPendingQueueAfterMinutes, ChronoUnit.MINUTES)));
         Map<String, Object> d = jdbc.queryForMap("""
                 select count(*) as total, count(*) filter (where overall_status = 'APPROVED') as verified,
                        count(*) filter (where directory_status = 'SUSPENDED') as suspended,
@@ -87,7 +92,13 @@ public class VerificationFunnelService {
                 from profile.rider_index
                 """, p);
         Map<String, Long> queue = new java.util.LinkedHashMap<>();
-        jdbc.query("select queue_tab, count(*) from profile.driver_index where queue_tab is not null group by queue_tab order by 1", p,
+        // Only drivers the verification queue lists (DriverIndexSpecs.inQueue): queue_tab is kept for every driver, approved
+        // ones included, so counting it alone put the whole driver base in the dashboard's "waiting" figure.
+        jdbc.query("""
+                select queue_tab, count(*) from profile.driver_index
+                where queue_tab is not null and (in_review or licence_check_started_at <= :providerCutoff)
+                group by queue_tab order by 1
+                """, p,
                 rs -> {
                     queue.put(rs.getString(1), rs.getLong(2));
                 });
