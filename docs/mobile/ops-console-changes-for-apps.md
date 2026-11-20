@@ -564,7 +564,7 @@ Either flag can be sent alone; one you don't send keeps its value. Both default 
 
 ## 11. Settings ops can now change without an app release
 
-Platform Settings in the console change these values at runtime, and every service picks the change up within seconds. There is no settings endpoint for the apps; where a value matters on screen, the endpoint in the table carries it. **Don't hard-code them.**
+Platform Settings in the console change these values at runtime, and every service picks the change up within seconds. There is no general settings endpoint for the apps; where a value matters on screen, the endpoint in the table carries it, and the support contact has an endpoint of its own (below). **Don't hard-code them.**
 
 | Setting (default) | Where it shows in the apps | What to do |
 |---|---|---|
@@ -573,6 +573,21 @@ Platform Settings in the console change these values at runtime, and every servi
 | `commission.percent` (5%) | The driver's earnings breakdown | Read `GET /payment/earnings/commission-rate` |
 | `documents.expiry-reminder-days` (14) and `documents.final-reminder-days` (3) | When `DOCUMENT_EXPIRING` arrives | Nothing |
 | `onboarding.*` | When and how often `ONBOARDING_REMINDER` arrives (08:00 Lagos, daily for 14 days, then every 3) | Nothing |
+| `support.whatsapp`, `support.email` (empty) | Contact support (Help Center, suspended-account screen, NIN lock-out) | Read `GET /trip/public/support-contact` - see below |
+
+### Contact support (2026-11-20)
+
+The one setting the apps read directly. `GET /trip/public/support-contact` needs **no token** - call it without one, so it
+works on the suspended-account screen and never triggers a refresh or sign-out:
+
+```json
+{ "success": true, "data": { "whatsapp": "+2348031234567", "whatsappLink": "https://wa.me/2348031234567", "email": "help@example.com" } }
+```
+
+- Open `whatsappLink` (append `?text=<url-encoded message>` to prefill; include the CoRyd user id when signed in) and
+  `mailto:<email>` with a subject.
+- A `null` field is a channel ops hasn't set - hide it. Both `null`: show a calm "support details aren't available yet" line.
+- Responses are cacheable for 5 minutes; no number or address is hard-coded anywhere.
 
 ---
 
@@ -740,6 +755,7 @@ Platform Settings in the console change these values at runtime, and every servi
 - [ ] **Should:** the announcements switch writes `promotionalOptIn`; its state is read with `GET /notification/preferences/users/{userId}`.
 - [ ] **Should:** bell, preferences and device-token calls use the signed-in user's own id; the token is registered after sign-in and removed before the session is cleared.
 - [ ] **Should:** no hard-coded booking window, fee percent, free window or commission.
+- [ ] **Should:** Contact support reads `GET /trip/public/support-contact` with no token and shows only the channels that are set (section 11).
 - [ ] **Should:** expiry date required when uploading insurance or roadworthiness.
 - [ ] **Nice:** WhatsApp OTP copy doesn't promise WhatsApp; optional WhatsApp switch.
 

@@ -36,12 +36,19 @@ straight away or at a time you choose, every service picks it up within seconds,
 | `verification.digest-time` | NOTIFICATIONS | TIME_OF_DAY | Lagos time | 00:00 – 23:59 | `VERIFICATION_DIGEST_TIME` (08:00) | notification-service: when the digest goes out |
 | `verification.digest-highlight-days` | NOTIFICATIONS | INTEGER | days | 1 – 30 | `VERIFICATION_DIGEST_HIGHLIGHT_DAYS` (3) | notification-service: rows waiting longer than this are highlighted |
 | `verification.digest-extra-recipients` | NOTIFICATIONS | EMAIL_LIST | addresses | at most 10 | `VERIFICATION_DIGEST_EXTRA_RECIPIENTS` (none) | notification-service: also send the digest to these addresses |
+| `support.whatsapp` | SUPPORT | PHONE | Nigerian number | a Nigerian mobile number, or none | `SUPPORT_WHATSAPP` (none) | the apps' Contact support: WhatsApp chat (`GET /trip/public/support-contact`, section 5) |
+| `support.email` | SUPPORT | EMAIL | address | one address, or none | `SUPPORT_EMAIL` (none) | the apps' Contact support: email |
 
 - **Values travel as strings** in one spelling: `"5"`, `"7.5"`, `"5,15,30"`. Decimals: at most 2 places. Lists are sorted and de-duplicated for you.
 - **Types** (`type`): `INTEGER`, `DECIMAL`, `INTEGER_LIST`, and (onboarding reminders, 2026-11-15) `BOOLEAN` (`"true"` / `"false"`;
   yes/no/on/off/1/0 accepted on the way in - show a switch), `TIME_OF_DAY` (`"08:00"`, 24-hour, Lagos time; `"8:00"` accepted -
   show a time picker), `EMAIL_LIST` (lower-case addresses, sorted, de-duplicated, comma-separated, at most 10, or `"none"` for no
   addresses - show a list of address chips; send `"none"` to clear it). For these three `min` and `max` are `null`.
+- **Support contact** (2026-11-20): `PHONE` - a Nigerian mobile number stored as `"+234"` and ten digits (`"+2348031234567"`);
+  `0803 123 4567`, `+234 803 123 4567`, `2348031234567` and `+234 (0) 803-123-4567` are all accepted - spaces, dashes, dots and
+  brackets are dropped, and the number must start 7, 8 or 9 after the 0. `EMAIL` - one address, stored lower-case. Both take
+  `"none"` for "not set" (send `"none"` to clear - the console turns an empty box into `"none"`), both default to `none`, and
+  `min`/`max` are `null`. No number or address is in code or migrations: set them here, or in `SUPPORT_WHATSAPP` / `SUPPORT_EMAIL`.
   Values are up to 1000 characters (coryd:170 widened the columns from 200).
 - **`legal: true`** (commission, late fee, free window): the value is in the published Terms of Service. Show the warning the
   PRD asks for, and prefer scheduling. The server adds a `warnings` entry to the response.
@@ -92,6 +99,7 @@ straight away or at a time you choose, every service picks it up within seconds,
 | out of range / wrong type | "Platform commission must be between 0 and 25 %", "… must be a whole number of minutes", "… can have at most 2 decimal places" |
 | same as now | "Rider late-cancellation fee is already 25 %" |
 | a change is already scheduled | "… already has a change to 7.5 scheduled for … - cancel it first" |
+| not a Nigerian mobile number / not an email | "Support WhatsApp number must be a Nigerian mobile number, like 0803 123 4567 or +234 803 123 4567", "'help@' isn't an email address" |
 | final reminder ≥ first reminder | "The final document reminder (7 days) must be fewer days before expiry than the first (7 days)" |
 | unknown key | `404` |
 
@@ -117,7 +125,19 @@ straight away or at a time you choose, every service picks it up within seconds,
 
 ## 5. What the mobile app sees
 
-Nothing new to call. Existing fields change with the setting:
+One public endpoint (2026-11-20), for **Contact support**:
+
+### `GET /trip/public/support-contact` - no token needed
+```json
+{ "success": true, "data": { "whatsapp": "+2348031234567", "whatsappLink": "https://wa.me/2348031234567", "email": "help@example.com" } }
+```
+- A field ops left empty (`none`) is `null` - the app hides that channel; both `null` = no contact configured.
+- Open to anyone, **GET only** (trip-service `SecurityConfig`: `GET /public/**` permitAll), so a suspended rider or driver
+  who can't sign in can still reach support. A stale or bogus `Authorization` header doesn't turn it into a `401`.
+- Read from memory (the live settings), never the database. `Cache-Control: public, max-age=300` - a console change shows in
+  the apps within about 5 minutes.
+
+Everything else is through existing fields, which change with the setting:
 - `booking.grace-minutes` → `bookableUntil` on search results and the ride screen (docs/mobile/leaving-now-booking-window.md); trips drop out of search at the new time.
 - `cancellation.*` → the fee quoted and charged when a rider cancels.
 - `commission.percent` → the driver's earnings breakdown (`GET /payment/earnings/commission-rate` returns the new rate) and their payouts.
