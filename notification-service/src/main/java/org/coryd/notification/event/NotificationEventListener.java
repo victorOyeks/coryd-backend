@@ -5,6 +5,7 @@ import org.coryd.common.enums.OtpPurpose;
 import org.coryd.common.kafka.KafkaTopics;
 import org.coryd.common.kafka.events.BookingCancelledEvent;
 import org.coryd.common.kafka.events.BookingConfirmedEvent;
+import org.coryd.common.kafka.events.ChatMessageSentEvent;
 import org.coryd.common.kafka.events.DocumentExpiringEvent;
 import org.coryd.common.kafka.events.DriverApprovedEvent;
 import org.coryd.common.kafka.events.DriverArrivedEvent;
@@ -235,6 +236,58 @@ public class NotificationEventListener {
             return "";
         }
         return " " + count(waiting, "person", "people") + " near the start " + (waiting == 1 ? "is" : "are") + " going your way.";
+    }
+
+    /**
+     * One push per person in the trip's group chat except the sender (trip-service already left out the sender and anyone
+     * a block keeps apart from them). Riders' pushes carry their bookingId, the driver's doesn't - each app opens its own
+     * chat screen from that. The route id groups them, so a busy chat is one tray entry per trip.
+     */
+    @KafkaListener(topics = KafkaTopics.CHAT_MESSAGE_SENT, groupId = KafkaConfig.GROUP_ID_TRIP)
+    public void onChatMessageSent(ChatMessageSentEvent event) {
+        if (event.getRecipients() == null) {
+            return;
+        }
+        String title = chatTitle(event);
+        String body = chatBody(event);
+        for (ChatMessageSentEvent.Recipient recipient : event.getRecipients()) {
+            if (recipient.getUserId() == null || recipient.getUserId().equals(event.getSenderId())) {
+                continue;
+            }
+            dispatchService.sendChatPush(recipient.getUserId(), title, body, "CHAT_MESSAGE",
+                    chatData(event, recipient), event.getRoutePostId());
+        }
+    }
+
+    static String chatTitle(ChatMessageSentEvent event) {
+        return event.getRouteLabel() == null || event.getRouteLabel().isBlank() ? "Trip chat" : event.getRouteLabel();
+    }
+
+    /** "Tunde B.: On my way" - "Driver"/"Rider" when the sender's name couldn't be looked up. */
+    static String chatBody(ChatMessageSentEvent event) {
+        String who = event.getSenderName() != null && !event.getSenderName().isBlank() ? event.getSenderName()
+                : "DRIVER".equals(event.getSenderRole()) ? "Driver" : "Rider";
+        String preview = event.getPreview() == null || event.getPreview().isBlank() ? "New message" : event.getPreview();
+        return who + ": " + preview;
+    }
+
+    static Map<String, String> chatData(ChatMessageSentEvent event, ChatMessageSentEvent.Recipient recipient) {
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        data.put("routePostId", event.getRoutePostId());
+        if (recipient.getBookingId() != null) {
+            data.put("bookingId", recipient.getBookingId());
+        }
+        if (event.getMessageId() != null) {
+            data.put("messageId", event.getMessageId());
+        }
+        if (event.getSenderId() != null) {
+            data.put("senderId", event.getSenderId());
+        }
+        if (recipient.getRole() != null) {
+            // Which side of a two-role account the chat is on - the app opens the driver or the rider chat from it.
+            data.put("role", recipient.getRole());
+        }
+        return data;
     }
 
     @KafkaListener(topics = KafkaTopics.DRIVER_NEARBY_DEMAND, groupId = KafkaConfig.GROUP_ID_TRIP)

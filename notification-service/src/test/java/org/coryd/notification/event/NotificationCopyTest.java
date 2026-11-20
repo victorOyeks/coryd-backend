@@ -26,6 +26,43 @@ class NotificationCopyTest {
     private final NotificationEventListener listener = new NotificationEventListener(dispatch, sos);
 
     @Test
+    void everyoneButTheSenderGetsOneChatPushTitledWithTheRouteAndGroupedByIt() {
+        listener.onChatMessageSent(chatEvent("RIDER", "Ada O.", "TEXT", "Running 2 mins late", List.of(
+                org.coryd.common.kafka.events.ChatMessageSentEvent.Recipient.builder().userId("driver-1").role("DRIVER").build(),
+                org.coryd.common.kafka.events.ChatMessageSentEvent.Recipient.builder().userId("rider-2").role("RIDER").bookingId("b-2").build(),
+                // trip-service never lists the sender, but a stray entry must still not push them.
+                org.coryd.common.kafka.events.ChatMessageSentEvent.Recipient.builder().userId("rider-1").role("RIDER").bookingId("b-1").build())));
+
+        verify(dispatch).sendChatPush(eq("driver-1"), eq("Ikeja City Mall → Victoria Island"), eq("Ada O.: Running 2 mins late"),
+                eq("CHAT_MESSAGE"), eq(java.util.Map.of("routePostId", "route-9", "messageId", "msg-1", "senderId", "rider-1",
+                        "role", "DRIVER")), eq("route-9"));
+        verify(dispatch).sendChatPush(eq("rider-2"), eq("Ikeja City Mall → Victoria Island"), eq("Ada O.: Running 2 mins late"),
+                eq("CHAT_MESSAGE"), eq(java.util.Map.of("routePostId", "route-9", "bookingId", "b-2", "messageId", "msg-1",
+                        "senderId", "rider-1", "role", "RIDER")), eq("route-9"));
+        verify(dispatch, never()).sendChatPush(eq("rider-1"), any(), any(), any(), any(), any());
+        // Chat never writes a bell entry.
+        verify(dispatch, never()).sendPush(any(), any(), any(), any(), any());
+        verify(dispatch, never()).sendRoutePush(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aVoiceNoteReadsAsAVoiceNoteAndANamelessSenderByTheirRole() {
+        listener.onChatMessageSent(chatEvent("DRIVER", null, "VOICE", "🎤 Voice note", List.of(
+                org.coryd.common.kafka.events.ChatMessageSentEvent.Recipient.builder().userId("rider-2").role("RIDER").bookingId("b-2").build())));
+
+        verify(dispatch).sendChatPush(eq("rider-2"), eq("Ikeja City Mall → Victoria Island"), eq("Driver: 🎤 Voice note"),
+                eq("CHAT_MESSAGE"), any(), eq("route-9"));
+    }
+
+    private static org.coryd.common.kafka.events.ChatMessageSentEvent chatEvent(String senderRole, String senderName, String type,
+            String preview, List<org.coryd.common.kafka.events.ChatMessageSentEvent.Recipient> recipients) {
+        return org.coryd.common.kafka.events.ChatMessageSentEvent.builder()
+                .routePostId("route-9").routeLabel("Ikeja City Mall → Victoria Island").messageId("msg-1")
+                .senderId("DRIVER".equals(senderRole) ? "driver-1" : "rider-1").senderName(senderName).senderRole(senderRole)
+                .messageType(type).preview(preview).sentAt(Instant.parse("2026-11-20T08:00:00Z")).recipients(recipients).build();
+    }
+
+    @Test
     void aWaitingRiderIsToldWhereAndWhenAndThePushOpensTheRide() {
         listener.onNotifyMeMatched(org.coryd.common.kafka.events.NotifyMeMatchedEvent.builder()
                 .riderId("rider-1").routePostId("route-9").originLabel("Ikorodu").destinationLabel("Victoria Island")

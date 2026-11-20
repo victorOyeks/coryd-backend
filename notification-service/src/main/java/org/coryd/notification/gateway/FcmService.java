@@ -43,44 +43,23 @@ public class FcmService {
     /** A push whose data carries these fields next to "type" (eventType) - e.g. an onboarding reminder's step and role. */
     public PushResult sendPush(String userId, String fcmToken, String title, String body, String eventType,
                                java.util.Map<String, String> data) {
+        return sendGroupedPush(userId, fcmToken, title, body, eventType, data, null);
+    }
+
+    /**
+     * groupKey, when set, keeps a busy conversation to one entry in the tray: it is the Android notification tag (a newer
+     * push with the same tag replaces the older one) and the iOS thread-id (pushes with the same thread stack together).
+     * Null leaves both unset, as for every other push.
+     */
+    public PushResult sendGroupedPush(String userId, String fcmToken, String title, String body, String eventType,
+                                      java.util.Map<String, String> data, String groupKey) {
         if (FirebaseApp.getApps().isEmpty()) {
             log.warn("Firebase not initialized - skipping push for userId={}", userId);
             return PushResult.failed("FIREBASE_NOT_INITIALIZED");
         }
 
         try {
-            Message.Builder builder = Message.builder()
-                    .setToken(fcmToken)
-                    .setNotification(Notification.builder()
-                            .setTitle(title)
-                            .setBody(body)
-                            .build())
-                    // "default" is the channel id the app itself creates - explicit here rather
-                    // than left for the client SDK to guess, since an unrecognised channel id
-                    // makes Android drop the notification with no error on either side.
-                    .setAndroidConfig(AndroidConfig.builder()
-                            .setNotification(AndroidNotification.builder()
-                                    .setChannelId("default")
-                                    .build())
-                            .build())
-                    // Android takes its sound from the channel; iOS plays nothing at all unless
-                    // aps.sound is set, so the alert would appear silently on every device.
-                    .setApnsConfig(ApnsConfig.builder()
-                            .setAps(Aps.builder()
-                                    .setSound("default")
-                                    .build())
-                            .build())
-                    .putData("type", eventType);
-
-            if (data != null) {
-                data.forEach((key, value) -> {
-                    if (key != null && value != null && !"type".equals(key)) {
-                        builder.putData(key, value);
-                    }
-                });
-            }
-
-            String response = FirebaseMessaging.getInstance().send(builder.build());
+            String response = FirebaseMessaging.getInstance().send(message(fcmToken, title, body, eventType, data, groupKey));
             log.info("FCM push sent to userId={} - messageId={}", userId, response);
             return new PushResult(true, response, null);
         } catch (FirebaseMessagingException e) {
@@ -102,5 +81,43 @@ public class FcmService {
             log.error("FCM send threw an unexpected exception for userId={} token={}: {}", userId, fcmToken, e.getMessage(), e);
             return PushResult.failed(e.getClass().getSimpleName());
         }
+    }
+
+    /** The FCM message itself - visible to tests, which check what each kind of push carries. */
+    static Message message(String fcmToken, String title, String body, String eventType,
+                           java.util.Map<String, String> data, String groupKey) {
+        Message.Builder builder = Message.builder()
+                .setToken(fcmToken)
+                .setNotification(Notification.builder()
+                        .setTitle(title)
+                        .setBody(body)
+                        .build())
+                // "default" is the channel id the app itself creates - explicit here rather
+                // than left for the client SDK to guess, since an unrecognised channel id
+                // makes Android drop the notification with no error on either side.
+                .setAndroidConfig(AndroidConfig.builder()
+                        .setNotification(AndroidNotification.builder()
+                                .setChannelId("default")
+                                .setTag(groupKey)
+                                .build())
+                        .build())
+                // Android takes its sound from the channel; iOS plays nothing at all unless
+                // aps.sound is set, so the alert would appear silently on every device.
+                .setApnsConfig(ApnsConfig.builder()
+                        .setAps(Aps.builder()
+                                .setSound("default")
+                                .setThreadId(groupKey)
+                                .build())
+                        .build())
+                .putData("type", eventType);
+
+        if (data != null) {
+            data.forEach((key, value) -> {
+                if (key != null && value != null && !"type".equals(key)) {
+                    builder.putData(key, value);
+                }
+            });
+        }
+        return builder.build();
     }
 }

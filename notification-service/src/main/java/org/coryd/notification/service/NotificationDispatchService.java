@@ -208,6 +208,20 @@ public class NotificationDispatchService {
         push(userId, title, body, eventType, null, routePostId);
     }
 
+    /**
+     * A trip group-chat message. Push only - no bell entry: the conversation is deleted when the trip ends, so entries
+     * would point at a chat that's gone, and a chatty trip would bury the bell's real notifications. groupKey (the route)
+     * keeps one tray entry per trip chat. Sent whatever the promotional preference says - chat isn't marketing.
+     */
+    @Async("notificationExecutor")
+    @Transactional
+    public void sendChatPush(String userId, String title, String body, String eventType, Map<String, String> data, String groupKey) {
+        for (DeviceToken token : deviceTokenRepository.findByUserId(userId)) {
+            FcmService.PushResult result = fcmService.sendGroupedPush(userId, token.getFcmToken(), title, body, eventType, data, groupKey);
+            logPush(userId, eventType, result);
+        }
+    }
+
     private void push(String userId, String title, String body, String eventType, String bookingId, String routePostId) {
         // One feed entry per logical notification, not one per device - a rider with two
         // phones should see this once in their bell, even though it's pushed to both.
