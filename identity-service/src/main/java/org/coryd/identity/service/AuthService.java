@@ -206,6 +206,12 @@ public class AuthService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+        // Onboarding only. Once a password exists, replacing it needs the current one (change-password) or an OTP
+        // (forgot/reset-password) - otherwise anyone holding a signed-in phone or a lifted access token could take
+        // the account over with one call.
+        if (user.getPasswordHash() != null) {
+            throw new BadRequestException("You already have a password - use change password to set a new one");
+        }
 
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         userRepository.save(user);
