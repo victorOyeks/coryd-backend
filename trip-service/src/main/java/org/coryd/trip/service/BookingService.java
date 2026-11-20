@@ -1136,7 +1136,7 @@ public class BookingService {
 
     /** What an ops cancellation did: the status before and after, whether anything had been paid, and the money. */
     public record OpsCancellation(String bookingId, String routePostId, BookingStatus statusBefore, BookingStatus statusAfter,
-                                  boolean paid, BigDecimal fareTotal, BigDecimal fee, BigDecimal refund) {
+                                  boolean paid, BigDecimal fareTotal, BigDecimal fee, BigDecimal refund, boolean refundEstimated) {
     }
 
     /**
@@ -1168,7 +1168,7 @@ public class BookingService {
                 throw new BadRequestException("This booking changed while you were cancelling it - reload and try again");
             }
             return new OpsCancellation(bookingId, route.getId(), before, booking.getStatus(), false, booking.getFareTotal(),
-                    BigDecimal.ZERO, BigDecimal.ZERO);
+                    BigDecimal.ZERO, BigDecimal.ZERO, false);
         }
         if (!OPS_CANCELLABLE_STATUSES.contains(before)) {
             throw new BadRequestException("This booking can't be cancelled - it's already " + before);
@@ -1177,6 +1177,12 @@ public class BookingService {
         BigDecimal fee = fault == org.coryd.trip.entity.CancellationFault.RIDER && !waiveFee
                 ? riderFaultFee(booking, route, Instant.now()) : BigDecimal.ZERO;
         boolean feeApplies = fee.signum() > 0;
+        // The rider's fault keeps the card fee; the driver's or CoRyd's refunds it with the fare (M10).
+        boolean refundCardFee = fault != org.coryd.trip.entity.CancellationFault.RIDER;
+        // B19: asked before BOOKING_CANCELLED goes out (payment-service may refund the moment it lands), so ops sees what
+        // payment-service will actually send - card fee included, earlier ops refunds taken off - not the fare less the fee.
+        BigDecimal refund = paymentServiceClient.cancellationRefunds(
+                List.of(new org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery(bookingId, fee, refundCardFee))).get(bookingId);
         BookingStatus to = fault == org.coryd.trip.entity.CancellationFault.RIDER
                 ? BookingStatus.CANCELLED_RIDER : BookingStatus.CANCELLED_DRIVER;
         if (!moveStatus(booking, to, OPS_CANCELLABLE_STATUSES)) {
@@ -1199,12 +1205,11 @@ public class BookingService {
                 .feeApplied(feeApplies)
                 .paid(true)
                 .feeAmount(feeApplies ? fee : null)
-                // The rider's fault keeps the card fee; the driver's or CoRyd's refunds it with the fare (M10).
-                .refundCardFee(fault != org.coryd.trip.entity.CancellationFault.RIDER)
+                .refundCardFee(refundCardFee)
                 .cancelledAt(LocalDateTime.now())
                 .build());
         return new OpsCancellation(bookingId, route.getId(), before, to, true, booking.getFareTotal(), fee,
-                booking.getFareTotal().subtract(fee));
+                refund != null ? refund : booking.getFareTotal().subtract(fee), refund == null);
     }
 
     /** What ops wants done with riders still waiting to be picked up when it marks a stuck trip completed. */

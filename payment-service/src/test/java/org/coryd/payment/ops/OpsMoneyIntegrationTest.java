@@ -12,6 +12,8 @@ import org.coryd.payment.dto.RefundStatus;
 import org.coryd.payment.entity.DriverEarningsAccount;
 import org.coryd.payment.entity.DriverSettlement;
 import org.coryd.payment.entity.FareHold;
+import org.coryd.payment.dto.CancellationRefund;
+import org.coryd.payment.dto.CancellationRefundQuery;
 import org.coryd.payment.entity.PaymentTransaction;
 import org.coryd.payment.entity.PayoutRecipient;
 import org.coryd.payment.entity.Refund;
@@ -213,6 +215,33 @@ class OpsMoneyIntegrationTest {
         verify(gateway, times(1)).refund(anyString(), any(), any());
         assertThatThrownBy(() -> refundService.submit(booking, new ManualRefundRequest(null, "again", null), BAYO))
                 .isInstanceOf(BadRequestException.class).hasMessageContaining("Nothing is left to refund");
+    }
+
+    // B19: ops cancelled a seat after a ₦1,000 partial refund and was told "refund ₦3,000"; ₦2,147.21 actually went back.
+    @Test
+    void theCancellationQuoteIsWhatTheCancellationThenRefunds() {
+        String booking = paidBooking("3000.00");
+        PaymentTransaction payment = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking).orElseThrow();
+        payment.setCardFee(new BigDecimal("147.21"));
+        payment.setAmountCharged(new BigDecimal("3147.21"));
+        paymentTransactionRepository.save(payment);
+        refundService.submit(booking, new ManualRefundRequest(new BigDecimal("1000"), "Late pickup goodwill", null), ADA);
+
+        CancellationRefund platformFault = earningsService().cancellationRefunds(
+                List.of(new CancellationRefundQuery(booking, null, true))).getFirst();
+        CancellationRefund riderFault = earningsService().cancellationRefunds(
+                List.of(new CancellationRefundQuery(booking, new BigDecimal("750.00"), false))).getFirst();
+        assertThat(platformFault.refund()).isEqualByComparingTo("2147.21");
+        assertThat(platformFault.fareBack()).isEqualByComparingTo("2000.00");
+        assertThat(platformFault.cardFeeBack()).isEqualByComparingTo("147.21");
+        assertThat(riderFault.refund()).isEqualByComparingTo("1250.00");
+
+        earningsService().refund(booking, "Booking cancelled by OPS", null, null, true);
+        verify(gateway).refund(eq("ref-" + booking), eq(new BigDecimal("2147.21")), any());
+        assertThat(earningsService().cancellationRefunds(List.of(new CancellationRefundQuery(booking, null, true))).getFirst().refund())
+                .as("nothing left once the seat is settled").isZero();
+        assertThat(earningsService().cancellationRefunds(List.of(new CancellationRefundQuery("no-such-booking", null, true))).getFirst().refund())
+                .isZero();
     }
 
     @Test

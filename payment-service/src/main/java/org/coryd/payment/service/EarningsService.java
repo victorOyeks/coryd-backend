@@ -16,6 +16,8 @@ import org.coryd.payment.client.ProfileServiceClient;
 import org.coryd.payment.config.CommissionProperties;
 import org.coryd.payment.config.KafkaConfig;
 import org.coryd.payment.dto.BookingEarningsItem;
+import org.coryd.payment.dto.CancellationRefund;
+import org.coryd.payment.dto.CancellationRefundQuery;
 import org.coryd.payment.dto.CommissionRate;
 import org.coryd.payment.dto.DebtEntryItem;
 import org.coryd.payment.dto.DebtEntryType;
@@ -431,6 +433,29 @@ public class EarningsService {
                 .orElse(false);
     }
 
+    /**
+     * What cancelling these bookings right now would send back to the card - worked out by the same rule refund() runs,
+     * from the fare still on the hold (less any earlier ops refund) and the card fee. Asked before the cancellation is
+     * sent, so ops sees the real figure rather than the fare less the fee (B19). Zero when nothing is left to refund.
+     */
+    @Transactional(readOnly = true)
+    public List<CancellationRefund> cancellationRefunds(List<CancellationRefundQuery> queries) {
+        if (queries == null || queries.isEmpty() || queries.size() > 100) {
+            throw new BadRequestException("Ask about 1 to 100 bookings at a time");
+        }
+        if (queries.stream().anyMatch(q -> q.bookingId() == null || q.bookingId().isBlank())) {
+            throw new BadRequestException("bookingId: is required");
+        }
+        return queries.stream().map(q -> {
+            FareHold hold = fareHoldRepository.findFirstByBookingIdOrderByCreatedAtDesc(q.bookingId()).orElse(null);
+            PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(q.bookingId()).orElse(null);
+            if (hold == null || hold.isReleased() || hold.isRefunded() || transaction == null) {
+                return CancellationRefund.none(q.bookingId());
+            }
+            return CancellationRefund.of(q.bookingId(), hold, transaction, q.fee(), q.refundCardFee());
+        }).toList();
+    }
+
     @Transactional
     public void refund(String bookingId, String reason) {
         refund(bookingId, reason, null, null, true);
@@ -455,10 +480,10 @@ public class EarningsService {
             if (fareHoldRepository.markRefunded(hold.getId()) == 0) {
                 return;
             }
-            BigDecimal kept = fee == null ? BigDecimal.ZERO : fee.max(BigDecimal.ZERO).min(hold.getAmount());
-            BigDecimal fareBack = hold.getAmount().subtract(kept);
-            BigDecimal cardFeeBack = refundCardFee ? transaction.cardFeeOrZero() : BigDecimal.ZERO;
-            BigDecimal refunded = fareBack.add(cardFeeBack);
+            CancellationRefund split = CancellationRefund.of(bookingId, hold, transaction, fee, refundCardFee);
+            BigDecimal kept = split.kept();
+            BigDecimal fareBack = split.fareBack();
+            BigDecimal refunded = split.refund();
             if (kept.signum() > 0) {
                 creditDriver(hold.getDriverId(), bookingId, routePostId, transaction.getRiderId(), kept, BigDecimal.ZERO);
             }

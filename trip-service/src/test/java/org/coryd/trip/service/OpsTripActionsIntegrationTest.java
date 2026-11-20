@@ -300,6 +300,70 @@ class OpsTripActionsIntegrationTest {
         assertThat(opsAuditLogRepository.findById(w.auditId()).orElseThrow().getAfterState()).contains("\"feeWaived\":true");
     }
 
+    // B19: the console showed the fare less the fee, not what payment-service refunds (card fee, earlier partial refunds).
+    @Test
+    void theRefundShownIsWhatPaymentServiceWillSendNotTheFareLessTheFee() {
+        RoutePost route = routeAt(Instant.now().plus(90, ChronoUnit.MINUTES));
+        Booking driverFault = paid(route, RIDER);
+        Booking riderFault = paid(route, OTHER_RIDER);
+        // e.g. ₦1,200 fare + card fee, ₦500 already refunded by ops: payment-service has the real figure.
+        java.util.Map<String, BigDecimal> quotes = java.util.Map.of(driverFault.getId(), new BigDecimal("759.30"),
+                riderFault.getId(), new BigDecimal("900.00"));
+        when(paymentServiceClient.cancellationRefunds(any())).thenAnswer(inv -> {
+            List<org.coryd.trip.client.PaymentServiceClient.CancellationRefundQuery> q = inv.getArgument(0);
+            return java.util.Map.of(q.getFirst().bookingId(), quotes.get(q.getFirst().bookingId()));
+        });
+
+        OpsActionResult d = opsTripActionService.cancelBooking(driverFault.getId(), cancel("Driver's car broke down", CancellationFault.DRIVER));
+        OpsActionResult r = opsTripActionService.cancelBooking(riderFault.getId(), cancel("Rider asked", CancellationFault.RIDER));
+
+        assertThat(d.refunds()).singleElement().satisfies(x -> {
+            assertThat(x.refund()).isEqualByComparingTo("759.30");
+            assertThat(x.refundEstimated()).isFalse();
+        });
+        assertThat(r.refunds().getFirst().refund()).isEqualByComparingTo("900.00");
+        // Asked with the same fee and card-fee rule the BOOKING_CANCELLED event carries.
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.getFirst().bookingId().equals(driverFault.getId())
+                && q.getFirst().fee().signum() == 0 && q.getFirst().refundCardFee()));
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.getFirst().bookingId().equals(riderFault.getId())
+                && q.getFirst().fee().compareTo(new BigDecimal("300.00")) == 0 && !q.getFirst().refundCardFee()));
+        assertThat(opsAuditLogRepository.findById(d.auditId()).orElseThrow().getAfterState())
+                .contains("\"refund\":759.30").contains("\"refundEstimated\":false");
+    }
+
+    @Test
+    void whenPaymentServiceCantSayTheFareLessTheFeeIsShownAndMarkedEstimated() {
+        RoutePost route = route(4);
+        Booking booking = paid(route, RIDER);
+
+        OpsActionResult result = opsTripActionService.cancelBooking(booking.getId(), cancel("Rider called", CancellationFault.PLATFORM));
+
+        assertThat(result.refunds()).singleElement().satisfies(x -> {
+            assertThat(x.refund()).isEqualByComparingTo(FARE);
+            assertThat(x.refundEstimated()).isTrue();
+        });
+    }
+
+    @Test
+    void aWholeTripCancellationShowsEachSeatsRealRefund() {
+        RoutePost route = route(4);
+        Booking paid1 = paid(route, RIDER);
+        Booking paid2 = paid(route, OTHER_RIDER);
+        book(route, THIRD_RIDER);
+        when(paymentServiceClient.cancellationRefunds(any()))
+                .thenReturn(java.util.Map.of(paid1.getId(), new BigDecimal("1259.30"), paid2.getId(), new BigDecimal("1200.00")));
+
+        OpsActionResult result = opsTripActionService.cancelTrip(route.getId(), cancel("Driver phoned in sick", CancellationFault.DRIVER));
+
+        assertThat(result.refunds()).extracting(OpsActionResult.Refund::bookingId, OpsActionResult.Refund::refund,
+                        OpsActionResult.Refund::refundEstimated)
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple(paid1.getId(), new BigDecimal("1259.30"), false),
+                        org.assertj.core.groups.Tuple.tuple(paid2.getId(), new BigDecimal("1200.00"), false));
+        // Only paid seats are asked about, in full and with the card fee - asked before the cancellations went out.
+        verify(paymentServiceClient).cancellationRefunds(argThat(q -> q.size() == 2
+                && q.stream().allMatch(x -> x.fee().signum() == 0 && x.refundCardFee())));
+    }
+
     @Test
     void aSeatIsRefundedExactlyOnceEvenWhenOpsAndTheRiderCancelTogether() throws Exception {
         RoutePost route = route(4);

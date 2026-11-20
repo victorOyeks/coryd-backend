@@ -249,13 +249,21 @@ All three return what happened:
   "bookingId": null,
   "statusBefore": "PUBLISHED",
   "statusAfter": "CANCELLED",
-  "refunds": [ { "bookingId": "…", "riderId": "…", "fareTotal": 1200.00, "fee": 0, "refund": 1200.00 } ],
+  "refunds": [ { "bookingId": "…", "riderId": "…", "fareTotal": 1200.00, "fee": 0, "refund": 1259.30, "refundEstimated": false } ],
   "completed": [],
   "noShows": []
 }
 ```
 
 `refunds` lists each paid seat that will be refunded and how much. The refund itself is payment-service's: it reaches Paystack within seconds, the rider's card in hours to days. Track it in the log (`refund.state`).
+
+`refund` is what payment-service will send back to the card, asked of payment-service just before the cancellation goes out. It is not simply `fareTotal - fee`:
+
+- the card fee the rider paid goes back too when it's the driver's or CoRyd's fault (a whole trip, or a seat cancelled with `DRIVER`/`PLATFORM` fault), so `refund` can be more than `fareTotal`;
+- anything already refunded by hand on this booking is taken off, so after a ₦1,000 manual refund on a ₦3,000 fare + ₦147.21 card fee, `refund` is ₦2,147.21;
+- `0` when nothing is left to refund (an earlier manual refund took it all).
+
+`refundEstimated: true` means payment-service couldn't be reached: `refund` is then only `fareTotal - fee` (no card fee, no earlier refunds taken off). Check the log for the real figure.
 
 ### 6.1 Cancel a trip: `POST /trips/{routePostId}/cancel`
 

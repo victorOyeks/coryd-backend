@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.exception.BadRequestException;
 import org.coryd.common.exception.ResourceNotFoundException;
+import org.coryd.trip.client.PaymentServiceClient;
 import org.coryd.trip.config.StuckTripProperties;
 import org.coryd.trip.dto.OpsActionResult;
 import org.coryd.trip.dto.OpsCancelRequest;
@@ -48,6 +49,7 @@ public class OpsTripActionService {
     private final BookingService bookingService;
     private final OpsAuditLogRepository opsAuditLogRepository;
     private final StuckTripProperties stuckTripProperties;
+    private final PaymentServiceClient paymentServiceClient;
 
     /** Ops cancels a whole trip for the driver. Every paid rider is refunded in full - the fault is recorded, not charged. */
     @Transactional
@@ -58,6 +60,7 @@ public class OpsTripActionService {
         }
         RoutePost route = route(routePostId);
         Map<String, Object> before = routeState(route);
+        Map<String, BigDecimal> quotes = fullRefundQuotes(routePostId);
         List<String> refunded = routeService.cancelAsOps(routePostId, request.actorId(), request.actorName(), reason, request.fault());
         Map<String, Object> after = Map.of("routeStatus", RouteStatus.CANCELLED, "refundedBookingIds", refunded);
         OpsAuditLog audit = audit(request.actorId(), request.actorName(), OpsAuditLog.Action.CANCEL_TRIP, OpsAuditLog.TargetType.ROUTE,
@@ -65,7 +68,7 @@ public class OpsTripActionService {
         log.info("OPS {} cancelled trip {} ({} fault): {} - {} paid seats refunded", request.actorId(), routePostId, request.fault(),
                 reason, refunded.size());
         return new OpsActionResult(audit.getAction().name(), audit.getId(), routePostId, null, before.get("routeStatus").toString(),
-                RouteStatus.CANCELLED.name(), fullRefunds(refunded), List.of(), List.of());
+                RouteStatus.CANCELLED.name(), fullRefunds(refunded, quotes), List.of(), List.of());
     }
 
     /**
@@ -90,12 +93,14 @@ public class OpsTripActionService {
         after.put("bookingStatus", done.statusAfter());
         after.put("fee", done.fee());
         after.put("refund", done.refund());
+        after.put("refundEstimated", done.refundEstimated());
         after.put("feeWaived", waive && request.fault() == CancellationFault.RIDER);
         OpsAuditLog audit = audit(request.actorId(), request.actorName(), OpsAuditLog.Action.CANCEL_BOOKING, OpsAuditLog.TargetType.BOOKING,
                 bookingId, done.routePostId(), before, after, reason, request.fault());
         log.info("OPS {} cancelled booking {} ({} fault, fee {}): {}", request.actorId(), bookingId, request.fault(), done.fee(), reason);
         List<OpsActionResult.Refund> refunds = done.paid()
-                ? List.of(new OpsActionResult.Refund(bookingId, booking.getRiderId(), done.fareTotal(), done.fee(), done.refund()))
+                ? List.of(new OpsActionResult.Refund(bookingId, booking.getRiderId(), done.fareTotal(), done.fee(), done.refund(),
+                        done.refundEstimated()))
                 : List.of();
         return new OpsActionResult(audit.getAction().name(), audit.getId(), done.routePostId(), bookingId, done.statusBefore().name(),
                 done.statusAfter().name(), refunds, List.of(), List.of());
@@ -118,6 +123,7 @@ public class OpsTripActionService {
                     + "). Cancel it instead if it must end now.");
         }
         Map<String, Object> before = routeState(route);
+        Map<String, BigDecimal> quotes = fullRefundQuotes(routePostId);
 
         if (request.outcome() == OpsResolveRequest.Outcome.CANCELLED) {
             CancellationFault fault = request.fault() == null ? CancellationFault.PLATFORM : request.fault();
@@ -130,7 +136,7 @@ public class OpsTripActionService {
                     OpsAuditLog.TargetType.ROUTE, routePostId, routePostId, before, after, reason, fault);
             log.info("OPS {} resolved stuck trip {} as cancelled ({} fault): {}", request.actorId(), routePostId, fault, reason);
             return new OpsActionResult(audit.getAction().name(), audit.getId(), routePostId, null, RouteStatus.IN_PROGRESS.name(),
-                    RouteStatus.CANCELLED.name(), fullRefunds(refunded), List.of(), List.of());
+                    RouteStatus.CANCELLED.name(), fullRefunds(refunded, quotes), List.of(), List.of());
         }
 
         BookingService.OpsCompletion done = bookingService.completeAsOps(routePostId, request.actorId(), request.actorName(), reason,
@@ -146,7 +152,7 @@ public class OpsTripActionService {
         log.info("OPS {} resolved stuck trip {} as completed: {} - {} completed, {} refunded, {} no-shows", request.actorId(),
                 routePostId, reason, done.completed().size(), done.refunded().size(), done.noShows().size());
         return new OpsActionResult(audit.getAction().name(), audit.getId(), routePostId, null, RouteStatus.IN_PROGRESS.name(),
-                RouteStatus.COMPLETED.name(), fullRefunds(done.refunded()), done.completed(), done.noShows());
+                RouteStatus.COMPLETED.name(), fullRefunds(done.refunded(), quotes), done.completed(), done.noShows());
     }
 
     private RoutePost route(String routePostId) {
@@ -172,14 +178,32 @@ public class OpsTripActionService {
         return state;
     }
 
-    private List<OpsActionResult.Refund> fullRefunds(List<String> bookingIds) {
+    /**
+     * B19: what payment-service will refund each paid seat on the route if it's cancelled in full (no fee, card fee back -
+     * every whole-trip cancellation's rule). Asked before the action, because the refunds start as soon as the
+     * BOOKING_CANCELLED events land and a quote after that would read the holds as already settled.
+     */
+    private Map<String, BigDecimal> fullRefundQuotes(String routePostId) {
+        List<PaymentServiceClient.CancellationRefundQuery> queries = bookingRepository.findByRoutePostId(routePostId).stream()
+                .filter(b -> b.getConfirmedAt() != null)
+                .map(b -> new PaymentServiceClient.CancellationRefundQuery(b.getId(), BigDecimal.ZERO, true))
+                .toList();
+        return paymentServiceClient.cancellationRefunds(queries);
+    }
+
+    /** A seat payment-service couldn't quote falls back to its fare and is marked refundEstimated. */
+    private List<OpsActionResult.Refund> fullRefunds(List<String> bookingIds, Map<String, BigDecimal> quotes) {
         if (bookingIds.isEmpty()) {
             return List.of();
         }
         Map<String, Booking> byId = bookingRepository.findAllById(bookingIds).stream()
                 .collect(Collectors.toMap(Booking::getId, Function.identity()));
         return bookingIds.stream().map(byId::get).filter(java.util.Objects::nonNull)
-                .map(b -> new OpsActionResult.Refund(b.getId(), b.getRiderId(), b.getFareTotal(), BigDecimal.ZERO, b.getFareTotal()))
+                .map(b -> {
+                    BigDecimal quoted = quotes.get(b.getId());
+                    return new OpsActionResult.Refund(b.getId(), b.getRiderId(), b.getFareTotal(), BigDecimal.ZERO,
+                            quoted != null ? quoted : b.getFareTotal(), quoted == null);
+                })
                 .toList();
     }
 
