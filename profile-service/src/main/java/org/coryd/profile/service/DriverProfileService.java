@@ -88,8 +88,12 @@ public class DriverProfileService {
         profile.setIdNumber(normalizeLicenceNumber(request.idNumber()));
 
         // Resubmitting the license photo resets just that
-        // item's own review back to PENDING - the other stays as it was.
-        if (request.governmentIdUrl() != null) {
+        // item's own review back to PENDING - the other stays as it was. The app sends the current photo back on every
+        // profile edit (name, email, photo, contact), so the same URL is no resubmission: it must neither put an
+        // approved licence back into review nor (with no publicId alongside) delete the photo it still points at.
+        boolean licenceChanged = request.governmentIdUrl() != null
+                && !request.governmentIdUrl().equals(profile.getGovernmentIdUrl());
+        if (licenceChanged) {
             VerificationStatus before = profile.getGovernmentIdStatus();
             if (before != VerificationStatus.IN_REVIEW) {
                 profile.setGovernmentIdSubmittedAt(Instant.now());

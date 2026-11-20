@@ -200,6 +200,43 @@ class EmergencyContactIntegrationTest {
         assertThat(contact.getPhone()).isEqualTo("08030000000");
     }
 
+    @Test
+    void anEditThatSendsTheSameLicencePhotoBackLeavesTheLicenceAlone() {
+        driverProfileService.updateMine(USER, new UpdateDriverProfileRequest("Tunde", "Bakare", null, null, LocalDate.of(1990, 1, 1),
+                "https://img/licence.jpg", "coryd/uploads/licence", "LAG12345678", null, null));
+        var stored = driverProfileRepository.findByUserId(USER).orElseThrow();
+        stored.setGovernmentIdStatus(org.coryd.common.enums.VerificationStatus.APPROVED);
+        driverProfileRepository.save(stored);
+
+        // what the app sends on a name/email edit: the current URL, and no publicId (GET /drivers/me doesn't return it)
+        driverProfileService.updateMine(USER, new UpdateDriverProfileRequest("Tunde", "Bakare", null, "t@example.com",
+                LocalDate.of(1990, 1, 1), "https://img/licence.jpg", null, "LAG12345678", null, null));
+
+        var after = driverProfileRepository.findByUserId(USER).orElseThrow();
+        assertThat(after.getGovernmentIdStatus()).isEqualTo(org.coryd.common.enums.VerificationStatus.APPROVED);
+        assertThat(after.getGovernmentIdPublicId()).isEqualTo("coryd/uploads/licence");
+        org.mockito.Mockito.verify(cloudinaryService, org.mockito.Mockito.never())
+                .delete(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void aNewLicencePhotoGoesBackIntoReviewAndRemovesTheOldOne() {
+        driverProfileService.updateMine(USER, new UpdateDriverProfileRequest("Tunde", "Bakare", null, null, LocalDate.of(1990, 1, 1),
+                "https://img/licence.jpg", "coryd/uploads/licence", "LAG12345678", null, null));
+        var stored = driverProfileRepository.findByUserId(USER).orElseThrow();
+        stored.setGovernmentIdStatus(org.coryd.common.enums.VerificationStatus.APPROVED);
+        driverProfileRepository.save(stored);
+
+        driverProfileService.updateMine(USER, new UpdateDriverProfileRequest("Tunde", "Bakare", null, null, LocalDate.of(1990, 1, 1),
+                "https://img/licence2.jpg", "coryd/uploads/licence2", "LAG12345678", null, null));
+
+        var after = driverProfileRepository.findByUserId(USER).orElseThrow();
+        assertThat(after.getGovernmentIdStatus()).isEqualTo(org.coryd.common.enums.VerificationStatus.IN_REVIEW);
+        assertThat(after.getGovernmentIdPublicId()).isEqualTo("coryd/uploads/licence2");
+        org.mockito.Mockito.verify(cloudinaryService).delete(org.mockito.ArgumentMatchers.eq("coryd/uploads/licence"),
+                org.mockito.ArgumentMatchers.any());
+    }
+
     private static UpdateRiderProfileRequest rider(String firstName, String photoUrl, String contactName, String contactPhone) {
         return new UpdateRiderProfileRequest(firstName, null, null, photoUrl, contactName, contactPhone);
     }
