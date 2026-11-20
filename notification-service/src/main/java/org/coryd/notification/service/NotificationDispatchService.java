@@ -23,6 +23,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 
@@ -146,6 +147,31 @@ public class NotificationDispatchService {
     @Transactional
     public void sendPush(String userId, String title, String body, String eventType, String bookingId) {
         push(userId, title, body, eventType, bookingId, null);
+    }
+
+    /**
+     * The last push to this account's phones, then their tokens are dropped - in one task, so the push can't lose the race
+     * to the delete. For a forced sign-out: the app can't unregister its token itself once its session is dead.
+     */
+    @Async("notificationExecutor")
+    @Transactional
+    public void sendPushThenForgetDevices(String userId, String title, String body, String eventType, Instant registeredBefore) {
+        push(userId, title, body, eventType, null, null);
+        forgetDevices(userId, registeredBefore);
+    }
+
+    /**
+     * Drops the user's device tokens registered at or before the cut-off - their sessions were ended (suspended, signed out
+     * everywhere, password reset), so those phones mustn't keep getting the account's pushes. A phone that signed in again
+     * since registered after the cut-off and keeps its token. The bell feed is untouched.
+     */
+    @Transactional
+    public int forgetDevices(String userId, Instant registeredBefore) {
+        int dropped = deviceTokenRepository.deleteRegisteredBefore(userId, registeredBefore);
+        if (dropped > 0) {
+            log.info("Sessions of {} ended - dropped {} device token(s) registered before {}", userId, dropped, registeredBefore);
+        }
+        return dropped;
     }
 
     /** A notification about a route rather than one booking - the feed and the push carry routePostId. */

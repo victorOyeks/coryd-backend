@@ -477,23 +477,43 @@ public class NotificationEventListener {
     }
 
     /**
-     * Ops signed the account out everywhere: tell the person why their app asked them to sign in again. The topic is
-     * compacted and kept forever (every service replays it), so only fresh changes are acted on - a replay, or a new
-     * consumer group starting from the beginning, never re-sends old notices. Suspensions aren't pushed: the app shows the
-     * suspension message on its next call.
+     * The account's sessions were ended. Signed out everywhere (by ops, or by a password reset): tell the person why their
+     * app asked them to sign in again. Suspended or signed out: drop the phones' push tokens, since the app can't
+     * unregister a token once its session is dead - after the sign-out notice, in the same task, so that notice still
+     * arrives. Only tokens registered before the cut-off go: a phone that signed in again since keeps its own. Suspensions
+     * aren't pushed: the app shows the suspension message on its next call.
+     *
+     * <p>The topic is compacted and kept forever (every service replays it), so only fresh changes are acted on - a replay,
+     * or a new consumer group starting from the beginning, never re-sends old notices or drops tokens.
      */
     @KafkaListener(topics = KafkaTopics.USER_TOKENS_REVOKED, groupId = KafkaConfig.GROUP_ID_ACCOUNT)
     public void onUserTokensRevoked(UserTokensRevokedEvent event) {
-        if (event.getUserId() == null || event.isSuspended() || !UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE.equals(event.getReason())) {
+        if (event.getUserId() == null || event.getStateAt() == null) {
             return;
         }
-        if (event.getStateAt() == null || event.getStateAt().isBefore(Instant.now().minus(SIGN_OUT_NOTICE_WINDOW))) {
-            log.debug("Old sign-out of {} replayed - not notifying", event.getUserId());
-            return;
+        Instant now = Instant.now();
+        boolean signedOut = UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE.equals(event.getReason());
+        boolean notify = signedOut && !event.isSuspended() && !event.getStateAt().isBefore(now.minus(SIGN_OUT_NOTICE_WINDOW));
+        Instant cutOff = event.getTokensValidAfter() != null ? event.getTokensValidAfter() : event.getStateAt();
+        boolean forget = (signedOut || UserTokensRevokedEvent.SUSPENDED.equals(event.getReason()))
+                && !event.getStateAt().isBefore(now.minus(FORGET_DEVICES_WINDOW));
+
+        if (notify && forget) {
+            dispatchService.sendPushThenForgetDevices(event.getUserId(), SIGNED_OUT_TITLE, SIGNED_OUT_BODY, "SIGNED_OUT_EVERYWHERE", cutOff);
+        } else if (notify) {
+            dispatchService.sendPush(event.getUserId(), SIGNED_OUT_TITLE, SIGNED_OUT_BODY, "SIGNED_OUT_EVERYWHERE", null);
+        } else if (forget) {
+            dispatchService.forgetDevices(event.getUserId(), cutOff);
+        } else {
+            log.debug("Session change {} of {} at {} - nothing to do", event.getReason(), event.getUserId(), event.getStateAt());
         }
-        dispatchService.sendPush(event.getUserId(), "You've been signed out",
-                "For your security, CoRyd signed you out on all your devices. Sign in again to carry on.", "SIGNED_OUT_EVERYWHERE", null);
     }
+
+    static final String SIGNED_OUT_TITLE = "You've been signed out";
+    static final String SIGNED_OUT_BODY = "For your security, CoRyd signed you out on all your devices. Sign in again to carry on.";
+
+    /** How late a suspension or sign-out may still drop device tokens - longer than the notice: the cut-off keeps it safe. */
+    static final Duration FORGET_DEVICES_WINDOW = Duration.ofDays(1);
 
     static final Duration SIGN_OUT_NOTICE_WINDOW = Duration.ofMinutes(15);
 

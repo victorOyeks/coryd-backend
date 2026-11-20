@@ -7,6 +7,8 @@ import org.coryd.notification.repository.DeviceTokenRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -28,6 +30,9 @@ public class DeviceTokenService {
                                 existing.getId(), existing.getUserId(), userId);
                     }
                     existing.setUserId(userId);
+                    // Stamped even when nothing else changed: updatedAt is when this phone last registered, and a forced
+                    // sign-out only drops tokens registered before it (NotificationDispatchService.forgetDevices).
+                    existing.setUpdatedAt(Instant.now());
                     return deviceTokenRepository.save(existing);
                 })
                 .orElseGet(() -> deviceTokenRepository.save(

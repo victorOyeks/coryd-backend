@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /** What people are told when ops acts on an account: suspensions' cancelled seats, sign-outs, licence tries, vehicle re-checks. */
 class AccountActionNotificationTest {
@@ -44,19 +45,43 @@ class AccountActionNotificationTest {
     }
 
     @Test
-    void signingOutEverywhereTellsThePersonOnceAndNeverOnAReplay() {
-        listener.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE, false, Instant.now()));
-        verify(dispatch).sendPush(eq("user-1"), eq("You've been signed out"),
-                eq("For your security, CoRyd signed you out on all your devices. Sign in again to carry on."), eq("SIGNED_OUT_EVERYWHERE"), eq(null));
+    void signingOutEverywhereTellsThePersonThenDropsTheirPhonesAndNeverOnAReplay() {
+        Instant at = Instant.now();
+        listener.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE, false, at));
+        verify(dispatch).sendPushThenForgetDevices(eq("user-1"), eq("You've been signed out"),
+                eq("For your security, CoRyd signed you out on all your devices. Sign in again to carry on."), eq("SIGNED_OUT_EVERYWHERE"), eq(at));
+        verify(dispatch, never()).sendPush(anyString(), anyString(), anyString(), anyString(), any());
 
         NotificationDispatchService quiet = mock(NotificationDispatchService.class);
         NotificationEventListener replaying = new NotificationEventListener(quiet, new org.coryd.notification.config.SosAlertProperties());
         replaying.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE, false,
-                Instant.now().minus(NotificationEventListener.SIGN_OUT_NOTICE_WINDOW).minus(Duration.ofMinutes(1))));
-        replaying.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SUSPENDED, true, Instant.now()));
+                Instant.now().minus(NotificationEventListener.FORGET_DEVICES_WINDOW).minus(Duration.ofMinutes(1))));
+        replaying.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SUSPENDED, true,
+                Instant.now().minus(NotificationEventListener.FORGET_DEVICES_WINDOW).minus(Duration.ofMinutes(1))));
         replaying.onUserTokensRevoked(revoked(UserTokensRevokedEvent.REINSTATED, false, Instant.now()));
-        replaying.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE, true, Instant.now()));
-        verify(quiet, never()).sendPush(anyString(), anyString(), anyString(), anyString(), any());
+        replaying.onUserTokensRevoked(revoked("ROLE_CHANGED", false, Instant.now()));
+        verifyNoInteractions(quiet);
+    }
+
+    @Test
+    void aSignOutTooOldToAnnounceStillDropsThePhonesButSaysNothing() {
+        Instant at = Instant.now().minus(NotificationEventListener.SIGN_OUT_NOTICE_WINDOW).minus(Duration.ofMinutes(1));
+        listener.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE, false, at));
+
+        verify(dispatch).forgetDevices("user-1", at);
+        verify(dispatch, never()).sendPush(anyString(), anyString(), anyString(), anyString(), any());
+        verify(dispatch, never()).sendPushThenForgetDevices(anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void aSuspensionDropsThePhonesWithoutAPush() {
+        Instant at = Instant.now();
+        listener.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SUSPENDED, true, at));
+        listener.onUserTokensRevoked(revoked(UserTokensRevokedEvent.SIGNED_OUT_EVERYWHERE, true, at));
+
+        verify(dispatch, org.mockito.Mockito.times(2)).forgetDevices("user-1", at);
+        verify(dispatch, never()).sendPush(anyString(), anyString(), anyString(), anyString(), any());
+        verify(dispatch, never()).sendPushThenForgetDevices(anyString(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
