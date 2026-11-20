@@ -59,6 +59,7 @@ import static org.mockito.Mockito.verify;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
 @Import({PlatformSettingsService.class, PlatformSettingDefaults.class, NotificationJobDefaults.class, OpsAuditWriter.class, PlatformSettings.class,
+        SupportContactController.class,
         CancellationPolicy.class, MatchingProperties.class, StuckTripProperties.class, SosOpsProperties.class, FareProperties.class})
 class PlatformSettingsIntegrationTest {
 
@@ -79,6 +80,7 @@ class PlatformSettingsIntegrationTest {
     @Autowired MatchingProperties matchingProperties;
     @Autowired StuckTripProperties stuckTripProperties;
     @Autowired SosOpsProperties sosOpsProperties;
+    @Autowired SupportContactController supportContact;
 
     @MockBean KafkaTemplate<String, Object> kafkaTemplate;
 
@@ -291,6 +293,39 @@ class PlatformSettingsIntegrationTest {
 
         service.update("verification.digest-extra-recipients", new SettingsDtos.UpdateRequest("none", "Officers only", null), ADA);
         assertThat(settings.emails(PlatformSetting.VERIFICATION_DIGEST_EXTRA_RECIPIENTS, List.of("x@coryd.ng"))).isEmpty();
+    }
+
+    @Test
+    void supportContactStartsEmptyAndShowsWhatOpsSetsAuditedAndPublished() {
+        assertThat(service.get("support.whatsapp").defaultValue()).as("no number in code or env").isEqualTo("none");
+        assertThat(service.get("support.whatsapp").type()).isEqualTo("PHONE");
+        assertThat(service.get("support.whatsapp").group()).isEqualTo("SUPPORT");
+        assertThat(service.get("support.email").defaultValue()).isEqualTo("none");
+        assertThat(service.get("support.email").type()).isEqualTo("EMAIL");
+        assertThat(supportContact.supportContact().getBody().data())
+                .isEqualTo(new SupportContactController.SupportContact(null, null, null));
+
+        assertThatThrownBy(() -> service.update("support.whatsapp", new SettingsDtos.UpdateRequest("12345", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("must be a Nigerian mobile number");
+        assertThatThrownBy(() -> service.update("support.email", new SettingsDtos.UpdateRequest("help@", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("isn't an email address");
+        assertThatThrownBy(() -> service.update("support.email", new SettingsDtos.UpdateRequest("none", "x", null), ADA))
+                .isInstanceOf(BadRequestException.class).hasMessageContaining("already none");
+
+        service.update("support.whatsapp", new SettingsDtos.UpdateRequest("0803 123 4567", "Support line live", null), ADA);
+        service.update("support.email", new SettingsDtos.UpdateRequest("Help@CoRyd.ng", "Support inbox live", null), ADA);
+        assertThat(service.get("support.whatsapp").effectiveValue()).isEqualTo("+2348031234567");
+        var response = supportContact.supportContact();
+        assertThat(response.getBody().data()).isEqualTo(new SupportContactController.SupportContact(
+                "+2348031234567", "https://wa.me/2348031234567", "help@coryd.ng"));
+        assertThat(response.getHeaders().getCacheControl()).contains("max-age=300").contains("public");
+        assertThat(audit.findAll()).extracting(OpsAuditLog::getTargetId).contains("support.whatsapp", "support.email");
+        verify(kafkaTemplate, atLeastOnce()).send(eq(KafkaTopics.PLATFORM_SETTINGS), eq("support.whatsapp"), any());
+
+        service.update("support.email", new SettingsDtos.UpdateRequest("none", "Inbox retired", null), ADA);
+        service.reset("support.whatsapp", new SettingsDtos.ReasonRequest("Line retired"), ADA);
+        assertThat(supportContact.supportContact().getBody().data())
+                .isEqualTo(new SupportContactController.SupportContact(null, null, null));
     }
 
     @Test

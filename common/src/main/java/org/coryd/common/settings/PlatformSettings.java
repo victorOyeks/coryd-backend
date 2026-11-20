@@ -156,6 +156,20 @@ public class PlatformSettings {
         }
     }
 
+    /** A PHONE or EMAIL setting as ops set it, null when ops set "none"; the fallback when ops never set it. */
+    public String optional(PlatformSetting setting, String fallback) {
+        String raw = raw(setting);
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            return PlatformSetting.parseOptional(setting.normalize(raw));
+        } catch (Exception e) {
+            log.warn("Platform setting {}='{}' unreadable - using {}", setting.key(), raw, fallback);
+            return fallback;
+        }
+    }
+
     public Map<String, PlatformSettingChangedEvent> snapshot() {
         return Map.copyOf(states);
     }

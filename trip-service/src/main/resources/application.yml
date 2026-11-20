@@ -90,6 +90,9 @@ coryd:
       verification-digest-time: ${VERIFICATION_DIGEST_TIME:08:00}
       verification-digest-highlight-days: ${VERIFICATION_DIGEST_HIGHLIGHT_DAYS:3}
       verification-digest-extra-recipients: ${VERIFICATION_DIGEST_EXTRA_RECIPIENTS:}
+      # Contact support in the apps (GET /trip/public/support-contact) - empty = not shown
+      support-whatsapp: ${SUPPORT_WHATSAPP:}
+      support-email: ${SUPPORT_EMAIL:}
   job-runs:
     schema: trip
 

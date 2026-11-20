@@ -30,6 +30,8 @@ public class PlatformSettingDefaults {
     private final int documentReminderDays;
     private final int documentFinalReminderDays;
     private final NotificationJobDefaults notificationJobs;
+    private final String supportWhatsapp;
+    private final String supportEmail;
 
     public PlatformSettingDefaults(CancellationPolicy cancellationPolicy, MatchingProperties matchingProperties,
                                    StuckTripProperties stuckTripProperties, SosOpsProperties sosOpsProperties,
@@ -38,7 +40,9 @@ public class PlatformSettingDefaults {
                                    @Value("${coryd.platform-settings.defaults.money-approval-threshold:50000}") BigDecimal approvalThreshold,
                                    @Value("${coryd.platform-settings.defaults.document-reminder-days:14}") int documentReminderDays,
                                    @Value("${coryd.platform-settings.defaults.document-final-reminder-days:3}") int documentFinalReminderDays,
-                                   NotificationJobDefaults notificationJobs) {
+                                   NotificationJobDefaults notificationJobs,
+                                   @Value("${coryd.platform-settings.defaults.support-whatsapp:}") String supportWhatsapp,
+                                   @Value("${coryd.platform-settings.defaults.support-email:}") String supportEmail) {
         this.cancellationPolicy = cancellationPolicy;
         this.matchingProperties = matchingProperties;
         this.stuckTripProperties = stuckTripProperties;
@@ -49,6 +53,8 @@ public class PlatformSettingDefaults {
         this.documentReminderDays = documentReminderDays;
         this.documentFinalReminderDays = documentFinalReminderDays;
         this.notificationJobs = notificationJobs;
+        this.supportWhatsapp = supportWhatsapp;
+        this.supportEmail = supportEmail;
     }
 
     /** In the setting's own unit and spelling ("5" for 5%, "5,15,30"). */
@@ -69,7 +75,18 @@ public class PlatformSettingDefaults {
             case ONBOARDING_REMINDERS_ENABLED, ONBOARDING_REMINDER_TIME, ONBOARDING_REMINDER_DAILY_DAYS, ONBOARDING_REMINDER_EVERY_DAYS,
                  VERIFICATION_DIGEST_ENABLED, VERIFICATION_DIGEST_TIME, VERIFICATION_DIGEST_HIGHLIGHT_DAYS,
                  VERIFICATION_DIGEST_EXTRA_RECIPIENTS -> notificationJobs.of(setting);
+            case SUPPORT_WHATSAPP -> optional(setting, supportWhatsapp);
+            case SUPPORT_EMAIL -> optional(setting, supportEmail);
         };
+    }
+
+    /** A PHONE / EMAIL default: the env var in its stored spelling, or "none" when it's unset or not a valid value. */
+    private static String optional(PlatformSetting setting, String configured) {
+        try {
+            return setting.normalize(configured);
+        } catch (IllegalArgumentException e) {
+            return PlatformSetting.NONE;
+        }
     }
 
     private static String plain(BigDecimal value) {

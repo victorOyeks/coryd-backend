@@ -96,26 +96,37 @@ public enum PlatformSetting {
             false, "notification-service",
             "Verification digest: also send to",
             "Email addresses that get the digest as well as every active Verification and Super admin - comma-separated, at most 10. \"none\" for nobody.",
-            "VERIFICATION_DIGEST_EXTRA_RECIPIENTS");
+            "VERIFICATION_DIGEST_EXTRA_RECIPIENTS"),
+    SUPPORT_WHATSAPP("support.whatsapp", Group.SUPPORT, Type.PHONE, "Nigerian number", null, null, false, "trip-service",
+            "Support WhatsApp number",
+            "Shown to riders and drivers under Contact support. Leave empty to hide. The app opens a WhatsApp chat with this Nigerian number (like 0803 123 4567 or +234 803 123 4567).",
+            "SUPPORT_WHATSAPP"),
+    SUPPORT_EMAIL("support.email", Group.SUPPORT, Type.EMAIL, "address", null, null, false, "trip-service",
+            "Support email",
+            "Shown to riders and drivers under Contact support. Leave empty to hide. The app opens an email to this address.",
+            "SUPPORT_EMAIL");
 
-    public enum Group { MONEY, CANCELLATION, BOOKING, TRIPS, SAFETY, PRICING, DOCUMENTS, ONBOARDING, NOTIFICATIONS }
+    public enum Group { MONEY, CANCELLATION, BOOKING, TRIPS, SAFETY, PRICING, DOCUMENTS, ONBOARDING, NOTIFICATIONS, SUPPORT }
 
     /**
      * How a value is spelled and checked. BOOLEAN: "true" / "false". TIME_OF_DAY: "HH:mm" (24-hour). EMAIL_LIST: lower-case
-     * addresses, sorted and de-duplicated, comma-separated - or {@link #NONE} for an empty list. min/max apply to the numeric
-     * types only (null for the others).
+     * addresses, sorted and de-duplicated, comma-separated - or {@link #NONE} for an empty list. PHONE: a Nigerian mobile number
+     * as "+234" and ten digits ("+2348031234567") - or {@link #NONE}. EMAIL: one lower-case address - or {@link #NONE}. min/max
+     * apply to the numeric types only (null for the others).
      */
-    public enum Type { INTEGER, DECIMAL, INTEGER_LIST, BOOLEAN, TIME_OF_DAY, EMAIL_LIST }
+    public enum Type { INTEGER, DECIMAL, INTEGER_LIST, BOOLEAN, TIME_OF_DAY, EMAIL_LIST, PHONE, EMAIL }
 
     public static final int MAX_LIST_SIZE = 6;
 
     /** An EMAIL_LIST holds at most this many addresses. */
     public static final int MAX_EMAILS = 10;
 
-    /** The EMAIL_LIST spelling of "no addresses". */
+    /** The EMAIL_LIST spelling of "no addresses", and the PHONE / EMAIL spelling of "not set". */
     public static final String NONE = "none";
 
     private static final java.util.regex.Pattern EMAIL = java.util.regex.Pattern.compile("^[^@\\s,;]+@[^@\\s,;]+\\.[^@\\s,;]+$");
+    /** After dropping spaces, dashes, dots and brackets: 0803..., 803..., 234803..., +234803... or +2340803... (7, 8 or 9 first). */
+    private static final java.util.regex.Pattern NIGERIAN_PHONE = java.util.regex.Pattern.compile("^(?:\\+?234)?0?([789]\\d{9})$");
     private static final java.util.regex.Pattern TIME = java.util.regex.Pattern.compile("^([01]?\\d|2[0-3]):([0-5]\\d)$");
 
     private final String key;
@@ -198,6 +209,9 @@ public enum PlatformSetting {
      * read. Integer lists are sorted, de-duplicated and every entry checked against the range.
      */
     public String normalize(String raw) {
+        if ((type == Type.PHONE || type == Type.EMAIL) && (raw == null || raw.isBlank())) {
+            return NONE;
+        }
         if (raw == null || raw.isBlank()) {
             throw new IllegalArgumentException(label + " needs a value");
         }
@@ -280,7 +294,38 @@ public enum PlatformSetting {
                 }
                 yield joined;
             }
+            case PHONE -> {
+                if (NONE.equalsIgnoreCase(value)) {
+                    yield NONE;
+                }
+                java.util.regex.Matcher m = NIGERIAN_PHONE.matcher(value.replaceAll("[\\s\\-.()]", ""));
+                if (!m.matches()) {
+                    throw new IllegalArgumentException(label + " must be a Nigerian mobile number, like 0803 123 4567 or +234 803 123 4567");
+                }
+                yield "+234" + m.group(1);
+            }
+            case EMAIL -> {
+                if (NONE.equalsIgnoreCase(value)) {
+                    yield NONE;
+                }
+                String address = value.toLowerCase(java.util.Locale.ROOT);
+                if (address.length() > 254 || !EMAIL.matcher(address).matches()) {
+                    throw new IllegalArgumentException("'" + value + "' isn't an email address");
+                }
+                yield address;
+            }
         };
+    }
+
+    /** A PHONE or EMAIL value, or null when it is {@link #NONE}, blank or null. */
+    public static String parseOptional(String value) {
+        return value == null || value.isBlank() || NONE.equalsIgnoreCase(value.trim()) ? null : value.trim();
+    }
+
+    /** The wa.me chat link for a stored PHONE value ("+2348031234567" -> "https://wa.me/2348031234567"), or null. */
+    public static String whatsappLink(String phone) {
+        String number = parseOptional(phone);
+        return number == null ? null : "https://wa.me/" + number.replace("+", "");
     }
 
     /** "08:00" as a time - for TIME_OF_DAY values already normalized. */

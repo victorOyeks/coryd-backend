@@ -8,6 +8,7 @@ import org.coryd.common.security.PublicPaths;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -51,6 +52,9 @@ public class SecurityConfig {
                         .requestMatchers("/ws/**", "/ws-native/**").permitAll()
                         // Read-only public trip-share link - the whole point is no login (see ShareController).
                         .requestMatchers("/shared/**").permitAll()
+                        // Read-only facts the apps need before (or without) signing in - e.g. Contact support on the
+                        // suspended-account screen (SupportContactController). GET only; nothing under /public writes.
+                        .requestMatchers(HttpMethod.GET, "/public/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

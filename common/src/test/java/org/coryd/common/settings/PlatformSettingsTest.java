@@ -81,6 +81,51 @@ class PlatformSettingsTest {
     }
 
     @Test
+    void supportWhatsappTakesANigerianMobileNumberInAnySpellingAndStoresItAsPlus234() {
+        PlatformSetting phone = PlatformSetting.SUPPORT_WHATSAPP;
+        for (String spelling : List.of("08031234567", "0803 123 4567", "+234 803 123 4567", "2348031234567", "+234 (0) 803-123-4567",
+                "8031234567", " 0803.123.4567 ")) {
+            assertThat(phone.normalize(spelling)).as(spelling).isEqualTo("+2348031234567");
+        }
+        assertThat(phone.normalize("09012345678")).isEqualTo("+2349012345678");
+        assertThat(phone.normalize("07012345678")).isEqualTo("+2347012345678");
+        assertThat(phone.normalize("none")).isEqualTo(PlatformSetting.NONE);
+        assertThat(phone.normalize("")).as("empty = not configured").isEqualTo(PlatformSetting.NONE);
+        assertThat(phone.normalize(null)).isEqualTo(PlatformSetting.NONE);
+        for (String bad : List.of("0803123456", "080312345678", "+447911123456", "01234567890", "0803-CALL-NOW", "+234")) {
+            assertThatThrownBy(() -> phone.normalize(bad)).as(bad).hasMessageContaining("must be a Nigerian mobile number");
+        }
+        assertThat(PlatformSetting.whatsappLink("+2348031234567")).isEqualTo("https://wa.me/2348031234567");
+        assertThat(PlatformSetting.whatsappLink("none")).isNull();
+        assertThat(PlatformSetting.whatsappLink(null)).isNull();
+        assertThat(phone.min()).isNull();
+    }
+
+    @Test
+    void supportEmailTakesOneAddressOrNothing() {
+        PlatformSetting email = PlatformSetting.SUPPORT_EMAIL;
+        assertThat(email.normalize(" Help@CoRyd.ng ")).isEqualTo("help@coryd.ng");
+        assertThat(email.normalize("NONE")).isEqualTo(PlatformSetting.NONE);
+        assertThat(email.normalize(" ")).isEqualTo(PlatformSetting.NONE);
+        assertThatThrownBy(() -> email.normalize("help@")).hasMessageContaining("'help@' isn't an email address");
+        assertThatThrownBy(() -> email.normalize("a@coryd.ng, b@coryd.ng")).hasMessageContaining("isn't an email address");
+    }
+
+    @Test
+    void theOptionalReaderGivesNullForNoneAndTheFallbackUntilOpsSetsIt() {
+        PlatformSettings settings = new PlatformSettings();
+        assertThat(settings.optional(PlatformSetting.SUPPORT_EMAIL, "env@coryd.ng")).isEqualTo("env@coryd.ng");
+        settings.apply(event("support.email", "help@coryd.ng", null, null, 1));
+        settings.apply(event("support.whatsapp", "+2348031234567", null, null, 1));
+        assertThat(settings.optional(PlatformSetting.SUPPORT_EMAIL, "env@coryd.ng")).isEqualTo("help@coryd.ng");
+        assertThat(settings.optional(PlatformSetting.SUPPORT_WHATSAPP, null)).isEqualTo("+2348031234567");
+        settings.apply(event("support.email", "none", null, null, 2));
+        assertThat(settings.optional(PlatformSetting.SUPPORT_EMAIL, "env@coryd.ng")).as("ops hid it").isNull();
+        settings.apply(event("support.whatsapp", "garbage", null, null, 2));
+        assertThat(settings.optional(PlatformSetting.SUPPORT_WHATSAPP, null)).as("unreadable").isNull();
+    }
+
+    @Test
     void everyKeyFitsTheAuditLogsTargetIdAndIsUnique() {
         assertThat(PlatformSetting.values()).allSatisfy(s -> assertThat(s.key().length()).isLessThanOrEqualTo(36));
         assertThat(java.util.Arrays.stream(PlatformSetting.values()).map(PlatformSetting::key).distinct().count())
