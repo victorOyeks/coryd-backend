@@ -227,7 +227,7 @@ Standard paged list, newest first:
 | `REFUNDED_TRIP` | A trip they were paid for was refunded (`bookingId` set) | positive |
 | `RECOVERED_FROM_FARE` | Taken from a fare they earned (`bookingId` set) | negative |
 | `PAID_BY_CARD` | They paid by card (`reference` is the Paystack reference) | negative |
-| `OPS_ADJUSTMENT` | A correction by CoRyd (`note` explains it) | positive |
+| `OPS_ADJUSTMENT` | A correction by CoRyd (`note` explains it) | signed: positive adds to what they owe (a debit), negative takes it down (a credit, never below zero) |
 
 `balanceAfter` is what they owed right after that entry, so the newest row always matches the balance card.
 
@@ -287,7 +287,7 @@ Everything in one list, newest first, in the standard paged shape: trips earned,
 | `REFUNDED_TRIP` | added to what they owe | `owedAfter`, `route` | "Trip refunded · ₦1,140 owed" |
 | `RECOVERED_FROM_FARE` | taken off what they owe (negative) | `owedAfter`, `route` | "Taken from your earnings · ₦1,140" |
 | `PAID_BY_CARD` | taken off what they owe (negative) | `owedAfter`, `reference` | "You paid ₦2,500" |
-| `OPS_ADJUSTMENT` | added to what they owe | `owedAfter`, `note` | "Adjustment by CoRyd" + note |
+| `OPS_ADJUSTMENT` | signed: positive added to what they owe, negative taken off it | `owedAfter`, `note` | "Adjustment by CoRyd" + note |
 | `OVERPAYMENT_REFUNDED` | sent back to their card | `note` | "Overpayment refunded · ₦640" |
 
 Fields that don't apply to a row are `null`. `route` and the rider's name are `null` if they can't be loaded.

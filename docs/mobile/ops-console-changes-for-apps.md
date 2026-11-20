@@ -44,11 +44,14 @@ Priority: **Must** means the app is wrong or confusing without the change. **Sho
 |---|---|---|---|
 | Sessions | Suspension, sign-out everywhere and deletion end every session within seconds. Any authenticated call then returns `401` with `This account has been suspended. Contact CoRyd support.` or `Your session has ended. Please sign in again.` | Treat both as signed out: clear the session (and any biometric-stored refresh token) without trying a refresh, then show the message on the sign-in or support screen | **Must** |
 | Sessions | New push `SIGNED_OUT_EVERYWHERE` ("You've been signed out") | Don't deep-link anywhere. Show the sign-in screen | Must |
+| Sessions | After a suspension, sign-out everywhere or password reset, the backend drops the phone's push token itself (the app can't, its session is dead) | Register the FCM token again after every sign-in (the app already does) | Should |
 | Onboarding | New daily push `ONBOARDING_REMINDER`, with `step`, `reason` and `role` in the data and `step` and `role` on the bell entry | Route each step to its screen. `NIN_LOCKED_OUT` goes to support | **Must** |
 | Identity | New pushes `IDENTITY_VERIFICATION_APPROVED`, `_REJECTED` and `_RETRY` when ops decides a NIN check | Refresh the identity status. Show `rejectionReason` and a Try again button | **Must** |
 | Driver documents | `VERIFICATION_ITEM_REJECTED` is reused for "Please upload your X again". There's a new `resubmissionRequests[]` on verification-status | Show the reason and a re-upload button for each document. Expect posting to be blocked | **Must** |
+| Driver documents | `DOCUMENT_EXPIRING` now carries `documentType` (and `vehicleId`) in the push data, and `documentType` on the bell entry | Open Verification Status on that document | Should |
 | Driver documents | New pushes `VERIFICATION_ITEM_IN_REVIEW` (vehicle being re-checked after an ops edit) and `VERIFICATION_ITEM_RETRY` (licence tries given back) | Open vehicle status or the licence check | Should |
 | Trips | Ops can cancel a trip or a seat. The existing `BOOKING_CANCELLED` and `ROUTE_CANCELLED` pushes now say "CoRyd support cancelled…" | No new type. Make sure an active or live booking screen handles cancellation at any stage, including a rider already aboard | Should |
+| Trips | New `cancelledBy` (`RIDER`, `DRIVER` or `CORYD`) on `GET /trip/bookings/{bookingId}`. The status alone can't say who cancelled | Word a cancelled booking from `cancelledBy`, not from the status: "Cancelled by CoRyd" for `CORYD` | **Must** |
 | Support | New push `ISSUE_REPORT_UPDATED` when ops resolves or dismisses a report with a message | Show the message. Open the trip when `referenceId` is set, otherwise the bell | Should |
 | Money | Ops refunds reuse `REFUND_ISSUED` and `DRIVER_OWED_CHANGED`. A debt adjustment adds an `OPS_ADJUSTMENT` entry to the driver's owed history with no push | Render `OPS_ADJUSTMENT`, with a signed amount and a note | Should |
 | Broadcasts | New push `BROADCAST`, with `referenceId` set to the broadcast id. The bell entry has `eventType: BROADCAST` | Open the bell. Make sure the announcements switch writes `promotionalOptIn` | **Must** (handle the type) |
@@ -71,6 +74,7 @@ Every push and bell entry follows the same rules. Most pushes in this guide are 
 { "type": "ROUTE_CANCELLED", "routePostId": "<routePostId>" }
 { "type": "ONBOARDING_REMINDER", "step": "INSURANCE", "reason": "RESUBMIT", "role": "DRIVER" }
 { "type": "BROADCAST", "referenceId": "<broadcastId>" }
+{ "type": "DOCUMENT_EXPIRING", "documentType": "INSURANCE", "vehicleId": "<vehicleId>" }
 ```
 
 - `type` is always present. Route the tap on it.
@@ -99,6 +103,7 @@ Newest first. Unread count: `GET /notification/notifications/{userId}/unread-cou
 - `eventType` is the push `type`.
 - `bookingId` is what the push sends as `referenceId` for booking pushes. It's `null` for `BROADCAST`; the broadcast id is only in the push.
 - **New fields:** `step` and `role`. They're set only on `ONBOARDING_REMINDER` and are `null` on everything else.
+- **New field:** `documentType` (`INSURANCE` or `ROADWORTHINESS_CERT`). It's set only on `DOCUMENT_EXPIRING` and is `null` on everything else, including `DOCUMENT_EXPIRING` entries written before this change.
 - One entry per notification, however many devices the person has. **The entry is written even when the person has no device token**, so the bell is where someone without push permission sees everything.
 
 ---
@@ -320,7 +325,7 @@ This isn't a new type, but ops can now also send it by hand from the console. Th
 | Expired | "Insurance certificate expired" | "Your insurance certificate expired on 2 Sep 2026. Upload a current one to post trips again." |
 
 - The same copy is used for "Roadworthiness certificate".
-- No `referenceId`. Open the documents screen on that document.
+- No `referenceId`. The data has **`documentType`** (`INSURANCE` or `ROADWORTHINESS_CERT`) and **`vehicleId`** (the vehicle the document is for; left out when there isn't one), and the bell entry has `documentType`. Open Verification Status on that document. Older pushes and bell entries have neither: open Verification Status as before.
 - Ops "Notify" is limited to once per driver per 24 hours, and the automatic reminders count towards that.
 - An expired document reads `status: "EXPIRED"`. The driver can't post new trips until a current one is approved. Trips already posted go ahead, and the account is **not** suspended.
 - Only insurance and roadworthiness are tracked. **Please make the expiry date required on upload:** documents uploaded without one can't be tracked or reminded.
@@ -357,11 +362,13 @@ HTTP 401
 | **Deleted** | `401 Your session has ended. Please sign in again.` | `400 Invalid or expired refresh token` | `400 Incorrect phone number or password` (the account is gone) |
 
 **What the app should do:**
-1. On a `401` whose `message` is one of the two strings above, **don't** try a refresh; it can't succeed. Clear the access token, the refresh token and any **biometric-stored refresh token** ([biometric-signin-fe-guide.md](../biometric-signin-fe-guide.md)). Unregister the FCM token if you normally do on sign-out. Close the trip WebSocket.
+1. On a `401` whose `message` is one of the two strings above, **don't** try a refresh; it can't succeed. Clear the access token, the refresh token and any **biometric-stored refresh token** ([biometric-signin-fe-guide.md](../biometric-signin-fe-guide.md)). Unregister the FCM token if you normally do on sign-out (it will fail with the dead token; that's fine, see below). Close the trip WebSocket.
 2. **Suspended:** show a blocking screen with the message and a **Contact support** action. Don't offer sign-in as the way forward; signing in returns the same message.
 3. **Session ended:** go to sign-in and show the message as a banner.
 4. On a refresh that fails with any `400` above, sign out as today.
 5. Match on the exact message, and prefer that over status alone. Some older "only your own" checks still return `401` with other text (`You can only view your own payments`, `You can only view your own earnings`). Those aren't sign-outs.
+
+**Push tokens:** after a **suspension**, **sign out everywhere** or a **password reset**, notification-service drops every device token the account registered before that moment, so the phone stops getting the account's pushes even though the app couldn't unregister. The `SIGNED_OUT_EVERYWHERE` push is sent first. A phone that signs in again registers its token afresh and keeps it (also if it signed in again before the drop ran). Plain sign-out, a token refresh and a reinstate drop nothing. The bell is untouched.
 
 **Edge cases:**
 - **Public endpoints** (sign-in, refresh, OTP) still work for a request that carries a dead token; the token is just ignored. Don't treat a `200` on a public call as "still signed in".
@@ -373,8 +380,8 @@ HTTP 401
 
 | Action | Person affected | Push |
 |---|---|---|
-| Sign out everywhere | the person | `SIGNED_OUT_EVERYWHERE`, "You've been signed out" / "For your security, CoRyd signed you out on all your devices. Sign in again to carry on." Sent only within 15 minutes of the action. On tap, open sign-in. |
-| Suspend | the person | **No push** about the suspension; the app learns it from the next 401. Their upcoming bookings and routes are cancelled, though, and those pushes **do** arrive: |
+| Sign out everywhere | the person | `SIGNED_OUT_EVERYWHERE`, "You've been signed out" / "For your security, CoRyd signed you out on all your devices. Sign in again to carry on." Sent only within 15 minutes of the action, then the phones' push tokens are dropped (6.1). On tap, open sign-in. |
+| Suspend | the person | **No push** about the suspension; the app learns it from the next 401. Their phones' push tokens are dropped (6.1), so the pushes below reach the bell but usually not the phone. Their upcoming bookings and routes are cancelled, though, and those pushes **do** arrive: |
 | ″ suspended rider | the rider | `BOOKING_CANCELLED`, "Booking cancelled" / "Your booking couldn't go ahead and has been cancelled. Your payment has been refunded." Booking reads `CANCELLED_RIDER`. |
 | ″ suspended rider | the driver of each of those trips | `BOOKING_CANCELLED`, **"A seat opened up"** / "A rider's booking on your route was cancelled - the seat is available again." (never says why) |
 | ″ suspended driver | the driver | `ROUTE_CANCELLED`, "Route cancelled" / "Your route was cancelled and N bookings were refunded." |
@@ -400,6 +407,17 @@ HTTP 401
 ## 7. Trips and bookings cancelled or resolved by ops
 
 There are no new push types. The existing pushes now have ops wording. The reason ops typed is **never** shown in the apps.
+
+**Who cancelled: `cancelledBy` on `GET /trip/bookings/{bookingId}` (new).** The status can't tell you: an ops or platform cancellation reads `CANCELLED_DRIVER`, and an ops cancel with the rider at fault reads `CANCELLED_RIDER`. Word the booking from `cancelledBy` instead:
+
+| `cancelledBy` | Means | Suggested wording |
+|---|---|---|
+| `RIDER` | The rider cancelled, or closed their account | "Cancelled by you" (rider) / "Cancelled by the rider" (driver) |
+| `DRIVER` | The driver cancelled the trip, or closed their account | "Cancelled by the driver" |
+| `CORYD` | CoRyd support (7.1, 7.2, 7.3), a suspension, a trip the driver never started, or a payment that arrived too late | "Cancelled by CoRyd" |
+| `null` | The booking isn't cancelled | — |
+
+Older app builds ignore the field and keep wording from the status.
 
 ### 7.1 Ops cancels a whole trip (`cancelledBy: OPS_TRIP`)
 
@@ -493,7 +511,7 @@ Reports are what people send from **Report an issue** (`POST /trip/bookings/repo
 
 ```json
 { "id": "…", "type": "OPS_ADJUSTMENT", "amount": -500.00, "balanceAfter": 140.00,
-  "bookingId": null, "reference": "ops:7d1c…", "note": "Paid in cash at the Ikeja office", "createdAt": "…" }
+  "bookingId": null, "reference": "ops:7d1c…", "note": "Paid in cash at the Ikeja office", "occurredAt": "…" }
 ```
 
 - **`amount` is signed.** `+` adds to what the driver owes (a debit); `−` takes it down (a credit, never below zero).
@@ -645,13 +663,13 @@ Platform Settings in the console change these values at runtime, and every servi
 | Identity reset tries | **Reset tries** (needs a used try; on dev ask the backend to seed one) | `IDENTITY_VERIFICATION_RETRY`; `attemptsLeft: 5` |
 | **Document resubmission** | Drivers → Verification Queue (or the driver's profile) → document → **Request resubmission** with a reason, e.g. on seed driver D-7C34F1's insurance | "Please upload your insurance certificate again" (`VERIFICATION_ITEM_REJECTED`); verification-status shows the document `REJECTED` and a `resubmissionRequests[]` entry; posting blocked if past grace. Re-upload → `IN_REVIEW`; ops **Approve** → `VERIFICATION_ITEM_APPROVED`, no second "You're verified!" |
 | Vehicle sent back | Driver profile → Edit vehicle → change the plate (with a reason) | `VERIFICATION_ITEM_IN_REVIEW` "Vehicle registration being re-checked"; `VEHICLE_PENDING_APPROVAL` on posting-eligibility. Restore the plate and approve. |
-| Expiry reminder | Drivers → Document Expiry → **Notify** on an expiring row (once per 24 h per driver) | `DOCUMENT_EXPIRING` |
+| Expiry reminder | Drivers → Document Expiry → **Notify** on an expiring row (once per 24 h per driver) | `DOCUMENT_EXPIRING` with `documentType`; tap (or the bell entry) opens Verification Status on that document |
 | **Suspend** | Rider or driver profile → **Suspend** with a reason, while the app is open | Within seconds the next call is `401 This account has been suspended. Contact CoRyd support.`; app shows the suspension screen; sign-in shows the same. Upcoming bookings get `BOOKING_CANCELLED`. |
 | Reinstate | **Reinstate** with a reason | Old session: `401 Your session has ended…`; signing in again works |
-| **Sign out everywhere** | **Sign out everywhere** with a reason, with the app signed in on two devices | `SIGNED_OUT_EVERYWHERE` push on both; next call `401 Your session has ended. Please sign in again.`; biometric unlock no longer works; signing in works |
+| **Sign out everywhere** | **Sign out everywhere** with a reason, with the app signed in on two devices | `SIGNED_OUT_EVERYWHERE` push on both; next call `401 Your session has ended. Please sign in again.`; biometric unlock no longer works; signing in works. Afterwards a push to that account (e.g. a broadcast) reaches only the devices signed in again |
 | Edit name | **Edit details** → last name | New name on the profile screen after refetch; in the session after refresh |
 | **Cancel a trip** | Seed driver posts a trip, seed rider books and pays; Trips → the trip → **Cancel** (fault `DRIVER`) | Rider: "CoRyd support cancelled this trip. You've been fully refunded." then "Refund issued"; driver: "CoRyd support cancelled your route and 1 booking was refunded." |
-| Cancel one seat | Trips → booking → **Cancel booking** (fault `RIDER`, with or without waive) | Rider: "CoRyd support cancelled your booking…" with fee wording; driver: "A seat opened up" |
+| Cancel one seat | Trips → booking → **Cancel booking** (fault `RIDER`, with or without waive) | Rider: "CoRyd support cancelled your booking…" with fee wording; driver: "A seat opened up". Trip details say "Cancelled by CoRyd" (`cancelledBy: CORYD`), not "Cancelled by you" |
 | Stuck trip | Hard to reach on dev (needs 3 h past arrival); ask the backend to back-date a test trip | `TRIP_COMPLETED` or cancellation pushes |
 | **Report update** | File **Report an issue** from the app; Reports & Disputes → **Resolve** with a message to the reporter | `ISSUE_REPORT_UPDATED` "We've looked into report ISS-…" with the message |
 | Hide rating | Ratings → **Hide** a rating of the seed driver | The driver's average changes on the next load; no push |
@@ -681,7 +699,7 @@ Platform Settings in the console change these values at runtime, and every servi
 | `BROADCAST` | new | both | notifications | **Must** | Send to seed refs; bell entry and push |
 | `BOOKING_CANCELLED`, `ROUTE_CANCELLED` (ops wording) | existing | both | booking / route | Should | Ops cancels a trip and a seat |
 | `REFUND_ISSUED`, `DRIVER_OWED_CHANGED` (ops refunds) | existing | rider / driver | payment history / owed | Nice | Manual refund |
-| `DOCUMENT_EXPIRING` (ops Notify) | existing | driver | documents → that item | Nice | Notify from Document Expiry |
+| `DOCUMENT_EXPIRING` (ops Notify) | existing | driver | Verification Status focused on `documentType` | Should | Notify from Document Expiry; push and bell open that document |
 | any unknown `type` | | both | notifications | **Must** | — |
 
 ### Fields to read
@@ -689,6 +707,8 @@ Platform Settings in the console change these values at runtime, and every servi
 | Field | Where | Priority | QA scenario |
 |---|---|---|---|
 | `step`, `role` on bell entries | `GET /notification/notifications/{userId}` | **Must** | Tapping an onboarding entry in the bell routes like the push |
+| `cancelledBy` | `GET /trip/bookings/{bookingId}` | **Must** | Ops cancels a seat with the rider at fault: trip details say "Cancelled by CoRyd" |
+| `documentType` on `DOCUMENT_EXPIRING` bell entries (and `documentType`, `vehicleId` in the push data) | bell / push | Should | Tapping the expiry entry opens that document |
 | `rejectionReason`, `attemptsLeft` | `GET /profile/identity-verification/me` | **Must** | After ops reject and reset |
 | `ninStatus`, `ninTriesLeft`, `licenceAttemptsLeft`, `nameVerified` | `GET /profile/drivers/me` | **Must** | Driver NIN reject and licence reset |
 | `resubmissionRequests[]` | `GET /profile/drivers/{id}/verification-status` | **Must** | Request resubmission, then re-upload: entry appears then clears |
