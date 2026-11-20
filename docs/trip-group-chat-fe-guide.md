@@ -211,6 +211,36 @@ Content-Type: application/json
 
 ---
 
+## Push notifications
+
+Every message also sends a push to everyone else in the chat — the driver and each rider with a live booking (`CONFIRMED`, `EN_ROUTE_TO_PICKUP`, `AT_PICKUP`, `IN_PROGRESS`). The sender never gets one, and nor does anyone kept apart from the sender by a block (either of them blocked the other). It goes out only once the message is saved.
+
+What arrives:
+
+```json
+{
+  "notification": { "title": "Ikeja City Mall → Victoria Island", "body": "Ada O.: Running 2 mins late" },
+  "data": {
+    "type": "CHAT_MESSAGE",
+    "routePostId": "8a1c…",
+    "bookingId": "b72e…",
+    "messageId": "c901…",
+    "senderId": "51fd…",
+    "role": "RIDER"
+  }
+}
+```
+
+- **Title** is the route's origin and destination labels. **Body** is the sender's first name and last initial, then the text cut to about 100 characters on one line — or `🎤 Voice note`. If the sender's name couldn't be looked up it reads `Driver: …` / `Rider: …`.
+- `bookingId` is only on a rider's push (it's their own booking on this route); the driver's has none. `role` is `DRIVER` or `RIDER` — which side of the trip the person receiving it is on, so a two-role account knows which chat screen to open.
+- **Tap**: a rider opens the rider chat with `bookingId`, the driver opens the driver chat with `routePostId`.
+- **One entry per trip**: the route id is the Android notification `tag` (a newer message replaces the older one in the tray) and the iOS `thread-id` (messages stack under one thread).
+- **No bell entry.** Chat pushes don't appear in `GET /notifications` — the conversation is deleted when the trip ends, and a busy chat would bury the notifications that matter.
+- **Not gated by preferences**: the promotional opt-out doesn't apply; chat is part of the trip.
+- **Foreground**: if the user is already on that route's chat, don't show the banner — the message has just arrived over the socket (Step 3). Don't add anything to the thread from the push; the socket is the only source of new messages on screen.
+
+---
+
 ## When the chat ends
 
 The moment a route reaches `COMPLETED` or the driver cancels it, three things happen automatically, with no call from you:

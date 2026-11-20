@@ -110,6 +110,13 @@ notification-service/.../service/FcmService.java
 
 - `type` - always present (the Kafka event type), used by the FE to route on tap
 - `referenceId` - a booking id when the event relates to one, `null` otherwise
+- Some pushes carry more data keys - e.g. `routePostId`, or `documentType`/`vehicleId` on `DOCUMENT_EXPIRING`
+- **`CHAT_MESSAGE`** (trip group chat): title is the route ("Ikeja City Mall → Victoria Island"), body is
+  "Ada O.: <text, about 100 chars>" or "Ada O.: 🎤 Voice note". Data: `routePostId`, `bookingId` (riders
+  only), `messageId`, `senderId`, `role` (`DRIVER`/`RIDER` - the recipient's side of the trip). It is the
+  one push sent with a group key: the route id becomes the Android notification `tag` (newer replaces older)
+  and the APNs `thread-id`, so a busy chat is one tray entry per trip. Push only - no bell (`UserNotification`)
+  entry. Sent from Kafka topic `coryd-chat-message-sent`; see `docs/trip-group-chat-fe-guide.md`.
 - Stale/unregistered tokens are auto-deleted (`UNREGISTERED` error code
   triggers `DeviceTokenRepository.deleteByUserIdAndFcmToken`)
 
@@ -169,7 +176,7 @@ The FE uses `type` (+ `referenceId` when present) from the data payload to
 navigate on tap. Current event types wired to push: `BOOKING_CONFIRMED`,
 `BOOKING_CANCELLED`, `DRIVER_EN_ROUTE`, `DRIVER_ARRIVED`, `ROUTE_CANCELLED`,
 `TRIP_COMPLETED`, `NOTIFY_ME_MATCHED`, `DOCUMENT_EXPIRING`, `DRIVER_APPROVED`,
-`DRIVER_REJECTED`, `SOS_TRIGGERED` - see `NotificationEventListener.java`
+`DRIVER_REJECTED`, `SOS_TRIGGERED`, `CHAT_MESSAGE` - see `NotificationEventListener.java`
 for the full, current list.
 
 ---
