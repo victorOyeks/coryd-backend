@@ -888,6 +888,11 @@ public class BookingService {
             if (!stillTaking) {
                 throw new BadRequestException("This ride is no longer taking bookings");
             }
+            // The same rule as booking a seat: the driver doesn't leave their road, so the pickup must be on it.
+            if (routeMatcher.enabled()
+                    && routeMatcher.metersFromRoute(reservedRoute, request.pickupLat(), request.pickupLng()) > matchingProperties.getWalkMeters()) {
+                throw new BadRequestException("Pick a pickup point on the driver's route");
+            }
             tripScheduleService.requireNoOverlap(callerId, reservedRoute);
             releaseOtherHolds(callerId, bookingId);
         }

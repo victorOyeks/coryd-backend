@@ -1846,6 +1846,22 @@ class BookingFlowIntegrationTest {
     }
 
     @Test
+    void anAcceptedReservationsPickupMustBeOnTheDriversRoad() {
+        RoutePost route = route(3);
+        Booking reserved = bookingRepository.save(Booking.builder().routePostId(route.getId()).riderId(RIDER).seatCount(1)
+                .fareTotal(FARE).status(BookingStatus.RESERVED).holdExpiresAt(Instant.now().plus(10, ChronoUnit.MINUTES)).build());
+
+        // Lekki - nowhere near Campos -> Obalende
+        assertThatThrownBy(() -> bookingService.acceptReservation(reserved.getId(), RIDER,
+                new org.coryd.trip.dto.AcceptReservationRequest("Lekki", 6.45, 3.60)))
+                .isInstanceOf(BadRequestException.class).hasMessage("Pick a pickup point on the driver's route");
+        assertThat(status(reserved)).isEqualTo(BookingStatus.RESERVED);
+
+        assertThat(bookingService.acceptReservation(reserved.getId(), RIDER,
+                new org.coryd.trip.dto.AcceptReservationRequest("Pickup point", 6.45, 3.39)).getStatus()).isEqualTo(BookingStatus.HELD);
+    }
+
+    @Test
     void undoingANoShowSendsTheRidersNumbersAgain() {
         RoutePost route = route(4);
         Booking booking = book(route, RIDER, 1);
