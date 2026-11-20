@@ -31,8 +31,8 @@ class AccountActionNotificationTest {
 
         verify(dispatch).sendPush(eq("rider-1"), eq("Booking cancelled"),
                 eq("Your booking couldn't go ahead and has been cancelled. Your payment has been refunded."), eq("BOOKING_CANCELLED"), eq("b-1"));
-        verify(dispatch).sendPush(eq("driver-1"), eq("A seat opened up"),
-                eq("A rider's booking on your route was cancelled - the seat is available again."), eq("BOOKING_CANCELLED"), eq("b-1"));
+        verify(dispatch).sendDriverBookingPush(eq("driver-1"), eq("A seat opened up"),
+                eq("A rider's booking on your route was cancelled - the seat is available again."), eq("SEAT_CANCELLED"), eq("b-1"), any());
     }
 
     @Test
@@ -42,6 +42,7 @@ class AccountActionNotificationTest {
 
         verify(dispatch).sendPush(eq("rider-1"), eq("Booking cancelled"), anyString(), eq("BOOKING_CANCELLED"), eq("b-1"));
         verify(dispatch, never()).sendPush(eq("driver-1"), anyString(), anyString(), anyString(), any());
+        verify(dispatch, never()).sendDriverBookingPush(eq("driver-1"), any(), any(), any(), any(), any());
     }
 
     @Test

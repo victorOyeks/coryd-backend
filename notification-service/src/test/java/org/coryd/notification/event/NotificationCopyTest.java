@@ -435,8 +435,8 @@ class NotificationCopyTest {
                 .cancelledBy("OPS").paid(true).feeApplied(true).build());
         verify(dispatch).sendPush(eq("rider-1"), eq("Booking cancelled"),
                 eq("CoRyd support cancelled your booking. You'll be refunded, less the late-cancellation fee."), eq("BOOKING_CANCELLED"), eq("b-1"));
-        verify(dispatch).sendPush(eq("driver-1"), eq("A seat opened up"),
-                eq("CoRyd support cancelled a booking on your route - the seat is available again."), eq("BOOKING_CANCELLED"), eq("b-1"));
+        verify(dispatch).sendDriverBookingPush(eq("driver-1"), eq("A seat opened up"),
+                eq("CoRyd support cancelled a booking on your route - the seat is available again."), eq("SEAT_CANCELLED"), eq("b-1"), any());
 
         listener.onBookingCancelled(BookingCancelledEvent.builder().bookingId("b-2").riderId("rider-2").driverId("driver-1")
                 .cancelledBy("OPS").paid(true).build());
@@ -449,6 +449,27 @@ class NotificationCopyTest {
 
         listener.onRouteCancelled(routeCancelled("OPS_TRIP", 2));
         verify(dispatch).sendRoutePush(any(), any(), eq("CoRyd support cancelled your route and 2 bookings were refunded."), any(), any());
+    }
+
+    @Test
+    void theDriverIsToldWhenARiderPaysForASeatAndWhenTheyCancelIt() {
+        listener.onBookingConfirmed(org.coryd.common.kafka.events.BookingConfirmedEvent.builder().bookingId("b-1").routePostId("route-1")
+                .riderId("rider-1").driverId("driver-1").seatCount(1).pickupCode("1234").riderFirstName("Ada")
+                .originLabel("Ikeja City Mall, Obafemi Awolowo Way, Ikeja, Nigeria").destinationLabel("Victoria Island, Lagos, Nigeria").build());
+        verify(dispatch).sendDriverBookingPush(eq("driver-1"), eq("New booking"),
+                eq("Ada booked 1 seat on Ikeja City Mall → Victoria Island."), eq("SEAT_BOOKED"), eq("b-1"), eq("route-1"));
+
+        listener.onBookingConfirmed(org.coryd.common.kafka.events.BookingConfirmedEvent.builder().bookingId("b-2").routePostId("route-1")
+                .riderId("rider-2").driverId("driver-1").seatCount(2).build());
+        verify(dispatch).sendDriverBookingPush(eq("driver-1"), eq("New booking"),
+                eq("A rider booked 2 seats on your route."), eq("SEAT_BOOKED"), eq("b-2"), eq("route-1"));
+
+        listener.onBookingCancelled(BookingCancelledEvent.builder().bookingId("b-1").routePostId("route-1").riderId("rider-1")
+                .driverId("driver-1").cancelledBy("RIDER").paid(true).riderFirstName("Ada")
+                .originLabel("Ikeja City Mall, Ikeja").destinationLabel("Victoria Island, Lagos").build());
+        verify(dispatch).sendDriverBookingPush(eq("driver-1"), eq("A seat opened up"),
+                eq("Ada cancelled their seat on Ikeja City Mall → Victoria Island - it's available again."), eq("SEAT_CANCELLED"),
+                eq("b-1"), eq("route-1"));
     }
 
     @Test

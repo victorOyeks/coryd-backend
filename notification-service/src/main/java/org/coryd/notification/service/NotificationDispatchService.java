@@ -209,6 +209,37 @@ public class NotificationDispatchService {
     }
 
     /**
+     * M20: about one booking on the driver's own route - a rider booked, or cancelled, their seat. The bell entry and the
+     * push carry the booking, the route (a tap opens that trip) and role DRIVER, so a two-role account's rider-mode bell
+     * leaves it out.
+     */
+    @Async("notificationExecutor")
+    @Transactional
+    public void sendDriverBookingPush(String driverId, String title, String body, String eventType, String bookingId, String routePostId) {
+        userNotificationRepository.save(UserNotification.builder()
+                .userId(driverId)
+                .title(title)
+                .body(body)
+                .eventType(eventType)
+                .bookingId(bookingId)
+                .routePostId(routePostId)
+                .role("DRIVER")
+                .build());
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        if (bookingId != null) {
+            data.put("referenceId", bookingId);
+        }
+        if (routePostId != null) {
+            data.put("routePostId", routePostId);
+        }
+        data.put("role", "DRIVER");
+        for (DeviceToken token : deviceTokenRepository.findByUserId(driverId)) {
+            FcmService.PushResult result = fcmService.sendPush(driverId, token.getFcmToken(), title, body, eventType, data);
+            logPush(driverId, eventType, result);
+        }
+    }
+
+    /**
      * A trip group-chat message. Push only - no bell entry: the conversation is deleted when the trip ends, so entries
      * would point at a chat that's gone, and a chatty trip would bury the bell's real notifications. groupKey (the route)
      * keeps one tray entry per trip chat. Sent whatever the promotional preference says - chat isn't marketing.

@@ -82,6 +82,31 @@ public class NotificationEventListener {
                 ? "Your seat is confirmed. See you at pickup!"
                 : "Your seat is confirmed. Your pickup code is " + event.getPickupCode() + " - give it to your driver when you board.";
         dispatchService.sendPush(event.getRiderId(), "Booking confirmed", body, "BOOKING_CONFIRMED", event.getBookingId());
+
+        // M20: the driver hears about a paid seat (never a mere hold) - tap opens that trip.
+        if (event.getDriverId() != null) {
+            dispatchService.sendDriverBookingPush(event.getDriverId(), "New booking", seatBookedCopy(event),
+                    "SEAT_BOOKED", event.getBookingId(), event.getRoutePostId());
+        }
+    }
+
+    static String seatBookedCopy(BookingConfirmedEvent event) {
+        int seats = Math.max(1, event.getSeatCount());
+        return who(event.getRiderFirstName()) + " booked " + seats + (seats == 1 ? " seat" : " seats") + on(event.getOriginLabel(),
+                event.getDestinationLabel()) + ".";
+    }
+
+    static String seatCancelledCopy(BookingCancelledEvent event) {
+        return who(event.getRiderFirstName()) + " cancelled their seat" + on(event.getOriginLabel(), event.getDestinationLabel())
+                + " - it's available again.";
+    }
+
+    private static String who(String firstName) {
+        return firstName == null || firstName.isBlank() ? "A rider" : firstName.strip();
+    }
+
+    private static String on(String origin, String destination) {
+        return origin == null || destination == null ? " on your route" : " on " + place(origin) + " → " + place(destination);
     }
 
     @KafkaListener(topics = KafkaTopics.BOOKING_CANCELLED, groupId = KafkaConfig.GROUP_ID_TRIP)
@@ -93,20 +118,19 @@ public class NotificationEventListener {
         // their route and they'd otherwise have no way to know. A driver- or system-initiated
         // cancellation already means the driver knows (they did it, or ROUTE_CANCELLED told them).
         if ("RIDER".equals(event.getCancelledBy()) && event.getDriverId() != null) {
-            dispatchService.sendPush(event.getDriverId(), "A seat opened up",
-                    "A rider cancelled their booking on your route - the seat is available again.",
-                    "BOOKING_CANCELLED", event.getBookingId());
+            dispatchService.sendDriverBookingPush(event.getDriverId(), "A seat opened up", seatCancelledCopy(event),
+                    "SEAT_CANCELLED", event.getBookingId(), event.getRoutePostId());
         } else if (event.isRiderAccountCancelled() && event.getDriverId() != null) {
             // The rider's account was suspended or closed - the driver is told the seat is free, never why.
-            dispatchService.sendPush(event.getDriverId(), "A seat opened up",
+            dispatchService.sendDriverBookingPush(event.getDriverId(), "A seat opened up",
                     "A rider's booking on your route was cancelled - the seat is available again.",
-                    "BOOKING_CANCELLED", event.getBookingId());
+                    "SEAT_CANCELLED", event.getBookingId(), event.getRoutePostId());
         }
         // Ops cancelling one seat frees it the same way. A whole trip ops cancelled (OPS_TRIP) is ROUTE_CANCELLED's job.
         if ("OPS".equals(event.getCancelledBy()) && event.getDriverId() != null) {
-            dispatchService.sendPush(event.getDriverId(), "A seat opened up",
+            dispatchService.sendDriverBookingPush(event.getDriverId(), "A seat opened up",
                     "CoRyd support cancelled a booking on your route - the seat is available again.",
-                    "BOOKING_CANCELLED", event.getBookingId());
+                    "SEAT_CANCELLED", event.getBookingId(), event.getRoutePostId());
         }
     }
 
