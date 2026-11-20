@@ -531,6 +531,21 @@ class PaymentFlowIntegrationTest {
     }
 
     @Test
+    void aSavedCardChargeKeepsTheQuotedCardFeeUntilPaystackSaysOtherwise() {
+        String booking = heldBooking();
+        String cardId = savedCard();
+        when(gatewayClient.chargeAuthorization(anyString(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PaymentGatewayClient.ChargeResult(true, null, "Approved"));
+
+        paymentService.initiate(new InitiatePaymentRequest(booking, null, null, null, null, null, null, cardId), RIDER);
+
+        var summary = paymentService.getByBooking(booking);
+        assertThat(summary.status()).isEqualTo(PayoutStatus.PAID);
+        assertThat(summary.cardFee()).isEqualByComparingTo("18.28");
+        assertThat(summary.amountCharged()).isEqualByComparingTo("1218.28");
+    }
+
+    @Test
     void aRiderCancellationKeepsTheCardFee() {
         String booking = heldBooking();
         String reference = paymentService.initiate(checkout(booking), RIDER).gatewayReference();

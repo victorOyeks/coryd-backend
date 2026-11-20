@@ -225,6 +225,10 @@ public class PaymentService {
         PaymentTransaction transaction = paymentTransactionRepository.findFirstByBookingIdOrderByCreatedAtDesc(booking.bookingId())
                 .orElseThrow(() -> new IllegalStateException("Upsert succeeded but no transaction found for booking " + booking.bookingId()));
         paymentTransactionRepository.recordCharge(transaction.getId(), quote.cardFee(), quote.total());
+        // This loaded row is flushed again when a saved-card charge settles in the same transaction - it must carry the
+        // quote too, or it writes card_fee 0 back until Paystack's webhook corrects it.
+        transaction.setCardFee(quote.cardFee());
+        transaction.setAmountCharged(quote.total());
         fareHoldRepository.insertIfAbsent(UUID.randomUUID().toString(), transaction.getId(),
                 booking.bookingId(), booking.driverId(), booking.fareTotal(), split.debtRecovery());
     }
