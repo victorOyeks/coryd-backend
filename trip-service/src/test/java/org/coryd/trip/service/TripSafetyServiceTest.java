@@ -189,6 +189,52 @@ class TripSafetyServiceTest {
         assertThat(service.watching(live, Instant.now().plus(91, ChronoUnit.MINUTES))).isFalse();
     }
 
+    @Test
+    void aCheckOnATripThatHasSinceEndedIsClosedNotEscalated() {
+        TripSafetyAlert alert = openAlert();
+        route.setStatus(RouteStatus.COMPLETED);
+        when(alerts.findByStatusAndCreatedAtBefore(eq(TripSafetyAlert.Status.OPEN), any())).thenReturn(List.of(alert));
+
+        service.escalateUnanswered();
+
+        assertThat(alert.getStatus()).isEqualTo(TripSafetyAlert.Status.CLOSED);
+        verify(kafka, never()).send(eq(KafkaTopics.TRIP_SAFETY_ESCALATED), any());
+    }
+
+    @Test
+    void aQuietPhoneAloneWaitsUntilTheTripIsOverdue() {
+        TripSafetyAlert alert = openAlert();
+        alert.setKind(TripSafetyAlert.Kind.SIGNAL_LOST);
+        route.setStartedAt(Instant.now().minus(20, ChronoUnit.MINUTES));
+        route.setEstimatedDurationMinutes(34);
+        when(alerts.findByStatusAndCreatedAtBefore(eq(TripSafetyAlert.Status.OPEN), any())).thenReturn(List.of(alert));
+
+        service.escalateUnanswered();
+
+        assertThat(alert.getStatus()).isEqualTo(TripSafetyAlert.Status.OPEN);
+        verify(kafka, never()).send(eq(KafkaTopics.TRIP_SAFETY_ESCALATED), any());
+
+        // 34 min expected + 60 min overdue allowance, and still not completed - now ops hears.
+        route.setStartedAt(Instant.now().minus(95, ChronoUnit.MINUTES));
+        service.escalateUnanswered();
+
+        assertThat(alert.getStatus()).isEqualTo(TripSafetyAlert.Status.ESCALATED);
+        verify(kafka).send(eq(KafkaTopics.TRIP_SAFETY_ESCALATED), any());
+    }
+
+    @Test
+    void theDriversPhoneComingBackClosesTheSignalLostCheck() {
+        TripSafetyAlert alert = openAlert();
+        alert.setKind(TripSafetyAlert.Kind.SIGNAL_LOST);
+        when(redis.delete(TripSafetyService.SIGNAL_LOST_OPEN_KEY + "route-1")).thenReturn(true);
+        when(alerts.findByRoutePostIdAndKindAndStatus("route-1", TripSafetyAlert.Kind.SIGNAL_LOST, TripSafetyAlert.Status.OPEN))
+                .thenReturn(List.of(alert));
+
+        service.onLocation("route-1", 6.50, 3.45);
+
+        assertThat(alert.getStatus()).isEqualTo(TripSafetyAlert.Status.CLOSED);
+    }
+
     private TripSafetyAlert openAlert() {
         HashMap<String, TripSafetyAlert.Answer> answers = new HashMap<>();
         answers.put("driver-1", TripSafetyAlert.Answer.WAITING);

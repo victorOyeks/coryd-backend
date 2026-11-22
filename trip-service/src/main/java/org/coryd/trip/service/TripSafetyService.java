@@ -54,6 +54,8 @@ public class TripSafetyService {
     static final String STOP_FLAGGED_KEY = "trip:safety:stop:flagged:";
     static final String OFF_ROUTE_KEY = "trip:safety:offroute:";
     static final String LAST_SEEN_KEY = "trip:safety:lastseen:";
+    /** Set while a signal-lost check is open, so the next location ping can close it without a query on every ping. */
+    static final String SIGNAL_LOST_OPEN_KEY = "trip:safety:signallost:open:";
     private static final Duration STATE_TTL = Duration.ofHours(12);
     /** Riders on board or about to be - everyone a check-in is for. */
     private static final List<BookingStatus> ON_TRIP = TripScheduleService.SEATED_STATUSES;
@@ -86,6 +88,9 @@ public class TripSafetyService {
                 return;
             }
             redisTemplate.opsForValue().set(LAST_SEEN_KEY + routePostId, String.valueOf(now.toEpochMilli()), STATE_TTL);
+            if (Boolean.TRUE.equals(redisTemplate.delete(SIGNAL_LOST_OPEN_KEY + routePostId))) {
+                signalBack(routePostId);
+            }
             checkStop(route, lat, lng, now);
             checkOffRoute(route, lat, lng, now);
         } catch (Exception e) {
@@ -182,6 +187,7 @@ public class TripSafetyService {
                     LAST_SEEN_KEY + route.getId() + ":flagged:" + lastSeen.toEpochMilli(), "1", STATE_TTL);
             if (Boolean.TRUE.equals(first)) {
                 raise(route, TripSafetyAlert.Kind.SIGNAL_LOST, null, null);
+                redisTemplate.opsForValue().set(SIGNAL_LOST_OPEN_KEY + route.getId(), "1", STATE_TTL);
             }
         }
     }
@@ -253,16 +259,55 @@ public class TripSafetyService {
         return alertRepository.save(alert);
     }
 
-    /** Still open past the answer window - run every minute. */
+    /** The driver's phone is sending again - its open signal-lost check is answered by that. */
+    @Transactional
+    public void signalBack(String routePostId) {
+        for (TripSafetyAlert alert : alertRepository.findByRoutePostIdAndKindAndStatus(routePostId, TripSafetyAlert.Kind.SIGNAL_LOST,
+                TripSafetyAlert.Status.OPEN)) {
+            alert.setStatus(TripSafetyAlert.Status.CLOSED);
+            alertRepository.save(alert);
+            log.info("Trip safety alert {} on route {} closed - the driver's phone is sending its location again", alert.getId(), routePostId);
+        }
+    }
+
+    /**
+     * Still open past the answer window - run every minute. Only a trip still in progress is escalated: a check on a trip
+     * that has since been completed or cancelled is closed instead (on 22 Nov one escalated 90 seconds after the trip was
+     * completed, and ops was re-alerted for half an hour about riders who were home). A signal-lost check on its own also
+     * waits until the trip is overdue - see {@link TripSafetyProperties#getSignalLostOverdueMinutes()}.
+     */
     @Transactional
     public void escalateUnanswered() {
-        Instant cutoff = Instant.now().minus(Duration.ofMinutes(properties.getAnswerMinutes()));
+        Instant now = Instant.now();
+        Instant cutoff = now.minus(Duration.ofMinutes(properties.getAnswerMinutes()));
         for (TripSafetyAlert alert : alertRepository.findByStatusAndCreatedAtBefore(TripSafetyAlert.Status.OPEN, cutoff)) {
+            RoutePost route = routePostRepository.findById(alert.getRoutePostId()).orElse(null);
+            if (route == null || route.getStatus() != RouteStatus.IN_PROGRESS) {
+                alert.setStatus(TripSafetyAlert.Status.CLOSED);
+                alertRepository.save(alert);
+                redisTemplate.delete(SIGNAL_LOST_OPEN_KEY + alert.getRoutePostId());
+                log.info("Trip safety alert {} closed unanswered - route {} is no longer in progress ({})", alert.getId(),
+                        alert.getRoutePostId(), route == null ? "gone" : route.getStatus());
+                continue;
+            }
+            if (alert.getKind() == TripSafetyAlert.Kind.SIGNAL_LOST && now.isBefore(overdueAt(route))) {
+                continue;
+            }
             alert.setStatus(TripSafetyAlert.Status.ESCALATED);
-            alert.setEscalatedAt(Instant.now());
+            alert.setEscalatedAt(now);
             alertRepository.save(alert);
-            routePostRepository.findById(alert.getRoutePostId()).ifPresent(route -> escalate(alert, route));
+            escalate(alert, route);
         }
+    }
+
+    /** When a quiet phone becomes a worry: expected arrival (start + estimated duration) plus the overdue allowance. */
+    Instant overdueAt(RoutePost route) {
+        Instant start = route.getStartedAt() != null ? route.getStartedAt() : route.getDepartureTime();
+        if (start == null) {
+            start = route.getCreatedAt() != null ? route.getCreatedAt() : Instant.now();
+        }
+        int expectedMinutes = route.getEstimatedDurationMinutes() != null ? route.getEstimatedDurationMinutes() : 120;
+        return start.plus(Duration.ofMinutes(expectedMinutes + (long) properties.getSignalLostOverdueMinutes()));
     }
 
     private void escalate(TripSafetyAlert alert, RoutePost route) {

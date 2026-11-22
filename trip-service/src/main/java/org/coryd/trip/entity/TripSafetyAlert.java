@@ -34,8 +34,9 @@ public class TripSafetyAlert extends BaseEntity {
 
     public enum Kind { STOPPED, OFF_ROUTE, SIGNAL_LOST }
 
-    /** OPEN: waiting for answers. ALL_OK: everyone said fine. HELP: someone asked for help (an SOS was raised). ESCALATED: ops alerted. */
-    public enum Status { OPEN, ALL_OK, HELP, ESCALATED }
+    /** OPEN: waiting for answers. ALL_OK: everyone said fine. HELP: someone asked for help (an SOS was raised). ESCALATED: ops alerted.
+     * CLOSED: nobody answered but it no longer matters - the trip ended, or (signal lost) the driver's phone came back. */
+    public enum Status { OPEN, ALL_OK, HELP, ESCALATED, CLOSED }
 
     /** Explicit, never null - Hibernate silently drops null values from an element-collection map. */
     public enum Answer { WAITING, FINE, HELP }

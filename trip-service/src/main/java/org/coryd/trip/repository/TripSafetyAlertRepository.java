@@ -14,6 +14,8 @@ public interface TripSafetyAlertRepository extends JpaRepository<TripSafetyAlert
 
     boolean existsByRoutePostIdAndKindAndCreatedAtAfter(String routePostId, TripSafetyAlert.Kind kind, java.time.Instant since);
 
+    List<TripSafetyAlert> findByRoutePostIdAndKindAndStatus(String routePostId, TripSafetyAlert.Kind kind, TripSafetyAlert.Status status);
+
     List<TripSafetyAlert> findByStatusAndCreatedAtBefore(TripSafetyAlert.Status status, Instant before);
 
     Page<TripSafetyAlert> findAllByOrderByCreatedAtDesc(Pageable pageable);

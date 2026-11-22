@@ -197,7 +197,8 @@ trip:
     off-route-meters: ${TRIP_SAFETY_OFF_ROUTE_METERS:1000}
     off-route-minutes: ${TRIP_SAFETY_OFF_ROUTE_MINUTES:5}
     signal-lost-minutes: ${TRIP_SAFETY_SIGNAL_LOST_MINUTES:10}
-    answer-minutes: ${TRIP_SAFETY_ANSWER_MINUTES:3}
+    answer-minutes: ${TRIP_SAFETY_ANSWER_MINUTES:10}
+    signal-lost-overdue-minutes: ${TRIP_SAFETY_SIGNAL_LOST_OVERDUE_MINUTES:60}
     repeat-minutes: ${TRIP_SAFETY_REPEAT_MINUTES:60}
     watch-grace-minutes: ${TRIP_SAFETY_WATCH_GRACE_MINUTES:60}
   # SOS queue (Ops Console): an SOS or unanswered safety check nobody in ops has acknowledged re-alerts ops once at each

@@ -250,8 +250,10 @@ Push data: `type = "SAFETY_CHECK"`, `referenceId = <alertId>`. Open a full-scree
 
 - **"I'm fine"** → `ok: true`.
 - **"I need help"** → `ok: false`, with the phone's current location. This raises an SOS for that person immediately, exactly like the SOS button.
-- Response `data` is the check's status: `OPEN` (others haven't answered), `ALL_OK` (everyone said fine), `HELP`, or `ESCALATED`.
-- If anyone hasn't answered within **3 minutes**, CoRyd ops is texted and emailed.
+- Response `data` is the check's status: `OPEN` (others haven't answered), `ALL_OK` (everyone said fine), `HELP`, `ESCALATED`, or `CLOSED` (nobody answered, but the trip ended or the driver's phone came back - nothing to do).
+- `STOPPED` / `OFF_ROUTE`: if anyone hasn't answered within **10 minutes** and the trip is still in progress, CoRyd ops is texted and emailed.
+- `SIGNAL_LOST`: closes by itself as soon as the driver's phone sends a location again. Ops hears only if nobody answered, the phone is still quiet and the trip is **60 minutes past its expected arrival** without being completed.
+- A check is never escalated once the trip has been completed or cancelled. "I need help" still raises an SOS at any point.
 - `401` *"This safety check isn't for you"* if the user wasn't on that trip.
 
 **Driver app, required:** keep posting location (`POST /trip/routes/{routePostId}/location` `{ "lat", "lng" }`) **for the whole trip, including in the background**. A 10-minute gap triggers the "lost signal" check for everyone on board.

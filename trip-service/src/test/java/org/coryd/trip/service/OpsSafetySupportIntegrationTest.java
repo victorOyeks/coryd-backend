@@ -344,6 +344,30 @@ class OpsSafetySupportIntegrationTest {
         assertThat(sosService.realertUnacknowledged()).as("older than realert-max-age-hours").isZero();
     }
 
+    @Test
+    void anOpenSafetyCheckOnATripThatHasEndedIsResolvedAsSafeInsteadOfReAlerting() {
+        RoutePost route = route(DRIVER);
+        seat(route, RIDER);
+        TripSafetyAlert alert = alertRepository.save(TripSafetyAlert.builder().routePostId(route.getId())
+                .kind(TripSafetyAlert.Kind.SIGNAL_LOST).status(TripSafetyAlert.Status.ESCALATED).escalatedAt(Instant.now()).build());
+        SosIncident check = sosService.openForSafetyCheck(alert.getId());
+        SosIncident pressed = sos(route, null, DRIVER, "DRIVER");
+        backdate(check, 16);
+        backdate(pressed, 16);
+        jdbc.update("update trip.route_posts set status = 'COMPLETED' where id = ?", route.getId());
+        clearInvocations(kafkaTemplate);
+
+        assertThat(sosService.realertUnacknowledged()).as("only the SOS someone pressed re-alerts").isEqualTo(1);
+
+        verify(kafkaTemplate, never()).send(eq(KafkaTopics.SOS_OPS_REALERT), eq(check.getId()), any());
+        SosIncident resolved = sosRepository.findById(check.getId()).orElseThrow();
+        assertThat(resolved.getStatus()).isEqualTo(SosStatus.RESOLVED);
+        assertThat(resolved.getOutcome()).isEqualTo(SosOutcome.SAFE);
+        assertThat(resolved.getResolvedByName()).isEqualTo(OpsSosService.AUTO_RESOLVER_NAME);
+        assertThat(auditRepository.findByTargetTypeAndTargetIdOrderByCreatedAtAsc(OpsAuditLog.TargetType.SOS, check.getId())).hasSize(1);
+        assertThat(sosRepository.findById(pressed.getId()).orElseThrow().getStatus()).isEqualTo(SosStatus.OPEN);
+    }
+
     // ---- unanswered safety checks join the queue -----------------------------------------------------------------
 
     @Test

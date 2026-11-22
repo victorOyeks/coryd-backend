@@ -174,7 +174,7 @@ Same `from`, `to`, `driverId`, `riderId`, `search` as the table (not `status`), 
 | `COMPLETED` | Trip completed (`OPS` with the reason when ops resolved it) | `DRIVER` or `OPS` |
 | `CANCELLED` | The whole trip was cancelled: who, reason, fault | as above |
 | `SOS` | Someone pressed SOS (`detail` has where) | `RIDER` or `DRIVER` |
-| `SAFETY_CHECK` | Automatic safety check (`detail`: `STOPPED`/`OFF_ROUTE`/`SIGNAL_LOST` - `OPEN`/`ALL_OK`/`HELP`/`ESCALATED`) | `SYSTEM` |
+| `SAFETY_CHECK` | Automatic safety check (`detail`: `STOPPED`/`OFF_ROUTE`/`SIGNAL_LOST` - `OPEN`/`ALL_OK`/`HELP`/`ESCALATED`/`CLOSED`) | `SYSTEM` |
 | `OPS_ACTION` | An ops action (`detail`: action and reason) | `OPS` |
 
 ---

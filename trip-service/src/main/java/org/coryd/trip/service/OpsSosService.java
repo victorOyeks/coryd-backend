@@ -5,6 +5,7 @@ import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Subquery;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.coryd.common.enums.RouteStatus;
 import org.coryd.common.enums.SosKind;
 import org.coryd.common.enums.SosOutcome;
 import org.coryd.common.enums.SosStatus;
@@ -47,6 +48,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -278,6 +280,9 @@ public class OpsSosService {
             if (s.getRealertLevel() >= LEGACY_NO_REALERT) {
                 continue;
             }
+            if (resolveIfTripEnded(s)) {
+                continue;
+            }
             long minutesOpen = Duration.between(s.getCreatedAt(), now).toMinutes();
             int level = 0;
             for (int i = 0; i < thresholds.size(); i++) {
@@ -299,6 +304,38 @@ public class OpsSosService {
             sent++;
         }
         return sent;
+    }
+
+    static final String AUTO_RESOLVER_NAME = "CoRyd (automatic)";
+
+    /**
+     * An unanswered safety check stops being an emergency once its trip is over: the riders were dropped off or the trip was
+     * cancelled. Such an incident, still OPEN, is resolved here as SAFE instead of re-alerting ops. Only SAFETY_CHECK - an
+     * SOS someone pressed always waits for a person to resolve it, and so does a check an admin has already picked up.
+     */
+    private boolean resolveIfTripEnded(SosIncident s) {
+        if (s.getKind() != SosKind.SAFETY_CHECK || s.getRoutePostId() == null) {
+            return false;
+        }
+        RoutePost route = routePostRepository.findById(s.getRoutePostId()).orElse(null);
+        if (route == null || (route.getStatus() != RouteStatus.COMPLETED && route.getStatus() != RouteStatus.CANCELLED)) {
+            return false;
+        }
+        SosIncident locked = lock(s.getId());
+        if (locked.getStatus() != SosStatus.OPEN) {
+            return false;
+        }
+        String note = "Closed automatically - the trip was " + route.getStatus().name().toLowerCase(Locale.ROOT)
+                + " after this check went unanswered, so nobody on it is still waiting for help.";
+        locked.setStatus(SosStatus.RESOLVED);
+        locked.setOutcome(SosOutcome.SAFE);
+        locked.setResolutionNote(note);
+        locked.setResolvedAt(Instant.now());
+        locked.setResolvedBy(SosIncident.SYSTEM);
+        locked.setResolvedByName(AUTO_RESOLVER_NAME);
+        act(locked, SosStatus.OPEN, OpsAuditLog.Action.SOS_RESOLVED, SosIncident.SYSTEM, AUTO_RESOLVER_NAME, note, SosOutcome.SAFE);
+        log.info("Safety-check incident {} resolved automatically - route {} is {}", s.getId(), s.getRoutePostId(), route.getStatus());
+        return true;
     }
 
     private SosOpsRealertEvent realertEvent(SosIncident s, int level, int minutesOpen) {

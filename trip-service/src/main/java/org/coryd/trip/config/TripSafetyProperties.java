@@ -29,8 +29,14 @@ public class TripSafetyProperties {
     /** No location from the driver's phone for this long during a trip. */
     private int signalLostMinutes = 10;
 
-    /** Unanswered for this long and ops is alerted. */
-    private int answerMinutes = 3;
+    /** A stopped / off-route check unanswered for this long and ops is alerted. Long enough for a driver to finish a
+     * manoeuvre and look at the phone - three minutes alerted ops about drivers who were simply driving. */
+    private int answerMinutes = 10;
+
+    /** A signal-lost check is never escalated for the silence alone - phones are locked, backgrounded and drop out of
+     * coverage all the time. It goes to ops only if nobody has answered, the phone is still quiet and the trip is this
+     * long past its expected arrival (start + estimated duration) without being completed. */
+    private int signalLostOverdueMinutes = 60;
 
     /** The same kind of check on the same trip isn't raised again within this long - one alert, not a stream. */
     private int repeatMinutes = 60;
